@@ -321,9 +321,9 @@ selector of one of those stays under its key or position, so one patch may
 name items both ways. It leaves out a clash unless asked, and
 `error.not_redone()` lists what it leaves out, each entry as the message shows
 it (read the values and `clash` from `lost_edits`). A secret among the values
-of those entries is `"***"`, as in the message; `lost_edits` holds it, and the
-patch writes it in full. It redoes a lost provider
-row by setting the `RefOnly` field again
+of those entries is `"***"`, as in the message, and so is each value of a ref
+row; `lost_edits` holds them, and the patch writes a secret in full. It redoes
+a lost provider row by setting the `RefOnly` field again
 (`{"segments": {"Global Segment": {"dns": {"primary_provider": {"service": "<logical ID>"}}}}}`,
 `null` to clear it) and leaves out any other ref row; the segment is the one
 the row was made for, found by its identity and under the selector the patch

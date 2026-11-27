@@ -2043,8 +2043,8 @@ exports (they are defined in `pyvelo.core.response_check`). An entry is as the
 check made it: its `path` names a field by the VCO's key and an item by its
 key, and its values are as stored. The entries of `not_redone()` alone are as
 the message shows them (below), and a secret among their values is `"***"`, as
-in the message: `lost_edits` holds the secret, and `redo_patch()` writes it in
-full. For a lost or stored edit,
+in the message, and so is each value of a ref row: `lost_edits` holds the
+secret, and `redo_patch()` writes it in full. For a lost or stored edit,
 `error.plan.named(change.path, removed=change.intended is MISSING)` is the path
 the message shows; `change.python_path(type(data))`, with `data` the module's
 data (`state.module("firewall").data`), renames the fields only, and keeps each
@@ -2342,32 +2342,43 @@ Known limits:
   A validator reports on the whole state, so an error in a module the save does
   not write blocks the save too; the error names the module (`module`) and
   the place (`path`).
-- `ConfigState`, the module objects, validation messages, and the change
-  objects of a plan (`ModulePlan.changes`), of a `SaveResult` and of a write
-  error's lists (`before`, `after`, `as_read`, `intended`, `stored`) hold
-  complete configuration values, including addresses and configuration
-  secrets. So does a patch from `redo_patch()`. Redact them before logging,
-  sharing, or committing exports. This library does not persist configuration
-  automatically.
-- Three kinds of text leave secrets out. `render()` of a plan and the message
-  of a write error (`str(error)`) show `"***"` in place of the value of every
-  field the models mark as a secret (`Secret`, in `pyvelo.core`: passwords,
-  pre-shared keys, SNMP communities, a WAN network's ISP key, the `data` of a
-  device settings ref row), and in place of a ref row. `repr()` of a
-  plan or of a write holds no values, and `repr()` of a `SaveResult` holds
-  neither module data nor the changes it reports, only their number per module
-  (it still holds the validators' messages). A response that fails to parse
-  raises pydantic's `ValidationError` without the input in its text;
-  `error.errors()` still has it. A model's `named_dump()` shows the same mask
-  by the same marks (see "Dumps"), and so do the values pyvelo shows of a
-  change: the field changes (`get_field_changes`), `ModulePlan.shown_change`
-  and the entries of a write error's `not_redone()`. So do the two values of
-  each entry of `compare_effective` (see "The effective view"). Nothing else
-  is hidden. A secret is printed
-  as it is in two places: under a key the models do not know, which includes
-  everything inside a field typed `dict[str, Any]` (`EdgeZscaler.deployment`,
-  a WAN link's `private_network`), and in the data of a module whose data is
-  not a model (a generic module: `analyticsSettings`, `atpMetadata`).
+- What is in the VCO's form holds complete configuration values, including
+  addresses and configuration secrets: the save and the redo read it. That is
+  `ConfigState` and the module objects, a model's `model_dump()`, a module's
+  `raw_data` and `raw_refs`, a plan's `ModulePlan.data`, `.changes` and
+  `.refs`, the change lists of a `SaveResult` and of its writes, and of a
+  write error (`lost_edits`, `applied`, `left_out`, `server_changes`: their
+  `before`, `after`, `as_read`, `intended` and `stored`), and a patch from
+  `redo_patch()`. Redact them before logging, sharing, or committing exports.
+  This library does not persist configuration automatically.
+- Everything pyvelo shows hides the value of each field the models mark as a
+  secret (`Secret`, in `pyvelo.core`: passwords, pre-shared keys, SNMP
+  communities, a WAN network's ISP key, the `data` of a device settings ref
+  row), with `"***"` in its place, at any depth of a value. That is the text
+  of a plan (`render()`) and the message of a write error (`str(error)`,
+  `render()`), in both of which a ref row is `"***"` whole; the field changes
+  (`get_field_changes`) and `ModulePlan.shown_change`; the entries of a write
+  error's `not_redone()`, in which each value of a ref row is `"***"`, as in
+  the message; the two values of each entry of `compare_effective` (see "The
+  effective view"); and a model's `named_dump()`, a configuration's too, each
+  row by its own class (see "Dumps"). Nothing else pyvelo prints holds the
+  value of such a field. `repr()` of a plan or of a write holds no values, and
+  `repr()` of a `SaveResult` neither module data nor the changes it reports,
+  only their number per module (it still holds the validators' messages). A
+  `PatchError` and its cause quote no value of the patch, and the other
+  refusals (`LossyFieldError`, `LayerNotSavedError`, `DetachedObjectError`,
+  `FixedListError`, the hub and segment errors) give paths and names. A
+  plan's warnings, a save's warnings and the validators' messages hold names,
+  keys, IDs and addresses (a network that overlaps another is named with its
+  address), and no field marked a secret is the key, the alt key or the label
+  of a list. A response that fails to parse raises pydantic's
+  `ValidationError` without the input in its text; `error.errors()` still has
+  it. A secret is printed as it is in two places: under a key the models do
+  not know, which includes everything inside a field typed `dict[str, Any]`
+  (`EdgeZscaler.deployment`, a WAN link's `private_network`), and in the data
+  of a module whose data is not a model (a generic module: `analyticsSettings`,
+  `atpMetadata`). `VcoApiError` and `VcoOperationError` print the VCO's own
+  error data as the VCO sent it: pyvelo does not change it.
 - Keep API tokens and environment files outside version control. TLS verification
   uses the SDK default. Tests use synthetic fixtures and do not require a live VCO.
 

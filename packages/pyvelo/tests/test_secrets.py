@@ -777,6 +777,32 @@ def test_a_write_error_does_not_show_a_ref_row() -> None:
     assert "***" in line
 
 
+def test_a_lost_ref_row_the_redo_leaves_out_is_shown_as_its_line_shows_it() -> None:
+    module = ds(settings())
+    row = {"id": 101, "enterpriseObjectId": 5, "data": {"sharedSecret": OLD}}
+    lost = PlannedChange(Path.parse("auth[5]"), OTHER, row, NEW, part="refs")
+    error = WriteNotAppliedError(
+        1,
+        "v1",
+        module_name="deviceSettings",
+        plan=plan_module(module),
+        module=module,
+        lost_edits=[lost],
+    )
+    (left_out,) = error.not_redone()
+    assert (left_out.path, left_out.part) == (lost.path, "refs")
+    assert (left_out.as_read, left_out.intended, left_out.stored) == ("***",) * 3
+    assert error.lost_edits == (lost,)
+    unset = PlannedChange(Path.parse("auth[5]"), MISSING, row, MISSING, part="refs")
+    error.lost_edits = (unset,)
+    (left_out,) = error.not_redone()
+    assert (left_out.as_read, left_out.intended, left_out.stored) == (
+        MISSING,
+        "***",
+        MISSING,
+    )
+
+
 def test_an_unknown_outcome_shows_no_secret_of_what_it_sent() -> None:
     error = WriteOutcomeUnknownError(
         1,

@@ -896,6 +896,25 @@ def _dropped(server_changes: Sequence[ServerChange]) -> frozenset[tuple[Path, st
     )
 
 
+def _hidden_row(value: object) -> object:
+    """A ref row's *value* as an error shows it: ``HIDDEN``, or ``MISSING`` for none."""
+    return value if value is MISSING else HIDDEN
+
+
+def _hidden_ref_row(change: PlannedChange) -> PlannedChange:
+    """*change*, a refs entry, with each of its values as its line shows it.
+
+    Its path is kept, and each value is ``HIDDEN`` (``_hidden_row``): a row
+    can hold a service's credentials.
+    """
+    return replace(
+        change,
+        as_read=_hidden_row(change.as_read),
+        intended=_hidden_row(change.intended),
+        stored=_hidden_row(change.stored),
+    )
+
+
 def _named_change(change: RawChange, model: type[VcoModel]) -> RawChange:
     """*change* with the keys of its new value by attribute name.
 
@@ -1166,9 +1185,7 @@ class ModuleWriteError(VcoError):
         identity only, and a row can hold a service's credentials.
         """
         if change.part == "refs":
-            return shown_together(
-                *(value if value is MISSING else HIDDEN for value in values)
-            )
+            return shown_together(*(_hidden_row(value) for value in values))
         return shown_together(*values, model=self._document(), path=change.path)
 
     def _shown(self, change: PlannedChange) -> PlannedChange:
@@ -1464,11 +1481,15 @@ class ModuleWriteError(VcoError):
         hidden. Read the values, and ``clash``, from ``lost_edits``, which
         keeps each entry as the check made it: the ``clash`` of a copy compares
         its values as shown, and two secrets that differ are shown alike. A
-        refs entry is the lost edit itself, and so is every entry of an error
-        that has no plan.
+        refs entry has its path as the lost edit has it, and each of its
+        values is ``"***"``, as its line shows a row. Every entry of an error
+        that has no plan is the lost edit itself.
         """
         left_out = self._redo(include_clashes=include_clashes)[1]
-        return tuple(self._shown(edit) for edit in left_out)
+        return tuple(
+            _hidden_ref_row(edit) if edit.part == "refs" else self._shown(edit)
+            for edit in left_out
+        )
 
     def _redo(
         self, *, include_clashes: bool
