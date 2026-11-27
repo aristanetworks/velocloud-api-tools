@@ -872,3 +872,24 @@ def test_twins_stored_as_sent_pair_in_order() -> None:
         applied=["rules[#1].port", "rules[#2]", "rules[#3]"],
         server_changes=["rules[#0].lid", "rules[#1].lid"],
     )
+
+
+def test_items_stored_in_another_order_pair_along_the_longest_run() -> None:
+    """The VCO stored both ``y`` before the three ``x`` and gave each a new ID.
+
+    The three ``x`` pair in order, so the edit of the third is found stored;
+    the two ``y``, which cross them, pair with nothing.
+    """
+
+    def y(lid: str, port: int) -> dict[str, object]:
+        return {"name": "y", "lid": lid, "port": port}
+
+    read = {"rules": [x("a", 1), x("b", 2), x("c", 3), y("d", 4), y("e", 5)]}
+    payload = {"rules": [x("a", 1), x("b", 2), x("c", 9), y("d", 4), y("e", 5)]}
+    stored = {"rules": [y("D2", 4), y("E2", 5), x("A2", 1), x("B2", 2), x("C2", 9)]}
+    check = check_response(read, payload, stored, Lids)
+    assert paths(check.applied) == ["rules[#2].port"]
+    assert check.not_applied == ()
+    assert {"rules[#0].lid", "rules[#1].lid", "rules[#2].lid"} <= set(
+        paths(check.server_changes)
+    )

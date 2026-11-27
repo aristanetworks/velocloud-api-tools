@@ -61,6 +61,7 @@ fields marked ``ServerOwned``. With ``model=None`` every list is unkeyed, so
 a changed list is one change.
 """
 
+import itertools
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from ipaddress import IPv6Interface
@@ -699,15 +700,12 @@ def _pair_stored(
        when neither side has another item left that is the same
        (``pair_same``): it was stored as sent, whatever comes before it, also
        when it has no key;
-    5. the items of *p* and *d* pair in order, first with first, while the two
-       keys are equal or the item of *p* has no key. This pairs items whose
-       key repeats and whose alt key the VCO revised, and an item sent without
-       a key that the VCO issued one for. An item of *p* with no key is
-       skipped when a later item of *p* has the key of the item of *d* it
-       meets. When the two keys differ, an item of
-       *d* whose key no item of *p* left has is skipped (another writer's
-       item, or one with no key); else an item of *p* whose key no item of *d*
-       left has is skipped (the VCO dropped it); else the pass ends.
+    5. the items of *p* and *d* pair by their place (``_pair_in_order``):
+       equal keys along a longest common subsequence, then, between those
+       pairs, each item of *p* without a key with the next item of *d*, up to
+       the first item of *p* with a key. This pairs items whose key repeats
+       and whose alt key the VCO revised, and an item sent without a key that
+       the VCO issued one for.
 
     Keys and alt keys are compared in string form, part by part, and with
     ``rewrites.ipv6`` a part that parses as an IPv6 interface in canonical
@@ -756,36 +754,74 @@ def _pair_stored(
 
 
 def _pair_in_order(
-    p_keys: list[KeyForm | None],
-    d_keys: list[KeyForm | None],
-    p_left: list[int],
-    d_left: list[int],
-    d_of: dict[int, int],
+    sent_keys: list[KeyForm | None],
+    stored_keys: list[KeyForm | None],
+    sent_left: list[int],
+    stored_left: list[int],
+    pairs: dict[int, int],
 ) -> None:
-    """Pass 5 of ``_pair_stored``: pair the items left of *p* and *d* in order.
+    """Pass 5 of ``_pair_stored``: pair the items still left by their place.
 
-    Each pair is written into *d_of*, index in *p* to index in *d*. An item
-    of *p* with no key does not take an item of *d* whose key a later item of
-    *p* has: it is skipped. An item that cannot pair is skipped, so it does
-    not take the place of one that can: an item of *d* whose key no item of
-    *p* from here on has, then an item of *p* whose key no item of *d* from
-    here on has. When neither is so, the pass ends.
+    *sent_left* and *stored_left* are the indexes no earlier pass paired, in
+    list order. Each pair is written into *pairs*, sent index to stored index.
+
+    1. Items with equal keys pair, as many as keep both lists in order (a
+       longest common subsequence of their keys). Items of a repeated key pair
+       first with first.
+    2. Between two such pairs, and before the first or after the last, a sent
+       item without a key takes the next stored item there: the VCO may have
+       given it a key. The first sent item with a key ends that stretch: the
+       VCO dropped it, so the items after it cannot be matched by place.
     """
-    j = k = 0
-    while j < len(p_left) and k < len(d_left):
-        p_key, d_key = p_keys[p_left[j]], d_keys[d_left[k]]
-        if p_key is None and _first_with(d_key, p_keys, p_left[j + 1 :]) is not None:
+    sent_keyed = [j for j in sent_left if sent_keys[j] is not None]
+    stored_keyed = [k for k in stored_left if stored_keys[k] is not None]
+    matched = [
+        (sent_keyed[a], stored_keyed[b])
+        for a, b in _common_subsequence(
+            [sent_keys[j] for j in sent_keyed], [stored_keys[k] for k in stored_keyed]
+        )
+    ]
+    pairs.update(matched)
+    # Each stretch lies strictly between two matched pairs; the first starts
+    # before index 0 and the last ends past the end of both lists.
+    bounds = [(-1, -1), *matched, (len(sent_keys), len(stored_keys))]
+    for (sent_from, stored_from), (sent_to, stored_to) in itertools.pairwise(bounds):
+        sent_here = [j for j in sent_left if sent_from < j < sent_to]
+        stored_here = [k for k in stored_left if stored_from < k < stored_to]
+        keyless = itertools.takewhile(lambda j: sent_keys[j] is None, sent_here)
+        pairs.update(zip(keyless, stored_here, strict=False))
+
+
+def _common_subsequence(
+    first: list[KeyForm | None], second: list[KeyForm | None]
+) -> list[tuple[int, int]]:
+    """The positions of a longest common subsequence of *first* and *second*.
+
+    Each pair is (index in *first*, index in *second*), in order. Of several
+    longest ones it takes each match as early as it can.
+    """
+    # longest[i][j] is the length of a longest common subsequence of
+    # first[i:] and second[j:].
+    longest = [[0] * (len(second) + 1) for _ in range(len(first) + 1)]
+    for i in reversed(range(len(first))):
+        for j in reversed(range(len(second))):
+            longest[i][j] = (
+                longest[i + 1][j + 1] + 1
+                if first[i] == second[j]
+                else max(longest[i + 1][j], longest[i][j + 1])
+            )
+    found: list[tuple[int, int]] = []
+    i = j = 0
+    while i < len(first) and j < len(second):
+        if first[i] == second[j]:
+            found.append((i, j))
+            i += 1
             j += 1
-        elif p_key is None or p_key == d_key:
-            d_of[p_left[j]] = d_left[k]
-            j += 1
-            k += 1
-        elif _first_with(d_key, p_keys, p_left[j:]) is None:
-            k += 1
-        elif _first_with(p_key, d_keys, d_left[k:]) is None:
-            j += 1
+        elif longest[i + 1][j] >= longest[i][j + 1]:
+            i += 1
         else:
-            break
+            j += 1
+    return found
 
 
 def _planned(
