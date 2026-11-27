@@ -139,7 +139,7 @@ class SaveStepError(IntentError):
     reverted state plans nothing that mends the role change.
     """
 
-    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
+    def __init__(  # noqa: PLR0913 (an error's constructor: the reason, then each field the error reports, by keyword)
         self,
         reason: str,
         *,

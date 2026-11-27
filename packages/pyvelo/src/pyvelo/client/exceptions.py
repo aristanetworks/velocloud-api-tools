@@ -889,7 +889,7 @@ class ModuleWriteError(VcoError):
     """For each item of every keyed list the check walks that the module as stored holds
     too, by its path, the part that names it there (``ResponseCheck.stored_parts``)."""
 
-    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
+    def __init__(  # noqa: PLR0913 (an error's constructor: each argument is a field the error reports)
         self,
         module_id: int,
         version: str,
@@ -1449,7 +1449,7 @@ class ConfigConflictError(ModuleWriteError):
     stated: bool
     sent: bool
 
-    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
+    def __init__(  # noqa: PLR0913 (an error's constructor: each argument is a field the error reports)
         self,
         module_id: int,
         version: str,
@@ -1526,7 +1526,7 @@ class WriteNotAppliedError(ModuleWriteError):
     with the value sent and the value stored.
     """
 
-    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
+    def __init__(  # noqa: PLR0913 (an error's constructor: each argument is a field the error reports)
         self,
         module_id: int,
         version: str,
@@ -1598,7 +1598,7 @@ class RefsDroppedError(WriteNotAppliedError):
 
     refs_as_read: object
 
-    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
+    def __init__(  # noqa: PLR0913 (an error's constructor: each argument is a field the error reports)
         self,
         module_id: int,
         version: str,
@@ -1743,7 +1743,7 @@ class WriteOutcomeUnknownError(ModuleWriteError):
     detail: str
     answer: WriteAnswer
 
-    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
+    def __init__(  # noqa: PLR0913 (an error's constructor: each argument is a field the error reports)
         self,
         module_id: int,
         version: str,
