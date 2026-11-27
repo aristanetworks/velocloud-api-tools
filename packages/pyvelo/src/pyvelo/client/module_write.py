@@ -495,6 +495,21 @@ class ModulePlan:
             place=place,
         )
 
+    def shown_names(self, items: Path, names: object) -> object:
+        """*names*, the item names of the keyed list at *items*, each as shown.
+
+        *names* is what an order entry holds for the list (``RawChange`` and
+        the write check's entries): the text of each item, named as the
+        changes name it. Each is written as ``named`` shows that item in the
+        list as planned, as the values of an order entry are in
+        ``shown_change``. They are returned as they are where the data has
+        no keyed list at *items* (the texts are then no item names), and by
+        a plan that lacks the data as read or as planned.
+        """
+        names_of = self._change_names
+        found = None if names_of is None else names_of.items(items)
+        return names if found is None else self._named_names(names, found)
+
     def _change_line(self, change: RawChange) -> str:
         """The line of ``render`` for *change*, as ``shown_change`` shows it.
 

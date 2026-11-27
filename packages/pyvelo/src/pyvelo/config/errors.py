@@ -127,7 +127,9 @@ class SaveStepError(IntentError):
     hub loses its role. A write before the steps that fails raises its own
     error, not this one. ``step`` is the step whose call failed (it may have
     reached the VCO), or None when a module write failed after at least one
-    step was sent, and ``module_name`` then names that module. ``steps_done``
+    step was sent, and ``module_name`` then names that module, by its python
+    name (``device_settings``), whichever name the error was made with.
+    ``steps_done``
     are the steps sent before the failure and ``steps_in_place`` those found
     already in place and not sent, in the order of the plan; ``written`` are
     the names of the modules stored, in order, as the VCO names them (the
@@ -151,7 +153,9 @@ class SaveStepError(IntentError):
     ) -> None:
         """Say where the save stopped, and why (*reason*), and what it sent before."""
         self.step: HubStep | None = step
-        self.module_name: str | None = module_name
+        self.module_name: str | None = (
+            None if module_name is None else python_module_name(module_name)
+        )
         self.steps_done: tuple[HubStep, ...] = tuple(steps_done)
         self.steps_in_place: tuple[HubStep, ...] = tuple(steps_in_place)
         self.written: tuple[str, ...] = tuple(written)
@@ -166,7 +170,7 @@ class SaveStepError(IntentError):
         elif self.module_name is not None:
             what = (
                 "the save stopped at the write of the module "
-                f"{python_module_name(self.module_name)}, which failed ({reason})"
+                f"{self.module_name}, which failed ({reason})"
             )
         else:
             # A device settings write the version read found stored is done.

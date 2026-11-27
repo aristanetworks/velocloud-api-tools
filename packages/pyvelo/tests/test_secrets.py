@@ -592,7 +592,7 @@ def test_a_write_error_shows_no_secret_and_keeps_it_on_the_change() -> None:
     assert (lost.as_read, lost.intended, lost.stored) == (OLD, NEW, OTHER)
     text = "".join(traceback.format_exception(exc.value))
     assert not any(secret in text for secret in (OLD, NEW, OTHER))
-    assert f"{NEIGHBOR}.md5Password" in text
+    assert f"{NEIGHBOR}.md5_password" in text
     assert text.count("***") == 3
 
 
@@ -639,7 +639,7 @@ def test_an_unknown_outcome_shows_no_secret_of_what_it_sent() -> None:
     text = str(error)
     assert OLD not in text
     assert NEW not in text
-    assert 'md5Password: read "***", meant "***"' in text
+    assert 'md5_password: read "***", meant "***"' in text
 
 
 def rule(n: int) -> dict[str, Any]:
@@ -688,13 +688,13 @@ def test_the_message_of_a_write_error_is_bounded() -> None:
     assert (len(error.lost_edits), len(error.server_changes)) == (500, 500)
     text = str(error)
     assert len(text) < 10_000
-    assert entries(text, ".loggingEnabled:") == 20
-    assert entries(text, ".match.dport_high:") == 20
+    assert entries(text, ".logging_enabled:") == 20
+    assert entries(text, ".match.destination_port_high:") == 20
     assert "  and 480 more: error.lost_edits has them all" in text.splitlines()
     assert "  and 480 more: error.server_changes has them all" in text.splitlines()
-    assert entries(error.render(limit=None), ".loggingEnabled:") == 500
+    assert entries(error.render(limit=None), ".logging_enabled:") == 500
     assert " more: " not in error.render(limit=None)
-    assert entries(error.render(limit=1), ".loggingEnabled:") == 1
+    assert entries(error.render(limit=1), ".logging_enabled:") == 1
 
 
 def test_the_message_of_an_unknown_outcome_is_bounded() -> None:
@@ -707,9 +707,9 @@ def test_the_message_of_an_unknown_outcome_is_bounded() -> None:
         plan=plan_module(logging_on_500_rules()),
     )
     text = str(error)
-    assert entries(text, ".loggingEnabled:") == 20
+    assert entries(text, ".logging_enabled:") == 20
     assert "  and 480 more: error.plan.changes has them all" in text.splitlines()
-    assert entries(error.render(limit=None), ".loggingEnabled:") == 500
+    assert entries(error.render(limit=None), ".logging_enabled:") == 500
 
 
 def test_hide_secrets_walks_a_tuple_as_it_walks_a_list() -> None:

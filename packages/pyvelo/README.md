@@ -303,7 +303,11 @@ than sent, such as an ID it issued). Otherwise it raises, from
 
 The first three carry `lost_edits` (the planned changes not stored, with the
 values as read, meant and stored), `applied`, `left_out`, `server_changes`, the
-`plan` and the `module` as stored. `error.redo_patch()` is the patch that redoes
+`plan` and the `module` as stored. Each entry keeps the path the check made, in
+the VCO's keys; the message of any of the four (`str(error)`, `error.render()`)
+names the module by its python name, which `error.module_name` holds, and
+shows each path and object as the plan's text does (`ModulePlan.render`): a
+field by its attribute, an item by its name. `error.redo_patch()` is the patch that redoes
 the lost edits on that module (`error.module.data.merge_patch(error.redo_patch())`);
 it leaves out a clash unless asked, and `error.not_redone()` lists what it
 leaves out. It redoes a lost provider row by setting the `RefOnly` field again

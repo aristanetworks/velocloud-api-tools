@@ -186,7 +186,8 @@ is taken as the delete done. `state.revert_module(name)` sends nothing, so it
 refuses such a module and names `pipeline.revert`. Each of these refusals
 starts with the module's python name (`business_policy: the VCO holds a module
 of this name ...`), and a place it names (`it differs at ...`, `it also holds
-...`) is shown as a plan shows a path.
+...`) is shown as a plan shows a path; a row of refs is `refs <path>`, as a
+write error writes it (see "After a save").
 `revert` takes back edits, not what a save already did: a role step a save
 sent before it stopped (see "Hubs", "When a step fails") stays on the VCO, and
 a state whose device settings edits are taken back plans nothing that mends
@@ -1491,7 +1492,8 @@ edit needs, then writes the module.
 - **When a step fails.** A request that fails once a step may have been sent is
   raised as `SaveStepError` (from `pyvelo.config`), from the VCO's error: `step`
   is the step whose call failed, or `None` when a module write failed
-  (`module_name` names it), `steps_done` and `steps_in_place` list the others,
+  (`module_name` names it, by its python name: `device_settings`), `steps_done`
+  and `steps_in_place` list the others,
   and `written` the modules stored (the message lists them by their python
   names); `save_progress(error)` gives the modules
   not written. A failure before any step was sent (the version read, the
@@ -1761,21 +1763,43 @@ whoever put it there: an edit that another writer made identically is under
 `applied`, not under `lost_edits`.
 
 The entries are `PlannedChange` and `ServerChange`, which `pyvelo.config`
-exports (they are defined in `pyvelo.core.response_check`). The message lists
-them by path. A path uses the VCO's names for fields.
-`change.python_path(type(data))`, with `data` the module's data
-(`state.module("firewall").data`), gives the same path in the names a patch is
-written in. Here, a change to a rule's port and a new rule are
-refused, and another writer had changed the same port and another key:
+exports (they are defined in `pyvelo.core.response_check`). An entry is as the
+check made it: its `path` names a field by the VCO's key and an item by its
+key, and its values are as stored. For a lost or stored edit,
+`error.plan.named(change.path, removed=change.intended is MISSING)` is the path
+the message shows; `change.python_path(type(data))`, with `data` the module's
+data (`state.module("firewall").data`), renames the fields only, and keeps each
+item's key.
+
+The message (`str(error)`, `error.render()`) lists them by path, and reads as
+the plan's text does. The module is named by its python name, which
+`error.module_name` holds (`business_policy` for the module the VCO calls
+`QOS`; `error.plan.name` is the VCO's name). A lost edit and a stored one have
+the path of the plan's line for that change: a field by its attribute, an
+item by its name, in the data as planned, or as read for an item you removed.
+It is a path `apply` takes. An object among the values has its keys by
+attribute name. Here, a change to a rule's port and a new rule are refused, and
+another writer had changed the same port and another key:
 
 ```text
 Configuration module 11 (firewall) changed since it was read (version v1): the VCO refused the version
 lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):
-  segments["Global Segment"].outbound[block-ssh] (first): read (nothing), meant {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…, stored (nothing)
-  segments["Global Segment"].outbound[allow-web].match.dport_high: read 443, meant 8080, stored 8443  [clash: also changed on the VCO]
+  segments["Global Segment"].outbound[block-ssh] (first): read (nothing), meant {"action": {"allow_or_deny": "deny"}, "comments": null, "logging_enabled": false…, stored (nothing)
+  segments["Global Segment"].outbound[allow-web].match.destination_port_high: read 443, meant 8080, stored 8443  [clash: also changed on the VCO]
 stored otherwise than sent:
   syslog_forwarding: read false, stored true
 ```
+
+Under `stored otherwise than sent` a path is named the same way where your
+data has the item. An item only the stored module has keeps the key it has
+there, or its position there (`lan.networks[#0]` is the first network of
+`error.module`, not of your data), and a key the model does not declare is
+kept as stored (`segments[Guest].rules[Web].match.serverAdded`). A row of refs
+is `refs <path>`, the ref's name and the row's identity as stored
+(`refs "deviceSettings:backHaulEdge"[<logical ID>,<segment object ID>]`), and
+its values are shown as `"***"`. `written before this one: business_policy
+(update)` names the earlier writes of the save. An error made without a plan
+has nothing to name an item by, and keeps each path as the check wrote it.
 
 The message shows at most 20 entries of each list and says how many more there
 are; `error.render(limit=None)` has them all.
@@ -1963,9 +1987,12 @@ Known limits:
   the module by its python name (`control_plane: a save does not write this
   module ...`), as the refusals of `apply`, `assign_segment`, `revert` and of
   a save before it sends do, and the error for a module a configuration lacks
-  (`Module 'business_policy' not found in configuration`). The low-level
-  `write_module` keeps the VCO's name in its refusal of a plan made for
-  another module (`the plan is for QOS, not firewall`).
+  (`Module 'business_policy' not found in configuration`). So do the errors
+  of a write that is not stored as planned (`Configuration module 11
+  (business_policy): 3 of 4 planned changes are not stored as sent`), whose
+  `module_name` holds that name, as `SaveStepError.module_name` does. The
+  low-level `write_module` keeps the VCO's name in its refusal of a plan made
+  for another module (`the plan is for QOS, not firewall`).
 - A profile's segment is assigned with `assign_segment` or an `add`, but not
   removed: an edit that removes a segment the device settings module has
   raises `SegmentSetError` (a patch: `PatchError`), and only an orphan, a QoS

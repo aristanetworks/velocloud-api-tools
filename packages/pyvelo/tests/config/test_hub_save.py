@@ -570,7 +570,7 @@ async def test_a_module_write_after_a_step_fails_as_a_save_step_error() -> None:
         _ = await pipeline.save(state)
 
     error = failed.value
-    assert error.module_name == DS
+    assert error.module_name == "device_settings"
     assert error.step is None
     assert [s.role for s in error.steps_done] == ["hub", "backhaul"]
     assert error.steps_in_place == ()
@@ -614,7 +614,7 @@ async def test_a_qos_write_after_a_step_and_the_device_settings_fails_as_a_save_
         _ = await pipeline.save(state)
 
     error = failed.value
-    assert error.module_name == "QOS"
+    assert error.module_name == "business_policy"
     assert error.step is None
     assert [s.role for s in error.steps_done] == ["hub", "backhaul"]
     assert error.written == (DS,)
@@ -680,7 +680,7 @@ async def test_a_conflict_of_the_module_write_after_a_step_is_the_cause() -> Non
 
     error = failed.value
     assert isinstance(error.__cause__, ConfigConflictError)
-    assert error.module_name == DS
+    assert error.module_name == "device_settings"
     assert [s.role for s in error.steps_done] == ["hub", "backhaul"]
     assert error.__cause__.lost_edits  # the list edits the other writer's version lost
     assert methods(store).count(VERSION) == 1  # the write did not read it again
@@ -975,7 +975,7 @@ async def test_a_hub_row_the_vco_leaves_out_of_the_stored_module_is_refused() ->
 
     error = failed.value
     assert isinstance(error.__cause__, RefsDroppedError)
-    assert error.module_name == DS
+    assert error.module_name == "device_settings"
     assert [s.role for s in error.steps_done] == ["hub", "backhaul"]
     assert EDGE_HUB_REF in str(error.__cause__)
     assert [

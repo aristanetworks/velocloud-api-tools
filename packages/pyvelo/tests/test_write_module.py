@@ -826,7 +826,7 @@ async def test_an_unknown_outcome_shows_a_place_and_an_order(
     lines = str(exc.value).splitlines()
     assert lines[2] == "planned, not checked:"
     assert lines[3].startswith(
-        '  inbound[c] (first): read (nothing), meant {"action": {"type": '
+        '  inbound[c] (first): read (nothing), meant {"action": {"type_": '
     )
     assert lines[4] == (
         '  inbound: order: b after c: read ["a", "b"], meant ["c", "b", "a"]'
@@ -1291,7 +1291,8 @@ async def test_if_absent_cannot_use_a_configuration_that_does_not_parse(
     assert isinstance(exc.value.__cause__, ValidationError)
     lines = str(exc.value).splitlines()
     assert lines[0] == (
-        "Configuration module 0 (QOS): the module as stored could not be read: "
+        "Configuration module 0 (business_policy): the module as stored could "
+        "not be read: "
         f"{exc.value.detail}"
     )
     assert lines[1:3] == [

@@ -3167,8 +3167,11 @@ def _require_the_states(
     if more:
         # Named in the plan's data: a key the model does not declare, and an
         # item only the stored module has, keep the part they are written with.
+        # A refs entry is written as a write error writes it.
         paths = [
-            str(change.path if change.part == "refs" else plan.named(change.path))
+            f"refs {change.path}"
+            if change.part == "refs"
+            else str(plan.named(change.path))
             for change in more
         ]
         raise ValueError(
@@ -3208,16 +3211,14 @@ def _how_it_differs(error: ModuleWriteError, plan: ModulePlan) -> str:
     The places it differs at are shown as *plan*, which holds the state's
     module, names them: an item the plan removes in the data as read, any
     other in the data as planned. The path of a refs entry is no path of the
-    data, and is kept.
+    data: it is kept, with ``refs`` before it, as a write error writes it.
     """
     if isinstance(error, WriteOutcomeUnknownError):
         return error.detail
     paths = [
-        str(
-            change.path
-            if change.part == "refs"
-            else plan.named(change.path, removed=change.intended is MISSING)
-        )
+        f"refs {change.path}"
+        if change.part == "refs"
+        else str(plan.named(change.path, removed=change.intended is MISSING))
         for change in error.lost_edits
     ]
     if not paths:

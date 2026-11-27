@@ -456,7 +456,7 @@ def test_completed_writes_are_named() -> None:
             plan=earlier_plan,
         ),
     )
-    assert "written before this one: QOS (update)" in str(exc.value)
+    assert "written before this one: business_policy (update)" in str(exc.value)
 
 
 async def test_ref_row_added_must_be_returned() -> None:
@@ -803,7 +803,7 @@ def test_refused_with_a_left_out_change_stored_otherwise_is_a_conflict_too() -> 
     assert paths(error.left_out) == [ECMP_PATH]
     lines = str(error).splitlines()
     assert lines[0] == (
-        "Configuration module 1 (deviceSettings) changed since it was read "
+        "Configuration module 1 (device_settings) changed since it was read "
         "(version v1): the VCO refused the version"
     )
     assert lines[1] == (

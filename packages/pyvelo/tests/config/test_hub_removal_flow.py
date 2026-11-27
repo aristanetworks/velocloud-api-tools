@@ -325,7 +325,11 @@ async def test_a_second_save_finishes_after_a_failed_last_write() -> None:
         _ = await pipeline.save(state)
 
     error = failed.value
-    assert (error.module_name, error.step, error.written) == (DS, None, (QOS,))
+    assert (error.module_name, error.step, error.written) == (
+        "device_settings",
+        None,
+        (QOS,),
+    )
     assert [s.render() for s in error.steps_done] == [
         "disable hub for Hub-A on segment Guest"
     ]
@@ -474,7 +478,10 @@ async def test_a_segment_assigned_in_a_removal_save_is_stored_in_qos_first(
     with pytest.raises(SaveStepError) as failed:
         _ = await pipeline.save(state)
 
-    assert (failed.value.module_name, failed.value.written) == (DS, (QOS, "firewall"))
+    assert (failed.value.module_name, failed.value.written) == (
+        "device_settings",
+        (QOS, "firewall"),
+    )
     stored = segments_stored(store)
     assert "Voice" not in stored[DS]
     assert "Voice" in stored[QOS]

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, override
 
 from pydantic import MISSING
@@ -22,6 +22,7 @@ from pydantic import MISSING
 from pyvelo.client.enums.configuration import python_module_name
 from pyvelo.core.base import VcoModel, field_models, is_list, wire_name
 from pyvelo.core.changes import patch_of
+from pyvelo.core.names import named_path, named_value
 from pyvelo.core.patch import selector_of
 from pyvelo.core.rebase import (
     ItemMove,
@@ -841,13 +842,34 @@ def _and_more(total: int, limit: int | None, attribute: str) -> list[str]:
 
 
 def _where(change: PlannedChange | ServerChange) -> str:
-    """The path of *change*, with ``refs`` before it for a refs entry."""
+    """The path of *change*, with ``refs`` before it for a refs entry.
+
+    The keys of a refs entry are data: its path is written as the entry has
+    it. *change* is as a write error shows it (``ModuleWriteError._shown``), so
+    the path of a change of the data is in the names of the plan's text.
+    """
     return f"refs {change.path}" if change.part == "refs" else str(change.path)
 
 
 def _what(change: PlannedChange) -> str:
     """The path of *change*, then its place or its order."""
     return _where(change) + _place_or_order(change.place, change.moves)
+
+
+def _written_whole(applied: Sequence[PlannedChange]) -> frozenset[Path]:
+    """The paths of *applied* at which the write stored a value whole.
+
+    Below such a path the check compares what is stored with what was sent
+    key by key, and item by item at one position in both, so a server change
+    there names an item by its position in the data as planned.
+    """
+    return frozenset(
+        change.path
+        for change in applied
+        if change.part == "data"
+        and change.moves is None
+        and change.intended is not MISSING
+    )
 
 
 class ModuleWriteError(VcoError):
@@ -865,10 +887,20 @@ class ModuleWriteError(VcoError):
     ``WriteOutcomeUnknownError`` is a write whose module as stored could not be
     read: it has no ``module`` and no lists. ``str(error)`` lists them by path
     (``render``), all but ``left_out``.
+
+    The lists hold each change as the check made it: its path names a field
+    by the key the VCO uses and an item by its key, and its values are as
+    stored. The text shows each as the plan's text does (``ModulePlan.render``):
+    the module by its python name, a field by its attribute, an item by what
+    names it, and an object with its keys by attribute name.
     """
 
     module_id: int
     module_name: str
+    """The module's python name (``business_policy`` for the module the VCO calls
+    ``QOS``), whichever of the two names the error was made with; ``""`` for
+    none. ``apply`` and ``revert`` take it as ``module``. The VCO's name is
+    ``plan.name``, on an error that has its plan."""
     version: str
     """The version the write carried; ``""`` for none."""
     plan: ModulePlan | None
@@ -908,7 +940,7 @@ class ModuleWriteError(VcoError):
         ``completed`` starts empty; the save sets it.
         """
         self.module_id = module_id
-        self.module_name = module_name
+        self.module_name = python_module_name(module_name)
         self.version = version
         self.plan = plan
         self.module = module
@@ -948,6 +980,11 @@ class ModuleWriteError(VcoError):
     ) -> tuple[str, ...]:
         """*values* of *change* as text, with a secret as ``"***"``.
 
+        *change* is as the check made it, with its path in the VCO's keys:
+        the secrets are found by it. *values* are as a line shows them
+        (``_shown``, ``_shown_server``): an object has its keys by attribute
+        name, and a secret is found under either name.
+
         A ref row is shown as ``"***"`` whatever it holds: rows are compared by
         identity only, and a row can hold a service's credentials.
         """
@@ -957,6 +994,113 @@ class ModuleWriteError(VcoError):
             )
         return shown_together(*values, model=self._document(), path=change.path)
 
+    def _shown(self, change: PlannedChange) -> PlannedChange:
+        """*change*, one of this error's planned changes, as its line shows it.
+
+        The path, the item a place is after, the items of the moves and the
+        item names an order entry holds are shown as the plan's text shows
+        them (``ModulePlan.shown_change``): a field by its attribute, an item
+        by what names it in the data as planned, and an item the plan removes
+        in the data as read. So a lost edit has the path of the plan's line
+        for that change, and the path is one ``apply`` takes. An object among
+        the values has its keys by attribute name.
+
+        A refs entry is returned as it is: its keys are data. So is every
+        change of an error that has no plan, which has nothing to name an
+        item by.
+        """
+        plan = self.plan
+        if plan is None or change.part == "refs":
+            return change
+        seen = plan.shown_change(
+            RawChange(
+                change.path,
+                change.as_read,
+                change.intended,
+                place=change.place,
+                moves=change.moves,
+            )
+        )
+        stored = (
+            plan.shown_names(change.path, change.stored)
+            if change.moves is not None
+            else named_value(change.stored, plan.model, change.path)
+        )
+        return replace(
+            change,
+            path=seen.path,
+            as_read=seen.before,
+            intended=seen.after,
+            stored=stored,
+            place=seen.place,
+            moves=seen.moves,
+        )
+
+    def _shown_server(
+        self, change: ServerChange, whole: frozenset[Path]
+    ) -> ServerChange:
+        """*change*, one of ``server_changes``, as its line shows it.
+
+        *whole* is ``_written_whole`` of the changes this error has as applied.
+
+        Its path names an item in the document that holds it:
+
+        - An item the plan's data has is shown as the plan's text shows it
+          (``ModulePlan.named``): the check names it as the plan's changes
+          do.
+        - Below a value the write stored whole (an added item, a list that
+          was replaced), an item is at one position in the data as planned
+          and as stored, and the check names it by that position. It is kept:
+          the position is that item's in the data the caller holds. The
+          fields are named by their classes.
+        - An item only the stored module has is named by its key there, or
+          by its position there, and is kept as written: the plan's data
+          has no such item, and its position is another item's in it.
+
+        The item names an order holds (a keyed list the VCO stores in
+        another order than sent) are shown as the plan's text shows them. An
+        object among the values has its keys by attribute name.
+
+        A refs entry is returned as it is, and so is every change of an
+        error that has no plan.
+        """
+        plan = self.plan
+        if plan is None or change.part == "refs":
+            return change
+        path = self._server_path(plan, change, whole)
+        values = [change.as_read, change.stored]
+        # An order's two values are the items' names, as text; no other
+        # change of a keyed list has two lists of texts.
+        if all(
+            is_list(value) and all(isinstance(name, str) for name in value)
+            for value in values
+        ):
+            values = [plan.shown_names(change.path, value) for value in values]
+        as_read, stored = (
+            named_value(value, plan.model, change.path) for value in values
+        )
+        return replace(change, path=path, as_read=as_read, stored=stored)
+
+    @staticmethod
+    def _server_path(
+        plan: ModulePlan, change: ServerChange, whole: frozenset[Path]
+    ) -> Path:
+        """The path of *change*, a server change of the data, as it is shown.
+
+        The three cases of ``_shown_server``: below a path of *whole*, then
+        an item only the stored module has (the check gives it nothing as
+        read, and its path ends at the item), then any other path.
+        """
+        parts = change.path.parts
+        for length in range(1, len(parts)):
+            if Path(parts[:length]) in whole:
+                by_class = named_path(change.path, plan.model)
+                head = plan.named(Path(parts[:length]))
+                return Path((*head.parts, *by_class.parts[length:]))
+        if parts and change.as_read is MISSING and not isinstance(parts[-1], str):
+            return plan.named(Path(parts[:-1])).child(parts[-1])
+        return plan.named(change.path)
+
     def render(self, limit: int | None = 20) -> str:
         """The message: the headline, any notes, then each list by path.
 
@@ -964,6 +1108,16 @@ class ModuleWriteError(VcoError):
 
         Each list shows its first *limit* entries (all for None), and a line
         after it counts the rest. A secret is shown as ``"***"``.
+
+        The module is named by its python name. A path is in the names of
+        the plan's text: a lost edit and a stored one have the path of the
+        plan's line for that change, which ``apply`` takes as ``path``, and
+        an object is written with its keys by attribute name. In ``stored
+        otherwise than sent`` an item only the stored module has keeps the
+        key, or the position, it has there, and a key the model does not
+        declare is kept as stored. A refs entry is ``refs <path>``, its keys
+        as stored. An error that has no plan keeps every path as the check
+        wrote it.
         """
         lines = [self._headline(), *self._notes(limit)]
         if self.lost_edits:
@@ -972,11 +1126,12 @@ class ModuleWriteError(VcoError):
                 "`error.not_redone()` lists the rest):"
             )
             for change in _first(self.lost_edits, limit):
+                seen = self._shown(change)
                 as_read, intended, stored = self._values(
-                    change, change.as_read, change.intended, change.stored
+                    change, seen.as_read, seen.intended, seen.stored
                 )
                 line = (
-                    f"  {_what(change)}: read {as_read}, "
+                    f"  {_what(seen)}: read {as_read}, "
                     f"meant {intended}, stored {stored}"
                 )
                 if change.clash:
@@ -985,23 +1140,29 @@ class ModuleWriteError(VcoError):
             lines.extend(_and_more(len(self.lost_edits), limit, "lost_edits"))
         if self.applied:
             lines.append("already stored:")
-            lines.extend(f"  {_what(change)}" for change in _first(self.applied, limit))
+            lines.extend(
+                f"  {_what(self._shown(change))}"
+                for change in _first(self.applied, limit)
+            )
             lines.extend(_and_more(len(self.applied), limit, "applied"))
         if self.server_changes:
             lines.append("stored otherwise than sent:")
+            whole = _written_whole(self.applied)
             for server_change in _first(self.server_changes, limit):
+                seen_change = self._shown_server(server_change, whole)
                 as_read, stored = self._values(
-                    server_change, server_change.as_read, server_change.stored
+                    server_change, seen_change.as_read, seen_change.stored
                 )
                 lines.append(
-                    f"  {_where(server_change)}: read {as_read}, stored {stored}"
+                    f"  {_where(seen_change)}: read {as_read}, stored {stored}"
                 )
             lines.extend(_and_more(len(self.server_changes), limit, "server_changes"))
         if self.completed:
             lines.append(
                 "written before this one: "
                 + ", ".join(
-                    f"{write.name} ({write.operation})" for write in self.completed
+                    f"{python_module_name(write.name)} ({write.operation})"
+                    for write in self.completed
                 )
             )
         return "\n".join(lines)
@@ -1702,6 +1863,9 @@ class RefsDroppedError(WriteNotAppliedError):
             )
         for edit in _first(owners, limit):
             owner = cast("Path", edit.owner)
+            if self.plan is not None:
+                # As the plan's ref line names the field; the patch is that path.
+                owner = self.plan.named_owner(owner)
             if edit.intended is MISSING:
                 lines.append(
                     f"  to clear {owner} again, send the patch "
@@ -1782,13 +1946,15 @@ class WriteOutcomeUnknownError(ModuleWriteError):
         lines = [said, "planned, not checked:"]
         if self.plan is not None:
             for change in _first(self.plan.changes, limit):
+                # As the plan's own line for the change shows it.
+                seen = self.plan.shown_change(change)
                 before, after = shown_together(
-                    change.before,
-                    change.after,
+                    seen.before,
+                    seen.after,
                     model=self.plan.model,
                     path=change.path,
                 )
-                where = f"{change.path}{_place_or_order(change.place, change.moves)}"
+                where = f"{seen.path}{_place_or_order(seen.place, seen.moves)}"
                 lines.append(f"  {where}: read {before}, meant {after}")
             lines.extend(_and_more(len(self.plan.changes), limit, "plan.changes"))
             lines.extend(self.plan.ref_lines())

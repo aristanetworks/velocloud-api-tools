@@ -214,7 +214,7 @@ async def test_a_fresh_module_that_already_has_the_segment_is_a_conflict() -> No
 
     error = caught.value
     assert (error.stated, error.sent) == (False, False)
-    assert error.module_name == QOS
+    assert error.module_name == "business_policy"
     assert "holds segment 'Guest'" in error.detail
     assert [store.rows[p["id"]]["name"] for p in updates(store)] == [DS]
     assert [w.name for w in error.completed] == [DS]
