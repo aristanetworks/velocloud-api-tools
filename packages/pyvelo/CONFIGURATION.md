@@ -2082,7 +2082,12 @@ another its logical ID. The names are those of `error.module` as it is when you 
 `redo_patch()`. Two kinds of item are under the plan's key for them instead: an
 item the patch itself adds, which no stored item names (a network added with
 the VLAN ID 40 is `"40"`, though the plan's text shows it by its name), and the
-items in a segment of which nothing is stored. The values are complete, a
+items in a segment of which nothing is stored. A stored item whose name is the
+selector of an item the patch adds to the same list stays under its key or
+position, so one patch may name items both ways: beside that added network, a
+stored network named `40` with the VLAN ID 10 is `"10"`, since under one
+selector the two would be one entry and `apply` would set your edit of the
+stored network on the new one. The values are complete, a
 secret too, since the patch is what you send back. An item you
 added is added again, never set on an item another writer put in its place.
 The exception is an item you deleted and added again under its key, while the
