@@ -1797,11 +1797,18 @@ stored otherwise than sent:
   syslog_forwarding: read false, stored true
 ```
 
-Under `stored otherwise than sent` a path is named the same way where your
-data has the item. An item only the stored module has keeps the key it has
-there, or its position there (`lan.networks[#0]` is the first network of
-`error.module`, not of your data), and a key the model does not declare is
-kept as stored (`segments[Guest].rules[Web].match.serverAdded`). A row of refs
+Under `stored otherwise than sent` a path is named the same way where the
+check compared an item you sent with the one stored, with two exceptions. An
+item below a value the write added or replaced whole (a new rule, a list sent
+whole) is shown by its position in that value, also where it has a name
+(`segments[Guest].rules[#0].serverAdded` is the first rule you sent): the
+check compares such a value position by position. An item only the stored
+module has keeps the key it has there, or its position there
+(`lan.networks[#0]` is the first network of `error.module`, not of your data),
+in its own line and in the order of its list (`lan.networks: read ["Users",
+"Voice", "Guests"], stored ["#0", "Guests", "Users", "Voice"]`). A key the
+model does not declare is kept as stored
+(`segments[Guest].rules[Web].match.serverAdded`). A row of refs
 is `refs <path>`, the ref's name and the row's identity as stored
 (`refs "deviceSettings:backHaulEdge"[<logical ID>,<segment object ID>]`), and
 its values are shown as `"***"`. `written before this one: business_policy

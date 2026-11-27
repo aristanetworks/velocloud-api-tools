@@ -40,7 +40,10 @@ from test_shown_plan import (  # pyright: ignore[reportImplicitRelativeImport]
 )
 
 if TYPE_CHECKING:
-    from pyvelo.client.schemas.configuration import ConfigurationModuleBase
+    from pyvelo.client.schemas.configuration import (
+        ConfigurationModuleBase,
+        DeviceSettingsConfigurationModule,
+    )
     from pyvelo.config.state import ConfigState
 
 HUB = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1"
@@ -540,3 +543,97 @@ def test_a_refusal_of_revert_names_a_refs_entry_as_a_write_error_does() -> None:
     assert _how_it_differs(error, plan) == (
         f"it differs at {entry}, lan.interfaces[GE1].vlan_ids"
     )
+
+
+def networks_module(*networks: dict[str, Any]) -> DeviceSettingsConfigurationModule:
+    """Device settings read with the LAN *networks* and three interfaces."""
+    return device_settings({**LAN, "lan": {**LAN["lan"], "networks": list(networks)}})
+
+
+def test_an_order_the_vco_changed_names_only_the_items_that_were_sent() -> None:
+    """The plan edits two interfaces; the VCO reorders the networks and adds two.
+
+    Its own two share a VLAN ID, so the check names them by their positions in
+    the stored list, in their own lines and in the stored order: positions
+    that are other networks' in the plan's data.
+    """
+    module = networks_module(net(10, "Users"), net(20, "Voice"), net(30, "Guests"))
+    module.data.lan.interfaces[0].vlan_ids = [10]
+    module.data.lan.interfaces[1].vlan_ids = [20]
+    plan = plan_module(module)
+    stored = copy.deepcopy(plan.data)
+    del stored["lan"]["interfaces"][1]["vlanIds"]
+    users, voice, guests = stored["lan"]["networks"]
+    stored["lan"]["networks"] = [
+        net(40, "Extra"),
+        net(40, "Other"),
+        guests,
+        users,
+        voice,
+    ]
+
+    error = failed(module, plan, stored)
+
+    (order,) = [c for c in error.server_changes if c.path == "lan.networks"]
+    assert order.as_read == ["10", "20", "30"]
+    assert order.stored == ["#0", "#1", "30", "10", "20"]
+    first, second, shown_order = lines_of(error, "stored otherwise than sent:")
+    assert first.startswith("  lan.networks[#0]: read (nothing), stored {")
+    assert '"name": "Extra"' in first
+    assert second.startswith("  lan.networks[#1]: read (nothing), stored {")
+    assert shown_order == (
+        '  lan.networks: read ["Users", "Voice", "Guests"], '
+        'stored ["#0", "#1", "Guests", "Users", "Voice"]'
+    )
+
+
+def test_a_stored_position_is_not_the_sent_item_the_vco_dropped_at_it() -> None:
+    """``A`` and ``B`` share a VLAN ID, so the check names them ``#0`` and ``#1``.
+
+    The stored list lacks ``A`` and has a network of the VCO's own first,
+    which only its position there names: ``#0`` again. The entry that says
+    ``A`` is gone tells the two apart.
+    """
+    module = networks_module(
+        net(10, "A"), net(10, "B", 1), net(20, "Voice"), net(30, "Guests")
+    )
+    module.data.lan.interfaces[0].vlan_ids = [10]
+    plan = plan_module(module)
+    networks = Path.parse("lan.networks")
+    error = ModuleWriteError(
+        10,
+        "v1",
+        module_name="deviceSettings",
+        plan=plan,
+        server_changes=[
+            ServerChange(networks.child(0), net(10, "A"), MISSING),
+            ServerChange(networks.child(0), MISSING, net(40, "Own")),
+            ServerChange(networks, ["#0", "#1", "20", "30"], ["#0", "30", "#1", "20"]),
+        ],
+    )
+    gone, own, order = lines_of(error, "stored otherwise than sent:")
+    assert gone.startswith("  lan.networks[A]: read {")
+    assert gone.endswith(", stored (nothing)")
+    assert own.startswith("  lan.networks[#0]: read (nothing), stored {")
+    assert order == (
+        '  lan.networks: read ["A", "B", "Voice", "Guests"], '
+        'stored ["#0", "Guests", "B", "Voice"]'
+    )
+
+
+@pytest.mark.parametrize("text", ["a b", "", "x.y"])
+def test_a_text_that_is_no_item_name_is_printed_as_it_is(text: str) -> None:
+    """An entry made by hand: the message prints what it holds."""
+    module = networks_module(net(10, "Users"), net(20, "Voice"))
+    module.data.lan.interfaces[0].vlan_ids = [10]
+    order = ServerChange(Path.parse("lan.networks"), ["10", text], [text, "10"])
+    error = ModuleWriteError(
+        10,
+        "v1",
+        module_name="deviceSettings",
+        plan=plan_module(module),
+        server_changes=[order],
+    )
+    assert lines_of(error, "stored otherwise than sent:") == [
+        f'  lan.networks: read ["Users", "{text}"], stored ["{text}", "Users"]'
+    ]

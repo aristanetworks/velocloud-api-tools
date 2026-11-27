@@ -45,6 +45,7 @@ from pyvelo.core.merge import (
     _list_spec,  # pyright: ignore[reportPrivateUsage]
     _validate_field,  # pyright: ignore[reportPrivateUsage]
 )
+from pyvelo.core.names import named_value
 from pyvelo.core.response_check import PlannedChange
 from pyvelo.core.show import shown, shown_together
 from pyvelo.testing import ModuleStore, as_stored, make_module_json, store_of
@@ -594,6 +595,36 @@ def test_a_write_error_shows_no_secret_and_keeps_it_on_the_change() -> None:
     assert not any(secret in text for secret in (OLD, NEW, OTHER))
     assert f"{NEIGHBOR}.md5_password" in text
     assert text.count("***") == 3
+
+
+def test_a_write_error_hides_a_secret_under_a_key_it_shows_by_attribute() -> None:
+    """A lost added neighbour, and one only the VCO has: objects with a password.
+
+    The line writes the object's keys by attribute name (``md5_password``),
+    and the secret is found under that name too.
+    """
+    module = ds(settings(neighbor(OLD)))
+    bgp = require_present(module.data.segments[0].bgp)
+    added = {**neighbor(NEW), "neighborIp": "192.0.2.2"}
+    bgp.neighbors.append(type(bgp.neighbors[0]).model_validate(added))
+    bgp.asn = "65010"
+    stored = settings(neighbor(OLD), {**neighbor(OTHER), "neighborIp": "192.0.2.9"})
+    stored["segments"][0]["bgp"]["ASN"] = "65010"
+    with pytest.raises(ModuleWriteError) as exc:
+        _ = check_module_write(module, plan_module(module), as_stored(module, stored))
+    error = exc.value
+    (lost,) = error.lost_edits
+    assert isinstance(lost.intended, dict)
+    assert lost.intended["md5Password"] == NEW
+    text = error.render(limit=None)
+    assert not any(secret in text for secret in (OLD, NEW, OTHER))
+    assert "md5Password" not in text
+    named = named_value(lost.intended, DeviceSettingsData, lost.path)
+    assert isinstance(named, dict)
+    assert named["md5_password"] == NEW
+    hidden = hide_secrets(DeviceSettingsData, lost.path, named)
+    assert isinstance(hidden, dict)
+    assert hidden["md5_password"] == "***"
 
 
 def test_a_write_error_hides_what_another_writer_stored() -> None:

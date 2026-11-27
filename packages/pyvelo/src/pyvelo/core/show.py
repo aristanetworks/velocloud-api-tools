@@ -15,7 +15,8 @@ from typing import Final
 from pydantic import MISSING
 
 from pyvelo.core.base import VcoModel
-from pyvelo.core.rebase import ItemMove, Key, Path
+from pyvelo.core.patch import patch_key
+from pyvelo.core.rebase import ItemMove, Path
 from pyvelo.core.secrets import hide_secrets
 
 VALUE_WIDTH: Final = 80
@@ -119,14 +120,16 @@ def patch_text(path: Path, *, clear: bool = False) -> str:
 
     It is JSON a text-only caller can send.
 
-    The path is in the names a patch is written in; a keyed item is named by
-    its key. The value is a placeholder to replace with the name or the
-    logical ID of a service that exists, or ``null`` with *clear*.
+    The path is in the names a patch is written in. Each part is the key a
+    patch has for it (``patch_key``): a field by its name, a keyed item by
+    the selector of its key, and a position as ``#n``, which a patch reads
+    as a position and not as the key ``n``. The value is a placeholder to
+    replace with the name or the logical ID of a service that exists, or
+    ``null`` with *clear*.
     """
     patch: object = (
         None if clear else "<the name or the logical ID of a service that exists>"
     )
     for part in reversed(path.parts):
-        text = str(part.value) if isinstance(part, Key) else str(part)
-        patch = {text: patch}
+        patch = {patch_key(part): patch}
     return json.dumps(patch)

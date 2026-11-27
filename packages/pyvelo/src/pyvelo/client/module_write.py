@@ -440,13 +440,19 @@ class ModulePlan:
         """*names*, the item names of an order entry, each shown by *name*.
 
         Each is the text ``Path`` writes an item in (``item_text``); it is read
-        back as that item and written as *name* shows it.
+        back as that item and written as *name* shows it. A text that does
+        not read as an item (an entry made by hand) is kept as written.
         """
         if not is_list(names):
             return names
         shown_names: list[object] = []
         for text in names:
-            part = Path.parse(f"[{text}]").parts[0] if isinstance(text, str) else None
+            part: PathPart | None = None
+            if isinstance(text, str):
+                try:
+                    part = Path.parse(f"[{text}]").parts[0]
+                except ValueError:
+                    part = None
             shown_names.append(
                 text if part is None or isinstance(part, str) else item_text(name(part))
             )

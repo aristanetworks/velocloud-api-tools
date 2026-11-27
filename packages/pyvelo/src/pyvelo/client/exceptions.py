@@ -33,6 +33,7 @@ from pyvelo.core.rebase import (
     Path,
     RawChange,
     item_parts,
+    item_text,
     node_child,
 )
 from pyvelo.core.references import Reference, reference_text
@@ -872,6 +873,22 @@ def _written_whole(applied: Sequence[PlannedChange]) -> frozenset[Path]:
     )
 
 
+def _dropped(server_changes: Sequence[ServerChange]) -> frozenset[tuple[Path, str]]:
+    """The items that were sent and the stored module lacks, of *server_changes*.
+
+    Each as the path of its list and the item's name there, as text
+    (``item_text``): the name an order entry of that list has for the item.
+    """
+    return frozenset(
+        (Path(change.path.parts[:-1]), item_text(change.path.parts[-1]))
+        for change in server_changes
+        if change.part == "data"
+        and change.stored is MISSING
+        and change.path.parts
+        and not isinstance(change.path.parts[-1], str)
+    )
+
+
 class ModuleWriteError(VcoError):
     """A module write that is not known to be stored as planned.
 
@@ -1037,11 +1054,15 @@ class ModuleWriteError(VcoError):
         )
 
     def _shown_server(
-        self, change: ServerChange, whole: frozenset[Path]
+        self,
+        change: ServerChange,
+        whole: frozenset[Path],
+        dropped: frozenset[tuple[Path, str]],
     ) -> ServerChange:
         """*change*, one of ``server_changes``, as its line shows it.
 
-        *whole* is ``_written_whole`` of the changes this error has as applied.
+        *whole* is ``_written_whole`` of the changes this error has as applied,
+        and *dropped* is ``_dropped`` of its server changes.
 
         Its path names an item in the document that holds it:
 
@@ -1050,16 +1071,24 @@ class ModuleWriteError(VcoError):
           do.
         - Below a value the write stored whole (an added item, a list that
           was replaced), an item is at one position in the data as planned
-          and as stored, and the check names it by that position. It is kept:
-          the position is that item's in the data the caller holds. The
-          fields are named by their classes.
+          and as stored, and the check names it by that position. It is kept,
+          also where the item has a name: the position counts in the payload,
+          which is not always the list the plan's data holds (a save adds a
+          segment's missing defaults to it), so the item is not looked up
+          there. The fields are named by their classes.
         - An item only the stored module has is named by its key there, or
           by its position there, and is kept as written: the plan's data
           has no such item, and its position is another item's in it.
 
-        The item names an order holds (a keyed list the VCO stores in
-        another order than sent) are shown as the plan's text shows them. An
-        object among the values has its keys by attribute name.
+        An order (a keyed list the VCO stores in another order than sent)
+        holds the items' names as sent and as stored. Those sent are shown as
+        the plan's text shows them, and a stored name is shown as the sent
+        item of that name is. A stored name no sent item has is an item only
+        the stored module has, and is kept as written, as its own line keeps
+        it; so is one whose sent item the stored module lacks (*dropped*): a
+        position there may be written as that item's was. A text that is no
+        item's name is kept too. An object among the values has its keys by
+        attribute name.
 
         A refs entry is returned as it is, and so is every change of an
         error that has no plan.
@@ -1075,7 +1104,19 @@ class ModuleWriteError(VcoError):
             is_list(value) and all(isinstance(name, str) for name in value)
             for value in values
         ):
-            values = [plan.shown_names(change.path, value) for value in values]
+            sent = cast("list[str]", change.as_read)
+            shown_sent = plan.shown_names(change.path, sent)
+            if is_list(shown_sent) and len(shown_sent) == len(sent):
+                names = dict(zip(sent, shown_sent, strict=True))
+                values = [
+                    shown_sent,
+                    [
+                        name
+                        if (change.path, name) in dropped
+                        else names.get(name, name)
+                        for name in cast("list[str]", change.stored)
+                    ],
+                ]
         as_read, stored = (
             named_value(value, plan.model, change.path) for value in values
         )
@@ -1114,7 +1155,9 @@ class ModuleWriteError(VcoError):
         plan's line for that change, which ``apply`` takes as ``path``, and
         an object is written with its keys by attribute name. In ``stored
         otherwise than sent`` an item only the stored module has keeps the
-        key, or the position, it has there, and a key the model does not
+        key, or the position, it has there, in its own line and in the order
+        of its list; an item below a value the write added or replaced whole
+        is shown by its position in that value; and a key the model does not
         declare is kept as stored. A refs entry is ``refs <path>``, its keys
         as stored. An error that has no plan keeps every path as the check
         wrote it.
@@ -1148,8 +1191,9 @@ class ModuleWriteError(VcoError):
         if self.server_changes:
             lines.append("stored otherwise than sent:")
             whole = _written_whole(self.applied)
+            dropped = _dropped(self.server_changes)
             for server_change in _first(self.server_changes, limit):
-                seen_change = self._shown_server(server_change, whole)
+                seen_change = self._shown_server(server_change, whole, dropped)
                 as_read, stored = self._values(
                     server_change, seen_change.as_read, seen_change.stored
                 )
