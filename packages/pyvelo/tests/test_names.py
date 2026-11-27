@@ -21,9 +21,7 @@ from pyvelo.client.models.enterprise.service import SymantecWssLocationUsage
 from pyvelo.client.schemas.enterprise import DnsService
 from pyvelo.core import (
     Alias,
-    ConfigContext,
     Edge,
-    EdgeOnly,
     Effective,
     Key,
     KeyField,
@@ -54,16 +52,17 @@ from pyvelo.core.layers import L
 from pyvelo.core.merge import item_selectors, nest_patch, nested_under
 from pyvelo.core.names import (
     ChangeNames,
-    named_change_path,
     named_error,
     shown_item_parts,
 )
 from pyvelo.core.rebase import (
     KeyedList,
+    PairedList,
     item_key,
     mark_added_items,
     node_child,
     pair_items,
+    raw_changes,
 )
 
 
@@ -858,7 +857,7 @@ def test_a_list_of_wrapped_items_keeps_its_positions() -> None:
     assert item_part(view.segments[0], "rules", 1) == 1
 
 
-def test_a_list_of_wrapped_items_is_not_paired() -> None:
+def test_a_change_path_keeps_the_positions_of_a_list_of_wrapped_items() -> None:
     """Its items are not plain models: a part that names one is kept."""
     segment = {
         "segment": {"segmentId": 1, "name": "Guest"},
@@ -868,7 +867,6 @@ def test_a_list_of_wrapped_items_is_not_paired() -> None:
     edge = Mod[Edge].model_validate(mod_json(segments=[segment]))
     view = effective_view(edge, profile, Mod[Effective])
     names = ChangeNames(view, view)
-    assert names.pairing(view.segments[0], view.segments[0], "rules") is None
     assert names.path(Path.parse("segments[#0].rules[#1].action")) == (
         "segments[Guest].rules[#1].action"
     )
@@ -934,8 +932,30 @@ def rules_doc(*rows: object) -> Doc:
     return Doc.model_validate({"rules": list(rows)})
 
 
-def changed(text: str, read: Doc, edited: Doc, *, removed: bool = False) -> str:
-    return str(named_change_path(Path.parse(text), read, edited, removed=removed))
+def saved(holder: VcoModel) -> dict[str, object]:
+    """*holder* as a save dumps it, an added item marked."""
+    dump = holder.model_dump(mode="json", by_alias=True)
+    mark_added_items(holder, dump)
+    return dump
+
+
+def paired(read: VcoModel, edited: VcoModel) -> dict[Path, PairedList]:
+    """How the changes from *read* to *edited* pair each list, as a save makes them."""
+    lists: dict[Path, PairedList] = {}
+    _ = raw_changes(saved(read), saved(edited), type(read), lists=lists)
+    return lists
+
+
+def change_names(read: VcoModel, edited: VcoModel) -> ChangeNames:
+    """What names the changes a save makes from *read* to *edited*."""
+    return ChangeNames(read, edited, paired(read, edited))
+
+
+def changed(
+    text: str | Path, read: VcoModel, edited: VcoModel, *, removed: bool = False
+) -> str:
+    path = text if isinstance(text, Path) else Path.parse(text)
+    return str(change_names(read, edited).path(path, removed=removed))
 
 
 def test_a_change_inside_a_renamed_item_is_shown_under_its_new_name() -> None:
@@ -1023,13 +1043,10 @@ def test_an_item_of_a_list_without_a_key_has_no_partner() -> None:
 def test_an_entry_of_a_map_is_its_key_in_both_documents() -> None:
     read = shelf()
     edited = Shelf.model_validate({"hubs": {"top": A}})
-    path = Path.parse('hubs."low:1".logicalId')
-    assert named_change_path(path, read, edited, removed=True) == (
+    assert changed('hubs."low:1".logicalId', read, edited, removed=True) == (
         'hubs."low:1".logical_id'
     )
-    assert named_change_path(Path.parse("hubs.top.logicalId"), read, edited) == (
-        "hubs.top.logical_id"
-    )
+    assert changed("hubs.top.logicalId", read, edited) == "hubs.top.logical_id"
 
 
 class Mac(VcoModel):
@@ -1047,7 +1064,7 @@ def test_keys_that_differ_by_letter_case_are_one_where_the_list_folds_case() -> 
     read = Macs.model_validate({"macs": [{"macAddress": "AA:BB"}]})
     edited = Macs.model_validate({"macs": [{"macAddress": "aa:bb"}]})
     path = Path(("macs", Key("AA:BB"), "note"))
-    assert named_change_path(path, read, edited, removed=True) == 'macs["aa:bb"].note'
+    assert changed(path, read, edited, removed=True) == 'macs["aa:bb"].note'
 
 
 def test_an_item_an_add_built_is_not_the_item_whose_key_it_has() -> None:
@@ -1197,85 +1214,123 @@ PAIRED: list[
 ]
 
 
-def as_saved(holder: VcoModel) -> list[object]:
-    """The ``nets`` of *holder* as a save dumps them, an added item marked."""
-    dump = holder.model_dump(mode="json", by_alias=True)
-    mark_added_items(holder, dump)
-    return cast("list[object]", dump["nets"])
-
-
 @pytest.mark.parametrize(
     ("holder", "rows", "edit", "partner"),
     [case[1:] for case in PAIRED],
     ids=[case[0] for case in PAIRED],
 )
-def test_a_path_is_named_by_the_pairing_a_save_makes_its_changes_by(
+def test_the_changes_record_the_pairing_they_are_made_by(
     holder: type[Lan | LanWithIds],
     rows: list[dict[str, object]],
     edit: Edit,
     partner: dict[int, int] | None,
 ) -> None:
-    """``ChangeNames.pairing`` and ``pair_items`` pair the items of a list alike."""
+    """``raw_changes`` records ``pair_items``' pairs; a list it cannot pair, nothing."""
     read = holder.model_validate({"nets": rows})
     edited = read.model_copy(deep=True)
     edit(edited)
     node = node_child(holder, "nets")
     assert isinstance(node, KeyedList)
-    saved = pair_items(as_saved(read), as_saved(edited), node)
-    named_by = ChangeNames(read, edited).pairing(read, edited, "nets")
-    assert (None if saved is None else dict(saved.pairs)) == partner
-    assert (None if named_by is None else named_by.partner) == partner
+    was, now = saved(read)["nets"], saved(edited)["nets"]
+    pairing = pair_items(cast("list[object]", was), cast("list[object]", now), node)
+    record = paired(read, edited).get(Path(("nets",)))
+    assert (None if pairing is None else dict(pairing.pairs)) == partner
+    assert (None if record is None else dict(record.pairs)) == partner
 
 
-def test_the_pairing_of_a_list_is_made_once_for_two_documents() -> None:
+def test_an_item_is_found_by_the_pairing_recorded_and_not_by_its_key() -> None:
+    """The record says each became the other: what the keys say is not asked."""
     read = Lan.model_validate({"nets": [net(1, "a"), net(2, "b")]})
-    edited = read.model_copy(deep=True)
-    names = ChangeNames(read, edited)
-    first = names.pairing(read, edited, "nets")
-    assert first is not None
-    assert names.pairing(read, edited, "nets") is first
-    assert names.path(Path.parse("nets[2].note")) == "nets[b].note"
-    # Another model in the place of one of the two is another list.
-    other = edited.model_copy(deep=True)
-    assert names.pairing(read, other, "nets") is not first
+    record = PairedList(
+        pairs=((0, 1), (1, 0)),
+        old_parts=(Key(1), Key(2)),
+        names=(Key(2), Key(1)),
+        new_parts=(Key(1), Key(2)),
+    )
+    names = ChangeNames(read, read.model_copy(deep=True), {Path(("nets",)): record})
+    assert names.path(Path.parse("nets[1].note")) == "nets[b].note"
+    assert names.path(Path.parse("nets[2].note")) == "nets[a].note"
+    name = names.items(Path(("nets",)))
+    assert name is not None
+    assert (name(Key(1)), name(Key(2))) == (Key("b"), Key("a"))
+    # With no record the list was not paired, and an item is the one of its key.
+    unpaired = ChangeNames(read, read.model_copy(deep=True))
+    assert unpaired.path(Path.parse("nets[1].note")) == "nets[a].note"
 
 
-def test_a_field_that_is_no_keyed_list_has_no_pairing() -> None:
+def test_a_field_that_is_no_keyed_list_has_no_items_to_show() -> None:
     read = Doc.model_validate({"plain": [A, B]})
-    assert ChangeNames(read, read).pairing(read, read, "plain") is None
-    assert ChangeNames(read, read).pairing(read, read, "nope") is None
+    assert ChangeNames(read, read).items(Path(("plain",))) is None
+    assert ChangeNames(read, read).items(Path(("nope",))) is None
 
 
-class Port(VcoModel):
-    number: int | None = None
-    name: str | None = None
-    speed: Annotated[str, EdgeOnly] = ""
+ADDED_NAMES = ["r2", "#0", "#1", "#2", "", "a.b", "a]b", 'a"b', "24", "true"]
+"""Names for an added rule: another rule's alt key, positions, and odd texts."""
 
 
-class Ports(VcoModel):
-    ports: Annotated[list[Port], KeyField("number", label="name")] = Field(
+@pytest.mark.parametrize("name", ADDED_NAMES)
+def test_the_name_of_an_added_item_is_never_read_as_a_selector(name: str) -> None:
+    """A rule added first, named as another rule's alt key, key or position reads.
+
+    Its lines name the rule at position 0 as edited, and the rule placed
+    after it is after that rule.
+    """
+    read = rules_doc(rule_row("Web", "r1"), rule_row("Mail", "r2"))
+    edited = read.model_copy(deep=True)
+    _ = edited.merge_patch({"rules": {"+new": add({"name": name}, first=True)}})
+    assert [rule.name for rule in edited.rules] == [name, "Web", "Mail"]
+    names = change_names(read, edited)
+    (addition,) = raw_changes(saved(read), saved(edited), Doc)
+    part = item_part(edited, "rules", 0)
+    want = Path(("rules", 0 if part is None else part))
+    assert names.path(addition.path) == want
+    assert Path.parse(str(want)) == want
+    name_of = names.items(Path(("rules",)))
+    assert name_of is not None
+    written = addition.path.parts[-1]
+    assert not isinstance(written, str)
+    assert name_of(written) == want.parts[-1]
+    assert name_of(Key("Web")) == Key("Web")
+
+
+class Seg(VcoModel):
+    segment_id: int
+    name: str
+    nets: Annotated[list[Net], KeyField("vlan_id", label="name")] = Field(
         default_factory=list
     )
 
 
-def test_the_two_lists_are_paired_at_one_config_level() -> None:
-    """The data as read has no level of its own, and a save dumps both at one.
+class Segs(VcoModel):
+    segments: Annotated[list[Seg], KeyField("name", alt="segment_id")] = Field(
+        default_factory=list
+    )
 
-    ``speed`` is absent at the profile level, so it is in neither dump, and
-    two ports of one number that did not change are each themselves.
+
+def test_an_item_the_models_hold_elsewhere_is_found_by_its_key() -> None:
+    """The JSON written has an item the model as edited lacks, before the others.
+
+    A position of the JSON list is then not one of the models: each item is
+    found by its key, and one the models lack is shown as read.
     """
     rows = [
-        {"number": 9, "name": "x"},
-        {"number": 1, "name": "a", "speed": "fast"},
-        {"number": 1, "name": "b", "speed": "slow"},
+        {"segmentId": 0, "name": "Global", "nets": [net(1, "a")]},
+        {"segmentId": 1, "name": "Guest", "nets": [net(1, "b")]},
     ]
-    read = Ports.model_validate({"ports": rows})
-    edited = Ports.model_validate({"ports": rows}).for_profile()
-    assert (read.config_context, edited.config_context) == (None, ConfigContext.PROFILE)
-    del edited.ports[0]
-    pairing = ChangeNames(read, edited).pairing(read, edited, "ports")
-    assert pairing is not None
-    assert pairing.partner == {1: 0, 2: 1}
+    read = Segs.model_validate({"segments": rows})
+    edited = read.model_copy(deep=True)
+    edited.segments[1].nets[0].note = "changed"
+    written = saved(edited)
+    del edited.segments[0]
+    lists: dict[Path, PairedList] = {}
+    (change,) = raw_changes(saved(read), written, Segs, lists=lists)
+    assert change.path == "segments[Guest].nets[1].note"
+    assert lists[Path(("segments",))].pairs == ((0, 0), (1, 1))
+    names = ChangeNames(read, edited, lists)
+    assert names.path(change.path) == "segments[Guest].nets[b].note"
+    assert names.path(Path.parse("segments[Global].nets[1].note")) == (
+        "segments[Global].nets[a].note"
+    )
 
 
 # ---------------------------------------------------------------------------

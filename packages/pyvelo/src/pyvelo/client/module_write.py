@@ -148,6 +148,7 @@ from pyvelo.core.rebase import (
     ItemPart,
     ItemPlace,
     Key,
+    PairedList,
     Path,
     RawChange,
     carry_unset_defaults,
@@ -349,6 +350,17 @@ class ModulePlan:
     plan made from this one (the hub rows) keeps it; a rebase plans again, and
     has the rebased data.
     """
+    paired_lists: Mapping[Path, PairedList] = dataclass_field(
+        default_factory=dict[Path, PairedList], repr=False, compare=False
+    )
+    """How ``changes`` paired the items of each keyed list, by the list's path.
+
+    It is recorded while the changes are made (``raw_changes``), for each
+    list whose changes are made item by item. ``named`` and ``shown_change``
+    find by it the item a change names, so what shows a change pairs nothing
+    again and reads no name as a selector. Do not change it. A plan made from
+    this one keeps it, with ``changes``.
+    """
 
     @override
     def __repr__(self) -> str:
@@ -364,13 +376,15 @@ class ModulePlan:
         and an item by its key as read (``changes``, ``legacy_keys``,
         ``overrides_turned_on``). An item is shown as the data as planned names
         it, so a change inside a renamed rule is shown under the rule's new
-        name, and the path names the rule in the data the caller holds. With
-        *removed* (the change removes what *path* names) an item the plan
-        removes, and all below it, is shown as the data as read names it
-        (``named_change_path``). An item as read and its item as planned are
-        the two the plan's changes were made between, so a path never names
-        another item; a position still shown (nothing else names the item
-        alone) is its position in the data it is shown in.
+        name, and the path names the rule in the data the caller holds. An
+        item the plan removes, and all below it, is shown as the data as read
+        names it; give *removed* where the change removes what *path* names,
+        since an item added under the key of one removed has its name
+        (``ChangeNames``). An item is found by how the changes paired the
+        list it is in (``paired_lists``) and never by reading its name as a
+        selector, so a path never names another item; a position still shown
+        (nothing else names the item alone) is its position in the data it is
+        shown in.
 
         A plan that lacks one of the two (it was made from a mapping, or of a
         module that never carried data) shows the path in the one the state
@@ -388,35 +402,27 @@ class ModulePlan:
         """What names the paths between the data as read and as planned.
 
         None for a plan that lacks one of the two. It is made once for the
-        plan and keeps how the items of each list are paired, so the lines of
-        a plan do not each pair the lists again.
+        plan and keeps what it finds for each list, so the lines of a plan do
+        not each read the lists again.
         """
         read, edited = self.as_read, self.planned
         if read is None or edited is None:
             return None
-        return ChangeNames(read, edited)
+        return ChangeNames(read, edited, self.paired_lists)
 
-    def _named_item(self, items: Path, item: ItemPart) -> ItemPart:
-        """*item*, an item of the list at *items* that is there as planned, as shown."""
-        shown_part = self.named(items.child(item)).parts[-1]
-        return item if isinstance(shown_part, str) else shown_part
+    def _shown_items(self, items: Path) -> Callable[[ItemPart], ItemPart]:
+        """What shows an item of the keyed list at *items*, as a change names it.
 
-    def _order_items(self, items: Path) -> Callable[[ItemPart], ItemPart]:
-        """What shows an item of the order entry of the list at *items*.
-
-        It shows each item as ``_named_item`` does, from the names of the whole
-        list found in one pass (``ChangeNames.order_names``), so the names of
-        all the items of a long list cost about the list once; an item those
-        lack is looked up alone.
+        The item an added one is placed after, each item of a move, and each
+        name of an order entry: an item of the list as planned, shown by the
+        part ``named`` shows it by (``ChangeNames.items``). The list is named
+        in one pass, so the names of all the items of a long list cost about
+        the list once. A plan that lacks the data as read or as planned
+        keeps each name as written.
         """
         names = self._change_names
-        found = None if names is None else names.order_names(items)
-
-        def shown(item: ItemPart) -> ItemPart:
-            part = None if found is None else found.get(item_text(item))
-            return self._named_item(items, item) if part is None else part
-
-        return shown
+        found = None if names is None else names.items(items)
+        return (lambda item: item) if found is None else found
 
     @staticmethod
     def _named_place(
@@ -458,18 +464,18 @@ class ModulePlan:
         """*change*, one of ``changes``, as pyvelo shows it.
 
         The path is shown by ``named`` (as the data as read names it where the
-        change removes what it names), and so are the item a place is after
-        and the items of a move. A value is written by ``named_value``, with
-        its keys by attribute name; the values of an order entry, the item
-        names in the order read and in the new order, are the items as shown,
-        all of them named in one pass over the list (``_order_items``).
-        ``render`` writes each line from it but an order line, which names
-        only the moves it prints, as this does; ``ConfigState.get_field_changes``
-        is made of them.
+        change removes what it names). The item a place is after, the items
+        of a move and the values of an order entry (the item names in the
+        order read and in the new order) are items of the list as planned,
+        each shown by the part ``named`` shows that item by
+        (``_shown_items``). A value is written by ``named_value``, with its
+        keys by attribute name. ``render`` writes each line from it but an
+        order line, which names only the moves it prints, by the same
+        ``_shown_items``; ``ConfigState.get_field_changes`` is made of them.
         """
         path = self.named(change.path, removed=change.after is MISSING)
         if change.moves is not None:
-            name = self._order_items(change.path)
+            name = self._shown_items(change.path)
             return RawChange(
                 path,
                 self._named_names(change.before, name),
@@ -479,7 +485,7 @@ class ModulePlan:
         place = change.place
         if place is not None:
             items = Path(change.path.parts[:-1])
-            place = self._named_place(place, functools.partial(self._named_item, items))
+            place = self._named_place(place, self._shown_items(items))
         return RawChange(
             path,
             named_value(change.before, self.model, change.path),
@@ -491,11 +497,11 @@ class ModulePlan:
         """The line of ``render`` for *change*, as ``shown_change`` shows it.
 
         The secrets are found by the path as the change has it, in the VCO's
-        keys. Of an order entry only the moves the line prints are looked up:
+        keys. Of an order entry only the moves the line prints are named:
         the rest are counted.
         """
         if change.moves is not None:
-            name = functools.partial(self._named_item, change.path)
+            name = self._shown_items(change.path)
             printed = self._named_moves(change.moves[:MOVES_SHOWN], name)
             moves = (*printed, *change.moves[MOVES_SHOWN:])
             return f"  ~ {self.named(change.path)}: order: {moves_text(moves)}"
@@ -1628,7 +1634,8 @@ def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its c
     legacy = legacy_key_paths(reconciled, name, level)
     if changed:  # never a write just to strip them
         drop_legacy_keys(payload, name)
-    changes = tuple(raw_changes(planned_from, payload, model_type))
+    paired: dict[Path, PairedList] = {}
+    changes = tuple(raw_changes(planned_from, payload, model_type, lists=paired))
     missing_defaults, repair_warnings = _repaired_defaults(
         module,
         repair_targets,
@@ -1661,6 +1668,7 @@ def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its c
         missing_defaults=tuple(missing_defaults),
         as_read=planned.baseline,
         planned=_copy_of(current),
+        paired_lists=paired,
     )
 
 

@@ -5,15 +5,15 @@ by its key or its position. What it prints names a field by its python
 attribute and an item by the text a reader knows it by, in the one form
 ``Path`` writes: ``segments[Guest].rules[Web].rule_logical_id``.
 
-``named_path`` converts a path, ``named_change_path`` the path of a change
-between the data as read and as edited (``ChangeNames`` does so for many
-paths of the same two documents), ``named_error`` the path of a
+``named_path`` converts a path, ``ChangeNames`` the paths of the changes
+between the data as read and as edited, ``named_error`` the path of a
 ``PatchError``, ``named_value`` the keys of a JSON value found at one, and
 ``item_part`` gives the part that names one item of a list.
 """
 
 import functools
 from collections import Counter
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from types import UnionType
@@ -34,27 +34,25 @@ from .base import (
     list_kind,
     python_name,
 )
-from .fields import ConfigContext, get_key_spec
+from .fields import KeySpec, get_key_spec
 from .identity import ResolverNotLoadedError
 from .layers import field_kind
 from .merge import item_selector, item_selectors, select_items
 from .owned import unwrap
 from .patch import PatchError, patch_key, selector_of
 from .rebase import (
-    AddedItem,
     ItemPart,
     Key,
-    KeyedList,
+    KeyForm,
     KeyValue,
+    PairedList,
     Path,
     PathPart,
+    compared_form,
     item_key,
-    item_parts,
-    item_text,
     key_text,
-    node_child,
     node_field,
-    pair_items,
+    same_key,
 )
 
 
@@ -513,265 +511,424 @@ def named_path(
 
 
 @dataclass(frozen=True, slots=True)
-class ItemPairing:
-    """How the items of a keyed list as read became those of the list as edited.
+class _Keyed:
+    """A keyed list the data has: the model it is a field of, its key, its items."""
 
-    It is ``pair_items``' pairing, the one a save makes its changes by.
+    owner: VcoModel
+    field: str
+    spec: KeySpec
+    items: list[object]
+    classes: tuple[type[VcoModel], ...]
+    """The classes an item can be."""
+
+    def below(self, position: int) -> _Model:
+        """The place of the item at *position*."""
+        return _holding(self.items[position], self.classes)
+
+
+def _keyed(place: _Place) -> _Keyed | None:
+    """The keyed list the data has at *place*; None for any other place."""
+    if not isinstance(place, _Items) or place.owner is None or place.is_map:
+        return None
+    spec = get_key_spec(type(place.owner).model_fields[place.field])
+    items: object = getattr(place.owner, place.field)
+    if spec is None or not is_list(items):
+        return None
+    return _Keyed(place.owner, place.field, spec, items, place.classes)
+
+
+type _Name = int | KeyForm
+"""What an item part is found by: a position, or a key as its list compares keys."""
+
+
+def _name(part: PathPart, spec: KeySpec) -> _Name:
+    """*part* as an item of the list of *spec* is found by it.
+
+    A bare name after a list is the key of that text.
+    """
+    if isinstance(part, int):
+        return part
+    form = compared_form(part.value if isinstance(part, Key) else part, spec)
+    return "" if form is None else form
+
+
+def _own_keys(keys: list[KeyValue | None], spec: KeySpec) -> dict[_Name, int]:
+    """The position of each item whose key no other item has, by that key.
+
+    *keys* are the keys of the items of the list of *spec*, None for an item
+    without one.
+    """
+    forms = [compared_form(key, spec) for key in keys]
+    counts = Counter(forms)
+    return {
+        form: position
+        for position, form in enumerate(forms)
+        if form is not None and counts[form] == 1
+    }
+
+
+def _positions(
+    parts: tuple[ItemPart, ...], keys: list[KeyValue | None], spec: KeySpec
+) -> list[int | None]:
+    """Where each item of a JSON list is in the models of that list.
+
+    *parts* are what names each item of the JSON list there (``item_parts``),
+    and *keys* the keys of the models. The model of an item is at the item's
+    position where the two lists have one length and every key that names a
+    JSON item alone is the key of the model at its position (``same_key``,
+    as a rebase checks a document against its parse). Where they are not (a
+    plan puts back the segment an edit of an edge removed, after the others),
+    an item is found by its key, where one model has that key; an item its
+    position names is then not found, which is None.
+    """
+    if len(parts) == len(keys) and all(
+        isinstance(part, int) or (key is not None and same_key(part.value, key))
+        for part, key in zip(parts, keys, strict=True)
+    ):
+        return list(range(len(parts)))
+    own = _own_keys(keys, spec)
+    return [
+        None if isinstance(part, int) else own.get(_name(part, spec)) for part in parts
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class _ListNames:
+    """One keyed list in the data as read and as edited, and the items changes name.
+
+    Every position is one in the models: of ``read``, or of ``edited``.
     """
 
+    spec: KeySpec
+    """The key of the list."""
+    read: _Keyed | None
+    """The list as read; None where that data has none."""
+    edited: _Keyed | None
+    """The list as edited; None where that data has none."""
+    read_at: dict[_Name, int]
+    """The position as read of each item a change names as an item as read."""
+    edited_at: dict[_Name, int]
+    """The position as edited of each item a change names as one as edited."""
     partner: dict[int, int]
     """The position as edited of each item both have, by its position as read."""
-    read_by_position: frozenset[int]
-    """The positions as read of the items a change names by position.
+    edited_own: dict[_Name, int]
+    """The position as edited of each item whose key no other has there, by it."""
+    parts: dict[bool, list[ItemPart | None] | None] = dataclass_field(
+        default_factory=dict
+    )
+    """``shown_item_parts`` of the list as edited (True) and as read, once asked."""
 
-    They are the items whose key is absent, or is another item's too.
-    """
-    added_by_position: frozenset[int]
-    """The positions as edited of the added items a change names by position."""
-    read_parts: tuple[ItemPart, ...] = ()
-    """The part a change names each item as read by (``item_parts``), by position."""
-    edited_parts: tuple[ItemPart, ...] = ()
-    """The part a change names each item as edited by, by position."""
+    def find(
+        self, part: PathPart, *, removed: bool = False
+    ) -> tuple[int | None, int | None]:
+        """Where the item *part* names is: its position as read, and as edited.
 
-    def adds_at(self, position: int) -> bool:
-        """Whether a change's *position* is an added item's, in the list as edited.
-
-        It is where the added item there is named by position, and no item as
-        read is named by that position: a save never gives one name to both.
+        An item both have has both. An item the edits removed has the first
+        only, and an item they added the second only. *part* is read as a
+        change writes it: the name of an item as read, then that of an added
+        item. One name may be given to both a removed item (its key as read)
+        and an added one (its key as edited): with *removed* it is the removed
+        item, else the added. A name no change gives an item is the key an
+        item has as edited (a path written from that data), and a position no
+        change gives one is a position as read, or as edited where the item
+        there as read has no partner and *removed* is not given.
+        ``(None, None)`` for a part that names no item.
         """
-        return (
-            position in self.added_by_position and position not in self.read_by_position
-        )
+        name = _name(part, self.spec)
+        i = self.read_at.get(name)
+        if i is None and isinstance(part, int) and name not in self.edited_at:
+            i = part if self.read is not None and part < len(self.read.items) else None
+            if i is None or (i not in self.partner and not removed):
+                as_edited = self.edited is not None and part < len(self.edited.items)
+                return (None, part) if as_edited else (i, None)
+        j = None if i is None else self.partner.get(i)
+        if j is not None or (removed and i is not None):
+            return i, j
+        added = self.edited_at.get(name)
+        if added is None:
+            added = self.edited_own.get(name)
+        return (i, None) if added is None else (None, added)
+
+    def part(self, position: int, *, edited: bool) -> ItemPart | None:
+        """The part that shows the item at *position*: as edited, or as read.
+
+        ``item_part`` of it, else the position: where nothing names the item
+        alone, it is counted in the list the item is shown in. The parts of
+        the whole list are found in one pass, once (``shown_item_parts``).
+        None where that lookup fails, as ``_item`` has it.
+        """
+        if edited not in self.parts:
+            held = self.edited if edited else self.read
+            try:
+                self.parts[edited] = (
+                    None if held is None else shown_item_parts(held.owner, held.field)
+                )
+            except (PatchError, ResolverNotLoadedError, LookupError):
+                self.parts[edited] = None
+        parts = self.parts[edited]
+        if parts is None:
+            return None
+        part = parts[position]
+        return position if part is None else part
+
+    def shown(self, part: ItemPart) -> ItemPart:
+        """The part that shows the item of the list as edited that *part* names.
+
+        *part* is as a change writes it for a place, a move or an order
+        entry: an item both have by its name as read, an added item by its
+        name as edited. It is kept as written where it names no such item.
+        """
+        _, j = self.find(part)
+        named = None if j is None else self.part(j, edited=True)
+        return part if named is None else named
 
 
-def _document(item: VcoModel, level: ConfigContext | None) -> dict[str, object]:
-    """The JSON of *item* at config level *level*, as a save pairs it.
+def _list_names(
+    spec: KeySpec,
+    record: PairedList | None,
+    read: _Keyed | None,
+    edited: _Keyed | None,
+) -> _ListNames:
+    """The items of one keyed list, as *record* says the changes name them.
 
-    It has the keys the item was read with and those set since, as the
-    document as read and the one a save writes have them: a default made for
-    a key the document lacks (an ID made anew on each parse) is in neither.
-    The dump of an item an ``add`` built is an ``AddedItem``.
+    *read* and *edited* are the list, whose key is *spec*, in the data as read
+    and as edited; one of them may be None. *record* is how the changes of
+    the list were made (``raw_changes``): the pairing they were made by is
+    the one used here, and an item is found by the name the changes give it,
+    at its place in the list that name is of. With no *record* (the list did
+    not change, or was replaced whole, and no change names an item of it) an
+    item is found in each list by its own key, where no other item of that
+    list has the key, and one both have is taken for one item.
     """
-    dump = item.model_dump(
-        mode="json",
-        by_alias=True,
-        exclude_unset=True,
-        context=None if level is None else {"config_level": level},
+    read_keys, edited_keys = (
+        [] if side is None else [item_key(item, spec.paths) for item in side.items]
+        for side in (read, edited)
     )
-    return AddedItem(dump) if item.is_added else dump
-
-
-def _pairing(read: VcoModel, edited: VcoModel, field: str) -> ItemPairing | None:
-    """How the items of the keyed list *field* of *read* became those of *edited*.
-
-    ``pair_items`` over the JSON of each item (``_document``), both at one
-    config level: that of *edited*, else that of *read*.
-    ``ChangeNames.pairing`` says what it gives.
-    """
-    node = node_child(type(read), field)
-    old: object = getattr(read, field, None)
-    new: object = getattr(edited, field, None)
-    if not isinstance(node, KeyedList) or not (is_list(old) and is_list(new)):
-        return None
-    level = edited.config_context
-    if level is None:
-        level = read.config_context
-    was: list[object] = []
-    now: list[object] = []
-    for items, documents in ((old, was), (new, now)):
-        for item in items:
-            # The lists of an effective view hold wrapped values, not models.
-            if not isinstance(item, VcoModel):
-                return None
-            documents.append(_document(item, level))
-    pairing = pair_items(was, now, node)
-    if pairing is None:
-        return None
-    was_parts, now_parts = item_parts(was, node), item_parts(now, node)
-    return ItemPairing(
-        dict(pairing.pairs),
-        frozenset(i for i, part in enumerate(was_parts) if isinstance(part, int)),
-        frozenset(j for j in pairing.added if isinstance(now_parts[j], int)),
-        tuple(was_parts),
-        tuple(now_parts),
-    )
+    read_at: dict[_Name, int] = {}
+    edited_at: dict[_Name, int] = {}
+    partner: dict[int, int] = {}
+    own = _own_keys(edited_keys, spec)
+    if record is None:
+        read_at = _own_keys(read_keys, spec)
+        partner = {i: own[name] for name, i in read_at.items() if name in own}
+        return _ListNames(spec, read, edited, read_at, own, partner, own)
+    old_at = _positions(record.old_parts, read_keys, spec)
+    new_at = _positions(record.new_parts, edited_keys, spec)
+    for part, i in zip(record.old_parts, old_at, strict=True):
+        if i is not None:
+            read_at[_name(part, spec)] = i
+    for part, j in zip(record.names, new_at, strict=True):
+        if j is not None:
+            edited_at[_name(part, spec)] = j
+    for old, new in record.pairs:
+        i, j = old_at[old], new_at[new]
+        if i is not None and j is not None:
+            partner[i] = j
+    return _ListNames(spec, read, edited, read_at, edited_at, partner, own)
 
 
 @dataclass(frozen=True, slots=True)
 class ChangeNames:
     """The paths of the changes from one document to another, as pyvelo shows them.
 
-    ``path`` shows one (``named_change_path``). To show it, every keyed list
-    the path goes through is paired, which reads each item of both lists;
-    the pairing of a list is made once and kept for the next path. A list is
-    known by the two models that hold it, so neither document may change
-    while this is used.
+    A change names an item both documents have by its key as read, also
+    where the edit renamed it, and an item only one of them has by its key
+    there; an item whose key is absent, or is another item's too, by its
+    position in that list (``raw_changes``). ``lists`` is how the changes
+    paired the items of each keyed list. An item part of a change is found
+    by it: at its position in the list the name is of, and from there, for an
+    item both have, at the position of its partner. No part is read as a
+    selector, so a name is never taken for the label, the alt key or the
+    position of another item. The item found is then shown as ``item_part``
+    names it, in the data that has the place:
+
+    - An item both have is shown as *edited* names it, so a change inside a
+      renamed rule is shown under the rule's new name, and the path names
+      that rule in the data the caller holds.
+    - An item the edits removed, and all below it, is shown as *read* has it,
+      below the parts above it as *edited* names them.
+    - An item the edits added is shown as *edited* has it.
+    - Where nothing names an item alone, its position is shown: in the list
+      as edited, or, for a removed item, in the list as read.
+    - An entry of a map is named by its key in both, and an item of a list
+      without a key by its position.
+
+    A part neither has is kept as written, and the fields below it are named
+    by their classes. Nothing is raised.
+
+    ``path`` shows a path and ``items`` the items of one list. Each list is
+    known by the two models that hold it, and what is found for it is kept,
+    so neither document may change while this is used.
     """
 
     read: VcoModel
     """The document as read."""
     edited: VcoModel
     """The document as edited."""
+    lists: Mapping[Path, PairedList] = dataclass_field(
+        default_factory=dict[Path, PairedList]
+    )
+    """How the changes paired each keyed list, by its path as they write it.
+
+    It is what ``raw_changes`` records for the two JSON documents *read* and
+    *edited* are the models of, a list before the lists inside its items. A
+    list it lacks was not paired: no change names an item of it, and a path
+    through it finds an item by its own key.
+    """
     resolvers: IdentityResolver | None = None
-    """For a list whose key is a name the resolver knows another way."""
-    _made: dict[tuple[int, int, str], tuple[VcoModel, VcoModel, ItemPairing | None]] = (
-        dataclass_field(default_factory=dict, init=False, repr=False, compare=False)
+    """For a list without a key whose entries a resolver knows another way."""
+    _made: dict[tuple[int, int, str], _ListNames] = dataclass_field(
+        default_factory=dict, init=False, repr=False, compare=False
     )
 
-    def pairing(self, was: VcoModel, now: VcoModel, field: str) -> ItemPairing | None:
-        """How the items of the keyed list *field* of *was* became those of *now*.
+    def __post_init__(self) -> None:
+        """Find each list of ``lists`` in the two documents, once.
 
-        *was* is the model of ``read`` that holds the list, and *now* the one
-        of ``edited``. The items are paired by ``pair_items``, the function a
-        save pairs them with when it makes its changes, over the JSON of each
-        item, both at one config level: by alt key, then by key, then an
-        item left that did not change with itself; an item an ``add`` built
-        is the partner of none. None for a field that is not a keyed list of
-        models on both sides, and for a list ``pair_items`` cannot pair: a
-        save replaces that one whole, and no change names an item of it.
+        A list is then known by the models that hold it, however a path to
+        it is written.
         """
-        key = (id(was), id(now), field)
-        made = self._made.get(key)
-        # The two models are kept with the pairing, so an ID is never another's.
-        if made is None or made[0] is not was or made[1] is not now:
-            made = (was, now, _pairing(was, now, field))
-            self._made[key] = made
-        return made[2]
+        for path, record in self.lists.items():
+            _, was, now = self._walk(path, removed=False)
+            read, edited = _keyed(was), _keyed(now)
+            held = read if read is not None else edited
+            if held is not None:
+                key = _list_key(read, edited, held.field)
+                self._made[key] = _list_names(held.spec, record, read, edited)
 
     def path(self, path: Path, *, removed: bool = False) -> Path:
         """*path*, the path of a change from ``read`` to ``edited``, as shown.
 
-        ``named_change_path`` says how.
+        With *removed* (the change removes what the path names) a name that
+        both a removed and an added item have is the removed item's.
         """
         return Path(self._walk(path, removed=removed)[0])
 
-    def order_names(self, path: Path) -> dict[str, ItemPart] | None:
-        """The items of the keyed list at *path* by the names an order entry gives them.
+    def items(self, path: Path) -> Callable[[ItemPart], ItemPart] | None:
+        """What shows an item of the keyed list at *path*, as a change names it.
 
-        *path* is the path of the order entry of the list (``RawChange.moves``).
-        Its values name an item by the text ``Path`` writes its part in
-        (``item_text``): an item as read by its part there, an item only the
-        list as edited has by its part there (``item_names``). Each name is
-        mapped to the part that shows its item, the item as edited: the partner
-        of an item as read (``pairing``), as ``item_part`` shows it, else its
-        position. The items are paired, and the list as edited named, in one
-        pass each (``shown_item_parts``), so the names of a long list cost
-        about the list once. None where the list is not one ``pairing``
-        pairs.
+        *path* is the path of the list, as the changes write it. What is
+        given takes the name a change gives an item of the list as edited
+        (the item an added one is placed after, each item of a move, a name
+        of an order entry) to the part that shows that item: the one ``path``
+        shows it by. A name that is no item's is kept. The whole list is
+        named in one pass, once, so the names of a long list cost about the
+        list. None where neither document has a keyed list there.
         """
         _, was, now = self._walk(path, removed=False)
-        if not (
-            isinstance(was, _Items)
-            and isinstance(now, _Items)
-            and was.owner is not None
-            and now.owner is not None
-            and was.field == now.field
-        ):
+        names = self._list(was, now)
+        return None if names is None else names.shown
+
+    def _list(self, was: _Place, now: _Place) -> _ListNames | None:
+        """The keyed list at *was* as read and at *now* as edited; None for no list.
+
+        One of ``lists`` was found when this was made; any other is one the
+        changes did not pair.
+        """
+        read, edited = _keyed(was), _keyed(now)
+        held = read if read is not None else edited
+        if held is None:
             return None
-        pairing = self.pairing(was.owner, now.owner, now.field)
-        if pairing is None:
-            return None
-        try:
-            shown = shown_item_parts(now.owner, now.field)
-        except (PatchError, ResolverNotLoadedError, LookupError):
-            # As ``_item`` has it: a lookup that fails names nothing here.
-            return None
-        paired = set(pairing.partner.values())
-        names = {
-            item_text(part): j
-            for j, part in enumerate(pairing.edited_parts)
-            if j not in paired
-        }
-        names.update(
-            (item_text(pairing.read_parts[i]), j) for i, j in pairing.partner.items()
-        )
-        found: dict[str, ItemPart] = {}
-        for text, j in names.items():
-            part = shown[j]
-            found[text] = j if part is None else part
-        return found
+        key = _list_key(read, edited, held.field)
+        made = self._made.get(key)
+        if made is None:
+            made = self._made[key] = _list_names(held.spec, None, read, edited)
+        return made
 
     def _walk(
         self, path: Path, *, removed: bool
     ) -> tuple[list[PathPart], _Place, _Place]:
-        """The parts of *path* as shown, and where it ends as read and as edited."""
+        """The parts of *path* as shown, and where it ends as read and as edited.
+
+        It ends nowhere as edited (None) once it is below a removed item.
+        """
         was: _Place = _holding(self.read, ())
         now: _Place = _holding(self.edited, ())
         parts: list[PathPart] = []
         gone = False
-        last = len(path.parts) - 1
-        for index, part in enumerate(path.parts):
-            held, there = False, None
-            if not gone:
-                ends = index == last and not removed
-                held, there = _partner(self, was, now, part, ends=ends)
-            if gone or (removed and held and there is None):
-                gone = True
-                shown, was = _step(was, part, self.resolvers)
+        for part in path.parts:
+            names = self._list(was, now)
+            if names is None:
+                shown, was, now, gone = self._plain(
+                    (was, now), part, removed=removed, gone=gone
+                )
+                parts.append(shown)
+                continue
+            i, j = names.find(part, removed=removed)
+            named = None
+            if j is not None and names.edited is not None:
+                named = names.part(j, edited=True)
+                now = names.edited.below(j)
+                was = None if i is None or names.read is None else names.read.below(i)
+            elif i is not None and names.read is not None:
+                named = names.part(i, edited=False)
+                was, now, gone = names.read.below(i), None, True
             else:
-                at = part if there is None else there
-                shown, now = _step(now, at, self.resolvers)
-                # An item of ``read`` that is not this one's partner is another.
-                unpaired = held and there is None
-                was = None if unpaired else _step(was, part, self.resolvers)[1]
-            parts.append(shown)
+                was = _Model(None, () if names.read is None else names.read.classes)
+                now = (
+                    None if names.edited is None else _Model(None, names.edited.classes)
+                )
+            parts.append(part if named is None else named)
         return parts, was, now
 
+    def _plain(
+        self,
+        places: tuple[_Place, _Place],
+        part: PathPart,
+        *,
+        removed: bool,
+        gone: bool,
+    ) -> tuple[PathPart, _Place, _Place, bool]:
+        """One step of ``_walk`` at a place that is no keyed list the data has.
 
-def named_change_path(
-    path: Path,
-    read: VcoModel,
-    edited: VcoModel,
-    *,
-    removed: bool = False,
-    resolvers: IdentityResolver | None = None,
-) -> Path:
-    """The path of a change from *read* to *edited*, as pyvelo shows it.
+        A field, an entry of a map, an item of a list without a key. It gives
+        the part as shown, the places below it as read and as edited, and
+        whether the path is now below something only the data as read has.
+        """
+        was, now = places
+        if not gone:
+            held = _found(was, part, self.resolvers) is not None
+            both = (
+                held
+                and isinstance(was, _Items)
+                and isinstance(now, _Items)
+                and was.is_map
+                and now.is_map
+                and _found(now, part, self.resolvers) is not None
+            )
+            if not (removed and held and not both):
+                shown, below = _step(now, part, self.resolvers)
+                # An entry or item of ``read`` that ``edited`` lacks is another.
+                unpaired = held and not both
+                was = None if unpaired else _step(was, part, self.resolvers)[1]
+                return shown, was, below, False
+        shown, below = _step(was, part, self.resolvers)
+        return shown, below, None, True
 
-    A change names an item both documents have by its key in *read*, also
-    where the edit renamed it, and an item only one of them has by its key
-    there; an item whose key is absent, or is another item's too, by its
-    position in that list (``raw_changes``). Each part is shown as
-    ``named_path`` shows it, in the data that has the place:
 
-    - An item both have is found in *read* and shown as its partner in
-      *edited* is named, so a change inside a renamed rule is shown under the
-      rule's new name, and the path names that rule in the data the caller
-      holds. The partner is the one the save paired it with when it made the
-      change (``pair_items``; ``ChangeNames.pairing``): the item with the
-      same alt key, else with the same key, else the one item left that did
-      not change. An item an ``add`` built is the partner of none, also where
-      it has the key of an item as read.
-    - An item with no partner is taken for one the edit added, and is found
-      in *edited*. With *removed* (the change removes what the path names) it
-      is the item the edit removed: it and all below it are shown as *read*
-      has them, below the parts above it as *edited* names them.
-    - A position that ends the path of a change that removes nothing is the
-      added item at that position of the list as edited, where the change
-      names that item so (its key is absent, or is another item's too) and
-      names no item as read so.
-    - An entry of a map is named by its key in both.
+def _list_key(
+    read: _Keyed | None, edited: _Keyed | None, field: str
+) -> tuple[int, int, str]:
+    """What a keyed list is known by: the models that hold it, and its field.
 
-    So a position is never looked up in the other list: where an item is
-    still shown by a position, it is its position in the data the part is
-    shown in, *edited* or, for a removed item, *read*.
-
-    A part neither has is kept as written, and the fields below it are named
-    by their classes. Nothing is raised.
-
-    Each call pairs the lists its path goes through; for many paths of the
-    same two documents, ``ChangeNames`` pairs each list once.
+    What is kept under it holds the two models, so the ID of one is never
+    another's.
     """
-    return ChangeNames(read, edited, resolvers).path(path, removed=removed)
+    return (
+        0 if read is None else id(read.owner),
+        0 if edited is None else id(edited.owner),
+        field,
+    )
 
 
 def _found(
     place: _Place, part: PathPart, resolvers: IdentityResolver | None
 ) -> int | None:
-    """The position of the one item *part* names in the list or map at *place*.
+    """The position of the one entry *part* names in the map or list at *place*.
 
-    None where *place* is no list or map the data has, where *part* names no
-    item of it or several, and where the lookup fails (as ``_item`` has it).
+    For a map and for a list without a key: an item of a keyed list is found
+    by ``_ListNames``. None where *place* is no list or map the data has,
+    where *part* names no entry of it or several, and where the lookup fails
+    (as ``_item`` has it).
     """
     if not isinstance(place, _Items) or place.owner is None:
         return None
@@ -779,36 +936,6 @@ def _found(
         return _position(place, place.owner, part, resolvers)
     except (PatchError, ResolverNotLoadedError, LookupError):
         return None
-
-
-def _partner(
-    names: ChangeNames, was: _Place, now: _Place, part: PathPart, *, ends: bool
-) -> tuple[bool, PathPart | None]:
-    """Whether *part* names an item at *was*, and the part for its partner at *now*.
-
-    *was* and *now* are one place of the data as read and as edited. The
-    partner of an item of a list is given as its position in the list as
-    edited (``ChangeNames.pairing``); that of an entry of a map as *part*, where the map
-    as edited has that key. The part is None where *was* has no such item,
-    and where the item has no partner.
-
-    With *ends* (the part ends the path of a change that removes nothing) a
-    position is first taken for an added item the change names by its
-    position as edited: it then names no item at *was*.
-    """
-    position = _found(was, part, names.resolvers)
-    if position is None or not isinstance(was, _Items) or was.owner is None:
-        return False, None
-    if not isinstance(now, _Items) or now.owner is None or was.is_map != now.is_map:
-        return True, None
-    if was.is_map:
-        return True, None if _found(now, part, names.resolvers) is None else part
-    pairing = names.pairing(was.owner, now.owner, was.field)
-    if pairing is None:
-        return True, None
-    if ends and isinstance(part, int) and pairing.adds_at(part):
-        return False, None
-    return True, pairing.partner.get(position)
 
 
 def named_error(

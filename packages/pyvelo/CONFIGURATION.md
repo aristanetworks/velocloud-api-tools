@@ -805,9 +805,16 @@ firewall: update
   the parts above it as they are now. A position is counted in the list the
   item is named in: the list as edited, and the list as read for an item the
   save removes. The same holds for the item a `+` line is placed after and
-  for the items of an `order:` line, which are all in the data as edited. An
-  item added under the key of one the same edits delete is another item: the
-  `-` line names the one deleted and the `+` line the one added. In a list
+  for the items of an `order:` line, which are all in the data as edited.
+  Each item a line names is the one the save paired when it made the change,
+  found at its place in the list and never by reading its name again: a rule
+  you add under a name that reads as another rule's ID or as a position
+  (`lb`, `#2`) is shown as itself, in its own line and where another item is
+  placed after it. An item you `add` under the key of one the same edits
+  delete is another item: the `-` line names the one deleted and the `+` line
+  the one added. That holds for `add` only. A model you put in the list in
+  Python where the one deleted was, with its key and no other item of that
+  key, is taken for the same item changed, and shows as `~` lines. In a list
   whose key is the name and that has no other key (a LAN interface), a
   renamed item is a `-` line under the old name and a `+` line under the new
   one. An object after `+` has its keys by attribute name; a key the model
@@ -816,14 +823,16 @@ firewall: update
   `QOS`, and the paths of `ModulePlan.changes` have the VCO's keys and each
   item's key as read. `ModulePlan.named(path)` shows one of those paths as
   `render()` does (with `removed=True` for a path the change removes), from
-  the copy of the data the plan took when it was made (`ModulePlan.planned`),
-  so a plan you keep while you edit further still names each item as it was
-  then. `ModulePlan.shown_change(change)` is one of those changes as
-  `render()` shows it. `state.get_field_changes()` lists the same changes in
-  the same names: a `ConfigFieldChange` has the module's Python name as
-  `module`, the line's path as `path`, `before` and `after` with their keys
-  by attribute name, and the items of a move, a place and an order entry's
-  `before` and `after` named as the line names them.
+  the copy of the data the plan took when it was made (`ModulePlan.planned`)
+  and from how its changes paired the items of each list
+  (`ModulePlan.paired_lists`), so a plan you keep while you edit further
+  still names each item as it was then. `ModulePlan.shown_change(change)` is
+  one of those changes as `render()` shows it. `state.get_field_changes()`
+  lists the same changes in the same names, through the same naming, so a
+  line and its field change never differ: a `ConfigFieldChange` has the
+  module's Python name as `module`, the line's path as `path`, `before` and
+  `after` with their keys by attribute name, and the items of a move, a place
+  and an order entry's `before` and `after` named as the line names them.
 - The plan lists the modules in the order a save writes them. The device
   settings are written first, and the role steps right before them; in a save
   that removes a hub from a list (a plan with a `disable` step) they are written

@@ -32,10 +32,12 @@ from pyvelo.core import delete
 from pyvelo.core.names import ChangeNames
 from pyvelo.core.rebase import (
     ItemMove,
+    ItemPart,
     ItemPlace,
     Key,
     KeyedList,
     Path,
+    item_text,
     node_child,
     pair_items,
 )
@@ -446,6 +448,14 @@ async def test_an_item_added_under_the_key_of_one_removed_is_not_that_item() -> 
     assert added.place == ItemPlace(Key("first"))
 
 
+async def test_a_model_put_where_one_of_its_key_was_is_that_item_changed() -> None:
+    """Only an ``add`` makes a new item: a model with the key is paired by it."""
+    state = await lan_state(net(1, "first"), net(10, "Old"))
+    networks = state.profile.device_settings.lan.networks
+    networks[1] = type(networks[1]).model_validate(net(10, "New"))
+    assert lan_lines(state) == ['  ~ lan.networks[New].name: "Old" -> "New"']
+
+
 async def test_a_place_after_an_item_named_by_position_names_that_item() -> None:
     """``b`` is ``#2`` as read and ``#1`` as edited, where ``#2`` is the added item."""
     state = await removed_before_two_of_one_key()
@@ -564,10 +574,10 @@ async def test_items_read_without_an_id_are_paired_as_the_documents_have_them() 
         reordered_with_one_key_twice,
     ],
 )
-async def test_the_items_are_paired_as_the_changes_were_made(
+async def test_the_plan_keeps_the_pairing_its_changes_were_made_by(
     made: Callable[[], Awaitable[ConfigState]],
 ) -> None:
-    """The pairing a path is named by is the one of the documents the save compared."""
+    """What names a plan's items is the pairing of the documents the save compared."""
     state = await made()
     plan = lan_plan(state)
     read, planned = plan.as_read, plan.planned
@@ -580,10 +590,161 @@ async def test_the_items_are_paired_as_the_changes_were_made(
     as_read: Any = profile.device_settings.raw_data
     pairing = pair_items(as_read["lan"]["networks"], plan.data["lan"]["networks"], node)
     assert pairing is not None
-    named_by = ChangeNames(read, planned).pairing(read.lan, planned.lan, "networks")
-    assert named_by is not None
-    assert named_by.partner == dict(pairing.pairs)
+    assert plan.paired_lists[Path.parse("lan.networks")].pairs == pairing.pairs
     assert pairing.pairs
+
+
+def rule_with_id(name: str, port: int) -> dict[str, Any]:
+    """A QoS rule as read with a ``ruleLogicalId``."""
+    rule = hub_backhaul_rule(name, HUB_A)
+    rule["match"]["dport_low"] = port
+    return rule
+
+
+async def test_a_second_item_of_a_name_put_first_names_each_item_itself() -> None:
+    """``Other`` and ``Web`` read without an ID, and a second ``Web`` put first.
+
+    It is put in the list through the model, so the save pairs neither
+    ``Web``: the one as read is removed, and the two as edited are added, at
+    ``#0`` and ``#2``. The removal is named in the data as read, where the
+    name is that rule's alone; each added rule is the one at its position as
+    edited, and no name or key is its alone, so it is shown by its alt key.
+    """
+    state = await guest_backhaul_state(
+        rule_without_id("Other", 81),
+        rule_without_id("Web", 80),
+        rule_with_id("X", 82),
+        rule_with_id("Mail", 83),
+    )
+    rules = state.profile.qos.segments[1].rules
+    rules.insert(0, type(rules[0]).model_validate(rule_with_id("Web", 99)))
+    (module,) = [m for m in state.plan().modules if m.name == "QOS"]
+    removal, first, second = module.changes
+    assert (str(removal.path), str(first.path), str(second.path)) == (
+        "segments[Guest].rules[Web]",
+        "segments[Guest].rules[#0]",
+        "segments[Guest].rules[#2]",
+    )
+    assert second.place == ItemPlace(Key("Other"))
+    in_guest = Path(("segments", Key("Guest"), "rules"))
+    new_web, _, old_web = (Key(str(rule.rule_logical_id)) for rule in rules[:3])
+    assert [line.split(": {", maxsplit=1)[0] for line in module.render().splitlines()][
+        1:4
+    ] == [
+        "  - segments[Guest].rules[Web]",
+        f"  + {in_guest.child(new_web)} (first)",
+        f"  + {in_guest.child(old_web)} (after Other)",
+    ]
+    changes = state.get_field_changes("business_policy")
+    assert [(str(change.path), change.place) for change in changes] == [
+        ("segments[Guest].rules[Web]", None),
+        (str(in_guest.child(new_web)), ItemPlace()),
+        (str(in_guest.child(old_web)), ItemPlace(Key("Other"))),
+    ]
+    assert reached(state.profile.qos, changes[2].path) is rules[2]
+    assert module.paired_lists[in_guest].pairs == ((0, 1), (2, 3), (3, 4))
+
+
+async def test_items_of_one_key_made_through_the_model_are_named_where_they_are() -> (
+    None
+):
+    """``a`` patched below a key absent as read, ``c`` moved first, ``b`` appended.
+
+    ``b`` has the VLAN of ``a``, so the save pairs only ``c``: ``a`` is removed
+    and added again at ``#1``, and ``b`` is added at ``#2``, after ``#1``.
+    Those are positions as edited, where ``#1`` is ``a`` and not ``c``.
+    """
+    state = await lan_state(net(2, "a"), net(3, "c"))
+    lease = {"lan": {"networks": {"a": {"dhcp": {"lease_time_seconds": 600}}}}}
+    await edit(state, "deviceSettings", lease)
+    networks = state.profile.device_settings.lan.networks
+    networks[:] = [networks[1], networks[0]]
+    networks.append(type(networks[0]).model_validate(net(2, "b", 5)))
+    removal, first, second = lan_plan(state).changes
+    assert (str(removal.path), str(first.path), str(second.path)) == (
+        "lan.networks[2]",
+        "lan.networks[#1]",
+        "lan.networks[#2]",
+    )
+    assert (first.place, second.place) == (ItemPlace(Key(3)), ItemPlace(1))
+    assert lan_lines(state) == [
+        "  - lan.networks[a]",
+        "  + lan.networks[a] (after c)",
+        "  + lan.networks[b] (after a)",
+    ]
+    changes = state.get_field_changes("device_settings")
+    assert [(str(change.path), change.place) for change in changes] == [
+        ("lan.networks[a]", None),
+        ("lan.networks[a]", ItemPlace(Key("c"))),
+        ("lan.networks[b]", ItemPlace(Key("a"))),
+    ]
+
+
+async def test_an_item_replaced_by_a_model_of_its_values_is_named_as_it_is_paired() -> (
+    None
+):
+    """``b`` is replaced by a model without the ``cost`` it was read with, and moved.
+
+    The save pairs it with itself, by the values written, and moves ``#1`` as
+    read first: that is ``b``, whose VLAN the second ``n`` has too.
+    """
+    state = await lan_state(net(2, "n", 1), {**net(1, "b"), "cost": 10}, net(1, "n", 2))
+    networks = state.profile.device_settings.lan.networks
+    row = networks[1].model_dump(mode="json", by_alias=True, exclude_unset=True)
+    del row["cost"]
+    networks[1] = type(networks[1]).model_validate(row)
+    networks.insert(0, networks.pop(1))
+    (order,) = lan_plan(state).changes
+    assert order.moves == (ItemMove(1, ItemPlace()),)
+    assert lan_lines(state) == ["  ~ lan.networks: order: b first"]
+    (change,) = state.get_field_changes("device_settings")
+    assert change.moves == (ItemMove(Key("b"), ItemPlace()),)
+    # ``2`` is the first ``n``, by its VLAN; nothing names the second alone.
+    assert (change.before, change.after) == (["2", "b", "#2"], ["b", "2", "#2"])
+
+
+@pytest.mark.parametrize("name", ["lb", "#2", "#0", "c]"])
+async def test_an_added_item_is_never_found_by_reading_its_name_as_a_selector(
+    name: str,
+) -> None:
+    """A rule added first whose name reads, as a selector, as another rule.
+
+    ``lb`` is the logical ID of ``b``, and ``#2`` the position of ``c`` as
+    read. The plan text and the field changes name the added rule, in its
+    line and where ``d`` is moved after it.
+    """
+    rules = [fw_rule(n, ruleLogicalId=f"l{n}") for n in "abcd"]
+    state = make_state({"firewall": firewall(*rules)}, {"firewall": firewall()})
+    body = {"name": name, "action": {"allow_or_deny": "deny"}, "match": {}}
+    for patch in ({"+new": add(body, first=True)}, {"d": move(after="#0")}):
+        _ = await ConfigPipeline(None).apply(
+            state, module="firewall", segment=FW_SEGMENT, path="outbound", patch=patch
+        )
+    held = state.edge.firewall.segment(FW_SEGMENT).outbound
+    assert [rule.name for rule in held] == [name, "d", "a", "b", "c"]
+    outbound = Path(("segments", Key(FW_SEGMENT), "outbound"))
+    text = item_text(Key(name))
+    lines = [
+        line.split(": {", maxsplit=1)[0]
+        for line in state.plan().render().splitlines()
+        if " segments[" in line
+    ]
+    assert lines == [
+        f"  + {outbound.child(Key(name))} (first)",
+        f"  ~ {outbound}: order: d after {text}",
+    ]
+    added, order = state.get_field_changes("firewall")
+    assert (str(added.path), added.place) == (
+        str(outbound.child(Key(name))),
+        ItemPlace(),
+    )
+    assert reached(state.edge.firewall, added.path) is held[0]
+    assert str(order.path) == str(outbound)
+    assert order.moves == (ItemMove(Key("d"), ItemPlace(Key(name))),)
+    assert (order.before, order.after) == (
+        ["a", "b", "c", "d"],
+        [text, "d", "a", "b", "c"],
+    )
 
 
 async def test_an_order_line_names_only_the_moves_it_prints(
@@ -596,20 +757,26 @@ async def test_an_order_line_names_only_the_moves_it_prints(
     (order,) = plan.changes
     assert order.moves is not None
     assert len(order.moves) == 7
-    named = ModulePlan.named
-    calls: list[Path] = []
+    items = ChangeNames.items
+    named: list[ItemPart] = []
 
-    def counted(self: ModulePlan, path: Path, *, removed: bool = False) -> Path:
-        calls.append(path)
-        return named(self, path, removed=removed)
+    def counted(self: ChangeNames, path: Path) -> Callable[[ItemPart], ItemPart] | None:
+        name = items(self, path)
+        assert name is not None
 
-    monkeypatch.setattr(ModulePlan, "named", counted)
+        def count(item: ItemPart) -> ItemPart:
+            named.append(item)
+            return name(item)
+
+        return count
+
+    monkeypatch.setattr(ChangeNames, "items", counted)
     assert plan.render().splitlines()[1] == (
         "  ~ lan.networks: order: n8 first; n7 after n8; n6 after n7; "
         "n5 after n6; n4 after n5; and 2 more"
     )
-    # The list's own path, five items and the four they are placed after.
-    assert len(calls) == 10
+    # Five items and the four they are placed after.
+    assert len(named) == 9
     (change,) = state.get_field_changes("device_settings")
     assert change.moves is not None
     assert [str(move) for move in change.moves][-2:] == ["n3 after n4", "n2 after n3"]
