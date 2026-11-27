@@ -33,9 +33,9 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.client.schemas.edge import EdgeLink
 from pyvelo.core import ConfigContext, PatchError
 from pyvelo.core.layers import Edge, Profile
-from pyvelo.testing import make_module_json
+from pyvelo.testing import make_module_json, store_of
 
-from ._type_support import require_present
+from ._type_support import MockVcoClientFactory, require_present
 
 EDGE, PROFILE = ConfigContext.EDGE, ConfigContext.PROFILE
 
@@ -594,6 +594,91 @@ def test_snmp_keeps_the_ipv6_list_that_ssh_has_not() -> None:
         snmp = require_present(module.data.services.snmp)
         assert snmp.allow_selected_ip_v6 is MISSING
         assert_untouched(module, stray, PROFILE)
+
+
+# The Edge does not use the ICMP service: no model reads ``services.icmp``,
+# and a stored one is kept as read, with every key it holds.
+ICMP: dict[str, Any] = {
+    "enabled": True,
+    "allowSelectedIp": ["192.0.2.5"],
+    "allowSelectedIpV6": ["2001:db8::5"],
+    "ruleLogicalId": "icmp-rule",
+    "extra": 1,
+}
+ICMP_SERVICES: dict[str, Any] = {
+    "segments": [],
+    "services": {"ssh": {"enabled": False}, "icmp": ICMP},
+}
+
+
+@pytest.mark.parametrize(
+    ("layer", "level"), [(Profile, PROFILE), (Edge, EDGE)], ids=["profile", "edge"]
+)
+def test_a_stored_icmp_service_plans_nothing_with_no_edit(
+    layer: Any,  # Profile or Edge: a union cannot fill the module's constrained L
+    level: ConfigContext,
+) -> None:
+    for module in both_ways(
+        FirewallConfigurationModule[layer], "firewall", ICMP_SERVICES
+    ):
+        assert_untouched(module, ICMP_SERVICES, level)
+
+
+@pytest.mark.parametrize(
+    ("layer", "level"), [(Profile, PROFILE), (Edge, EDGE)], ids=["profile", "edge"]
+)
+def test_an_edit_of_another_service_sends_the_icmp_service_as_stored(
+    layer: Any,  # Profile or Edge: a union cannot fill the module's constrained L
+    level: ConfigContext,
+) -> None:
+    for module in both_ways(
+        FirewallConfigurationModule[layer], "firewall", ICMP_SERVICES
+    ):
+        _ = module.data.merge_patch({"services": {"ssh": {"enabled": True}}})
+        sent = plan_module(module, level=level).data["services"]
+        assert sent == {"ssh": {"enabled": True}, "icmp": ICMP}
+
+
+def test_a_patch_naming_the_icmp_service_is_refused() -> None:
+    module = firewall_profile(ICMP_SERVICES)
+    with pytest.raises(PatchError, match="has no field 'icmp'") as exc:
+        _ = module.data.merge_patch({"services": {"icmp": {"enabled": False}}})
+    assert exc.value.kind == "unknown_field"
+    assert plan_module(module, level=PROFILE).operation == "none"
+
+
+def test_a_stored_icmp_service_is_removed_by_planning_the_data_without_it() -> None:
+    edge = both_ways(FirewallConfigurationModule[Edge], "firewall", ICMP_SERVICES)[0]
+    data = json.loads(json.dumps(ICMP_SERVICES))
+    del data["services"]["icmp"]
+    plan = plan_module(edge, data, level=EDGE)
+    assert plan.operation == "update"
+    assert plan.data == {"segments": [], "services": {"ssh": {"enabled": False}}}
+    assert [(str(c.path), c.before, c.after) for c in plan.changes] == [
+        ("services.icmp", ICMP, MISSING)
+    ]
+
+
+def test_a_stored_icmp_service_is_changed_by_planning_the_data_with_its_value() -> None:
+    edge = both_ways(FirewallConfigurationModule[Edge], "firewall", ICMP_SERVICES)[0]
+    data = json.loads(json.dumps(ICMP_SERVICES))
+    data["services"]["icmp"]["enabled"] = False
+    plan = plan_module(edge, data, level=EDGE)
+    assert plan.operation == "update"
+    assert plan.data == data
+    assert [str(c.path) for c in plan.changes] == ["services.icmp.enabled"]
+
+
+async def test_a_planned_removal_of_a_stored_icmp_service_is_stored(
+    mock_vco_client: MockVcoClientFactory,
+) -> None:
+    edge = both_ways(FirewallConfigurationModule[Edge], "firewall", ICMP_SERVICES)[0]
+    store = store_of(edge)
+    client = await mock_vco_client(store)
+    data = {"segments": [], "services": {"ssh": {"enabled": False}}}
+    write = await client.write_module(edge, plan_module(edge, data, level=EDGE))
+    assert write.module.raw_data == data
+    assert store.rows[edge.id_]["data"] == data
 
 
 # --- enterprise rows ----------------------------------------------------------

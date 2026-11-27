@@ -538,6 +538,16 @@ it is refused as an unknown field, so put IPv6 addresses for SSH in
 `allow_selected_ip`. A stored `allowSelectedIpV6` on SSH is kept as read by
 every write, like any key the models do not know.
 
+The ICMP service (`services.icmp`) is not modeled, because the Edge does not use
+it. No field reads it and a patch that names it is refused as an unknown field.
+A stored one is kept as read by every write, like any key the models do not
+know, and `compare_effective` reports one the VCO composed as `unconverted`. A
+`services` object the library makes itself carries no `icmp`: neither the
+display default nor a copy made local by `localize()` (or by a patch into an
+inherited `services`) has one, even where the template or the profile stores
+one. To change or remove a stored one, plan the module from the data as a
+mapping, as for `qosClientConnector` below.
+
 ### QoS
 
 The module-level values of QoS are `Inheritable` and stored by presence, as the

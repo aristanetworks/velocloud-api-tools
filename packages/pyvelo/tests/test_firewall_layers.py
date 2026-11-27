@@ -155,7 +155,13 @@ def test_each_default_equals_the_template_value() -> None:
     ):
         value = getattr(profile, attribute)
         dumped = value.model_dump(mode="json", by_alias=True)
-        assert dumped == module_template_value("firewall", key)
+        expected = module_template_value("firewall", key)
+        if key == "services":
+            # The model does not hold the ICMP service, which the Edge does not use.
+            assert isinstance(expected, dict)
+            assert "icmp" in expected
+            del expected["icmp"]
+        assert dumped == expected
 
 
 def test_a_display_default_is_a_fresh_object() -> None:

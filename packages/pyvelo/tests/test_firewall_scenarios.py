@@ -206,6 +206,40 @@ def test_localize_starts_from_the_profile() -> None:
     assert profile.raw_data["services"] == profile_services  # the profile is unchanged
 
 
+def test_services_made_local_from_a_profile_that_stores_icmp_carry_no_icmp() -> None:
+    # The Edge does not use the ICMP service: no model holds it, so a copy the
+    # library makes holds everything else the profile has, and no icmp.
+    profile_services = {
+        "loggingEnabled": True,
+        "ssh": {"enabled": True, "allowSelectedIp": ["192.0.2.1"]},
+        "console": {"enabled": False, "ruleLogicalId": "xyz"},
+        "icmp": {"enabled": True, "allowSelectedIp": ["192.0.2.5"]},
+    }
+    edge, profile = bound({}, {"services": profile_services})
+    _ = edge.data.services.localize()
+    assert payload(edge, profile)["services"] == {
+        "loggingEnabled": True,
+        "ssh": {"enabled": True, "allowSelectedIp": ["192.0.2.1"]},
+        "console": {"enabled": False},  # a local copy never carries the ID
+    }
+    assert isinstance(profile.raw_data, dict)
+    assert profile.raw_data["services"] == profile_services  # the profile is unchanged
+
+
+def test_a_patch_into_services_inherited_from_a_profile_that_stores_icmp_drops_it() -> (
+    None
+):
+    profile_services = {
+        "ssh": {"enabled": True, "allowSelectedIp": ["192.0.2.1"]},
+        "icmp": {"enabled": True, "allowSelectedIp": ["192.0.2.5"]},
+    }
+    edge, profile = bound({}, {"services": profile_services})
+    _ = edge.data.merge_patch({"services": {"ssh": {"enabled": False}}})
+    assert payload(edge, profile)["services"] == {
+        "ssh": {"enabled": False, "allowSelectedIp": ["192.0.2.1"]}
+    }
+
+
 def test_a_value_made_local_carries_none_of_the_profiles_server_assigned_ids() -> None:
     profile_services = {
         "ssh": {"enabled": True},

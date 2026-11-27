@@ -405,7 +405,7 @@ async def test_an_edge_with_no_firewall_row_compares_the_profiles_values() -> No
 async def test_the_constants_say_what_is_converted_and_what_is_a_finding() -> None:
     assert CONVERTED_MODULES == ("firewall", "QOS")
     assert {
-        "firewall": frozenset({"etm"}),
+        "firewall": frozenset({"etm", "services.icmp"}),
         "QOS": frozenset({"qosClientConnector"}),
     } == UNMODELED_KEYS
     assert [module_attribute(name) for name in ("firewall", "QOS")] == [
@@ -579,6 +579,31 @@ async def test_an_empty_list_only_the_server_has_is_server_only() -> None:
     assert finding.category is EffectiveCategory.SERVER_ONLY
     assert finding.path == "services.ssh.allowSelectedIp"
     assert finding.server == []
+
+
+ICMP: Json = {"enabled": True, "allowSelectedIp": ["192.0.2.5"], "x": 1}
+
+
+async def test_a_composed_icmp_service_is_no_finding() -> None:
+    # The edge stores one in its own services, and the VCO's composed view has it;
+    # the library's view does not model it, so it is not converted.
+    edge = {**EDGE, "services": {"ssh": {"enabled": False}, "icmp": ICMP}}
+    pipeline, state, client = await loaded(edge, PROFILE)
+    assert composed_modules(client)["services"]["icmp"] == ICMP
+    comparison = await pipeline.compare_effective(state, modules=["firewall"])
+    assert comparison.findings == ()
+    entry = by_path(comparison)["services.icmp"]
+    assert entry.category is EffectiveCategory.UNCONVERTED
+    assert (entry.client, entry.server) == (MISSING, ICMP)
+    # Only the VCO's composed view holds it, from the profile: not converted.
+    profile = {**PROFILE, "services": {"ssh": {"enabled": False}, "icmp": ICMP}}
+    pipeline, state, client = await loaded(EDGE, profile)
+    assert composed_modules(client)["services"]["icmp"] == ICMP
+    comparison = await pipeline.compare_effective(state, modules=["firewall"])
+    assert comparison.findings == ()
+    entry = by_path(comparison)["services.icmp"]
+    assert entry.category is EffectiveCategory.UNCONVERTED
+    assert (entry.client, entry.server) == (MISSING, ICMP)
 
 
 async def test_an_ignored_path_is_reported_with_its_reason() -> None:

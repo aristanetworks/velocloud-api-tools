@@ -1,4 +1,8 @@
-"""The Edge services the firewall allows: SSH, SNMP, the local UI, ICMP, the console."""
+"""The Edge services the firewall allows: SSH, SNMP, the local UI, the console.
+
+The Edge does not use the ICMP service, so no model reads ``icmp``: a stored one is
+kept as read.
+"""
 
 from typing import Annotated
 
@@ -44,7 +48,6 @@ class FirewallServices(VcoModel):
     ssh: SshService | MISSING = MISSING
     snmp: FirewallServicesGroup | MISSING = MISSING
     local_ui: LocalUiService | MISSING = MISSING
-    icmp: FirewallServicesGroup | MISSING = MISSING
     console: ConsoleService | MISSING = MISSING
     post: ConsoleService | MISSING = MISSING
     usb_disabled: Annotated[bool | MISSING, Alias("usb.disabled")] = MISSING
