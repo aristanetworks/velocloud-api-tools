@@ -29,6 +29,7 @@ import pyvelo
 from pydantic import MISSING, Field
 from pyvelo.client.models.configuration.device_settings.refs import DeviceSettingsRefs
 from pyvelo.client.models.enterprise.service_data import AwsNvsBackupServer
+from pyvelo.client.schemas.configuration import ConfigurationBase
 from pyvelo.core import (
     KeyField,
     NamedDocumentError,
@@ -40,6 +41,7 @@ from pyvelo.core import (
     vco_keys,
     wire_name,
 )
+from pyvelo.core.secrets import declares_secret
 
 
 class Hop(VcoModel):
@@ -376,6 +378,24 @@ UNREAD = {
 
 def test_the_fields_the_walk_does_not_read_are_the_recorded_set() -> None:
     assert unread_fields() == UNREAD
+
+
+def test_only_the_rows_of_a_configuration_hold_a_secret_the_walk_does_not_read() -> (
+    None
+):
+    """No ``named_dump`` shows a secret the models mark.
+
+    The walk masks a secret only below a field it reads. The rows of a
+    configuration are below one it does not, and a configuration dumps them
+    itself, each by its own class. So no other class holds a secret below a
+    field of that sort, and none holds a configuration: its dump would walk
+    the configuration as any model, and show the secrets of its rows.
+    """
+    for cls in model_classes():
+        for held in held_by(cls):
+            assert not issubclass(held.cls, ConfigurationBase), (cls, held.name)
+            if not held.direct and not issubclass(cls, ConfigurationBase):
+                assert not declares_secret(held.cls), (cls, held.name)
 
 
 def _nested(parts: _Parts, value: object) -> object:

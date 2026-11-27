@@ -724,6 +724,8 @@ The first pair is pydantic's. Every model has the second beside it (the
 methods are `VcoModel`'s, in `pyvelo.core`):
 
 ```python
+from pyvelo.core import ConfigContext
+
 data = state.profile.device_settings
 named = data.named_dump()
 neighbor = named["segments"][0]["bgp"]["neighbors"][0]
@@ -731,7 +733,9 @@ neighbor = named["segments"][0]["bgp"]["neighbors"][0]
 #  "enable_md5": True, "md5_password": "***", ...}
 
 neighbor["neighbor_as"] = "65010"
-again = type(data).named_validate(named, stored=data)
+again = type(data).named_validate(
+    named, stored=data, context={"config_level": ConfigContext.PROFILE}
+)
 again.segments[0].bgp.neighbors[0].md5_password  # the password `data` holds
 ```
 
@@ -744,30 +748,36 @@ leaves out what that level does not have.
 
 `Model.named_validate(document, stored=model)` reads such a document, edited
 or not, and gives a new model. `stored` is the model the document was dumped
-from. Before anything is validated the document is put in the VCO's form:
-each attribute name becomes the VCO's key, and each mask is replaced by the
-value `stored` holds at the same place (`Model.vco_document(document,
-stored=model)` gives that document, not validated). Then it is validated as
-`model_validate` validates. So what a model keeps of its input is in the VCO's
-form: a module row read this way has the `raw_data` and the `raw_refs`, which
-a save builds its payload from, in the VCO's keys and with the secrets
-themselves, as the row read from the VCO's own JSON has. `named_validate`
-makes a model and changes no state; an edit of a loaded state goes through
-`apply`.
+from. It is not checked against the document: a mask takes whatever the model
+given holds at that place. Before anything is validated the document is put in
+the VCO's form: each attribute name becomes the VCO's key, and each mask is
+replaced by the value `stored` holds at the same place
+(`Model.vco_document(document, stored=model)` gives that document, not
+validated). Then it is validated as `model_validate` validates. So what a
+model keeps of its input is in the VCO's form: a module row read this way has
+the `raw_data` and the `raw_refs`, which a save builds its payload from, in
+the VCO's keys and with the secrets themselves, as the row read from the VCO's
+own JSON has. `named_validate` makes a model and changes no state; an edit of
+a loaded state goes through `apply`.
 
 `context` is pydantic's validation context, as `model_validate` takes it. A
 module row takes two things from it and from nowhere else: `{"refs_loaded":
 False}` for a row read without its refs, and `{"config_level": ...}` for the
 level of the models in it. Without a context the row is what `model_validate`
-makes without one: it counts as read with its refs.
+makes without one: it counts as read with its refs. The example above reads a
+profile's model back, so it passes `{"config_level": ConfigContext.PROFILE}`:
+without it `again` would have no level, and its dumps would hold the fields a
+profile does not have (`routed_interfaces`, `loopback_interfaces`).
 
 `model_dump(by_alias=False)` writes attribute names too, and `model_validate`
 takes a field by either name, but the two are not a round trip. A module row
 keeps the JSON it was validated from, and nothing tells a document in
 attribute names from data the VCO stored: the row would keep the attribute
-names, and a save would send them to the VCO. `named_validate` is the way to
-read a document in attribute names. It refuses a field named by the VCO's
-key, in a document of the VCO's form or among attribute names
+names, and a save would send them to the VCO. A named dump given to
+`model_validate` is taken as stored data in the same way, so its attribute
+names and its masks would be saved as they are. `named_validate` is the only
+way to read a document in attribute names. It refuses a field named by the
+VCO's key, in a document of the VCO's form or among attribute names
 (`NamedDocumentError`, kind `vco_key`, at the field): it renames every
 attribute name it finds, and in a document of the VCO's that would rename a
 stored key that happens to be spelled like one. Give a document in the VCO's
@@ -854,12 +864,31 @@ no stored item, or several whose secrets differ. So:
   length, or in a list or a map inside another. No model of a module's data
   has a field of that last sort; the ones that do are requests and results of
   the edge, metrics and monitoring calls (their filters, their sort order,
-  their time series, an edge's `ha`) and the `modules` of a configuration.
+  their time series, an edge's `ha`), and none of them holds a secret.
   `named_validate` leaves the same keys as they are, so the two still agree.
+- A class that keeps the keys it does not know can store one field under two
+  keys (a segment's `routes` stored with both `icmpProbes` and `icmp_probes`);
+  its named dump then holds both, and `named_validate` refuses it (`vco_key`).
+- A shown `deviceSettings:segment` ref row (under `refs.segment` of a device
+  settings row) does not show its `segmentId`, which is inside its `data`.
 - A whole configuration (`EdgeConfiguration`, `EnterpriseConfigurationProfile`)
-  is one of those: its `named_dump()` holds each row of `modules` as
-  `model_dump` writes it, in the VCO's keys and with the secrets complete.
-  Dump the row you mean to show (`module.named_dump()`), or its data.
+  is dumped and read row by row. Its named document holds each module row in
+  the same form: under `modules`, each row as its own `named_dump()`, by
+  attribute names and with every secret masked. `named_validate` reads each
+  row by the class its `name` has, and `stored=` is the configuration the
+  document was dumped from: the masks of a row take their values from the
+  stored row of the same name, wherever either row is in its list. A mask is
+  refused (`masked_secret`) in a row whose name the stored configuration
+  lacks, which is new, and in a row whose name several rows have, in the
+  document or in `stored`, because the name then does not say which stored
+  row is its own; write the secrets of such a row in full. A refusal in a row
+  has its path from the document down, the row by its position
+  (`modules[#0].data.segments[#0].bgp.neighbors[#0].md5_password`). A value
+  that validation refuses in a row is listed differently from one in a model
+  read alone: after the row's position comes its module name, and below that
+  the VCO's keys
+  (`modules[#0].deviceSettings.data.segments[#0].bgp.neighbors[#0].neighborAS:
+  Input should be a valid string`).
 
 ## What a save writes
 
