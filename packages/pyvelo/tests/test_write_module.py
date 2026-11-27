@@ -440,7 +440,9 @@ async def test_a_plan_for_another_module_is_refused(
     store = store_of(module)
     client = await mock_vco_client(store)
     plan = plan_module(qos({"segments": []}), {"segments": [], "x": 1})
-    with pytest.raises(ValueError, match="the plan is for QOS, not firewall"):
+    with pytest.raises(
+        ValueError, match="the plan is for business_policy, not firewall"
+    ):
         _ = await client.write_module(module, plan)
     assert store.requests == []
 

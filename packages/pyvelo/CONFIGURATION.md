@@ -2060,9 +2060,9 @@ Known limits:
   (`Module 'business_policy' not found in configuration`). So do the errors
   of a write that is not stored as planned (`Configuration module 11
   (business_policy): 3 of 4 planned changes are not stored as sent`), whose
-  `module_name` holds that name, as `SaveStepError.module_name` does. The
-  low-level `write_module` keeps the VCO's name in its refusal of a plan made
-  for another module (`the plan is for QOS, not firewall`).
+  `module_name` holds that name, as `SaveStepError.module_name` does. So does
+  the low-level `write_module`'s refusal of a plan made for another module
+  (`the plan is for business_policy, not firewall`).
 - A profile's segment is assigned with `assign_segment` or an `add`, but not
   removed: an edit that removes a segment the device settings module has
   raises `SegmentSetError` (a patch: `PatchError`), and only an orphan, a QoS

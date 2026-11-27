@@ -554,11 +554,14 @@ def _require_plan_for(plan: ModulePlan, module: ConfigurationModuleBase) -> str:
     """The name of *module*, when *plan* is for a module of that name.
 
     It is the name as ``plan_module`` takes it: the base class declares none.
-    Otherwise raises ``ValueError``.
+    Otherwise raises ``ValueError`` naming both modules by their python names.
     """
     module_name = str(getattr(module, "name", MISSING))
     if plan.name != module_name:
-        raise ValueError(f"the plan is for {plan.name}, not {module_name}")
+        raise ValueError(
+            f"the plan is for {python_module_name(plan.name)}, not "
+            f"{python_module_name(module_name)}"
+        )
     return module_name
 
 
@@ -1043,12 +1046,7 @@ class ConfigurationMixin(Protocol):
         read propagates. Raises ``ValueError`` when *plan* is for a module of
         another name.
         """
-        module_name = str(getattr(module, "name", MISSING))
-        if plan.name != module_name:
-            raise ValueError(
-                f"the plan is for {python_module_name(plan.name)}, not "
-                f"{python_module_name(module_name)}"
-            )
+        _require_plan_for(plan, module)
         if (
             plan.operation != "update"
             or plan.refs is None
