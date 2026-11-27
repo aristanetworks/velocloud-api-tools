@@ -821,7 +821,30 @@ def _hub_problems(
     return problems
 
 
-def check_hub_lists(  # noqa: C901 (existing: split it when it next changes)
+def _broken_as_read(
+    was: DeviceSegment | None, lists: Mapping[Role, list[VpnHub]]
+) -> dict[tuple[object, ...], frozenset[tuple[Role, _Key]]]:
+    """The rules *was* breaks as read (none if None): by key, the hubs each lists."""
+    broken_before: dict[tuple[object, ...], frozenset[tuple[Role, _Key]]] = {}
+    if was is not None:
+        for read_problem in _broken_rules(was, lists, None):
+            held = broken_before.get(read_problem.key, frozenset())
+            broken_before[read_problem.key] = held | read_problem.listed
+    return broken_before
+
+
+def _hub_list_refusal(errors: Sequence[_Problem], names: Sequence[str]) -> HubListError:
+    """The one ``HubListError`` for all *errors*, found in the segments *names*."""
+    segments = list(dict.fromkeys(names))
+    return HubListError(
+        "\n".join(p.message for p in errors),
+        segment=segments[0] if len(segments) == 1 else None,
+        lists=tuple(dict.fromkeys(path for p in errors for path in p.lists)),
+        hubs=tuple(dict.fromkeys(h for p in errors for h in p.hubs)),
+    )
+
+
+def check_hub_lists(
     as_read: DeviceSettingsData,
     now: DeviceSettingsData,
     *,
@@ -881,13 +904,7 @@ def check_hub_lists(  # noqa: C901 (existing: split it when it next changes)
         segment_id = _segment_id(segment)
         name = segment.segment.name
         was = read_by_id.get(segment_id)
-        broken_before: dict[tuple[object, ...], frozenset[tuple[Role, _Key]]] = {}
-        if was is not None:
-            for read_problem in _broken_rules(
-                was, lists_read.get(segment_id, {}), None
-            ):
-                held = broken_before.get(read_problem.key, frozenset())
-                broken_before[read_problem.key] = held | read_problem.listed
+        broken_before = _broken_as_read(was, lists_read.get(segment_id, {}))
         found = _broken_rules(
             segment, lists_now.get(segment_id, {}), None if was is None else was.vpn
         )
@@ -911,11 +928,5 @@ def check_hub_lists(  # noqa: C901 (existing: split it when it next changes)
                 errors.append(problem)
                 names.append(name)
     if errors:
-        segments = list(dict.fromkeys(names))
-        raise HubListError(
-            "\n".join(p.message for p in errors),
-            segment=segments[0] if len(segments) == 1 else None,
-            lists=tuple(dict.fromkeys(path for p in errors for path in p.lists)),
-            hubs=tuple(dict.fromkeys(h for p in errors for h in p.hubs)),
-        )
+        raise _hub_list_refusal(errors, names)
     return tuple(warnings)
