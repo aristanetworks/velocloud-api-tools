@@ -440,6 +440,17 @@ class SegmentEcmp(VcoModel):
     as_path_multipath_relax: bool = False
 
 
+def _whole_number_to_text(value: object) -> object:
+    """*value* as its decimal text if it is an ``int`` but not a ``bool``, else as is.
+
+    The VCO stores and accepts a static route's prefix only as text, so a
+    number given for it is held as the text the VCO reads.
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return value
+
+
 class StaticRoute(VcoModel):
     destination: str
     netmask: str
@@ -448,7 +459,7 @@ class StaticRoute(VcoModel):
     cost: int = 0
     preferred: bool = True
     description: str | None = None
-    cidr_prefix: str | int
+    cidr_prefix: Annotated[str, BeforeValidator(_whole_number_to_text)]
     wan_interface: str = ""
     icmp_probe_logical_id: uuid.UUID | None = None
     vlan_id: int | None = None

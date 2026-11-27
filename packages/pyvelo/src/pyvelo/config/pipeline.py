@@ -678,15 +678,16 @@ class ConfigPipeline:
         With either, it is any JSON value; ``None`` means what ``null`` means
         at that place. *path* is one or more field names joined by dots, each
         by any name ``merge_patch`` accepts. Every part but the last must be
-        a field that holds a single sub-model; *path* does not step into list
-        items, which the patch names. With *segment*, *path* starts at the
+        a field that holds a sub-model; where it holds a union of several, the
+        next part may name a field of any of them. *path* does not step into
+        list items, which the patch names. With *segment*, *path* starts at the
         item class of the module's ``segments`` field, else at the module
         data's class. *segment* is a selector of the ``segments`` list like
         any other: the segment's name in any case (through the segment
         resolver) or its ``segmentId``. The address is checked against the
         model classes, not the instances (``nest_patch``), so an unset
         intermediate field is fine. A part that names no field, a part before
-        the last that is not a single sub-model, an empty *path* or part, and
+        the last that holds no sub-model, an empty *path* or part, and
         *segment* for a module with no ``segments`` field (WAN, control
         plane) raise ``PatchError``.
 

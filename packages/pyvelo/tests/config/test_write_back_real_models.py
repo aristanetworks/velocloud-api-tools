@@ -282,7 +282,7 @@ async def test_ipv6_keyed_static_route_stored_in_canonical_form_passes() -> None
     result = await pipeline.save(state)
 
     route = (
-        'segments["Global Segment"].routes.staticV6["2001:DB8:1::",64,"FE80::1",GE3]'
+        'segments["Global Segment"].routes.staticV6["2001:DB8:1::","64","FE80::1",GE3]'
     )
     changes = result.server_changes[ConfigurationModuleName.DEVICE_SETTINGS]
     assert paths(changes) == [f"{route}.destination", f"{route}.gateway"]

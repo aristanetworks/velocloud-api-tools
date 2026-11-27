@@ -125,7 +125,9 @@ shorthand for nesting: `segment="Global Segment", path="outbound", patch=P` is
 `patch={"segments": {"Global Segment": {"outbound": P}}}`. `path` is field
 names joined by dots, each a field that holds one sub-model, except the last,
 which may be any field; it does not step into list items, which the patch
-names. `segment` names a segment like any other selector of the `segments`
+names. A path goes through a field that holds one of several kinds of object
+(the cloud security configuration's GRE and IPsec forms) to a field any of
+them has. `segment` names a segment like any other selector of the `segments`
 list: by name, in any case, or by `segmentId`. Without an address, `patch`
 must be a `dict`.
 
@@ -279,7 +281,19 @@ kept unique the same way: an `add` or a change that gives an item an alt key
 another item has (a rule's logical ID, a segment's `segmentId`) raises, and so
 does a list value that repeats one. Every selector is resolved against the
 list as it was, then changes, deletes, and adds and moves (in the order
-written) are applied.
+written) are applied. An item an `add` builds is a new item. Deleting a rule
+and then adding one under the same name plans a removal and an addition:
+nothing of the old rule is kept, neither its logical ID (the VCO issues a new
+one for a firewall rule) nor keys of it that pyvelo does not model. To change a
+rule and keep it the same rule, change it: `{"a": {...}}`. One patch cannot
+delete an item and add one under its key; send the delete, then the add. Such
+an edit is not carried onto a module another writer changed meanwhile when the
+module as stored still holds the item: the save that meets the change (a
+conflict, or the rebase of a module written after a profile's device settings)
+raises with nothing of the edit stored, and `redo_patch()` leaves it out. Apply
+the delete and the add again on the module as stored, and save (see "After a
+save"). A re-add of an item the VCO deleted meanwhile is carried, and so is one
+whose item is the same as stored, key for key.
 
 `list_kind` (`pyvelo.core`) reports a sixth value, `"undeclared"`, for a list
 of models that declares neither `KeyField` nor `Positional()`. A patch treats
@@ -290,10 +304,15 @@ A list whose key has several parts, such as the static routes, names an item
 by the parts joined by commas: `10.0.0.0,24,192.168.1.1,GE3`. A part that
 holds a comma or a double quote is written as a JSON string instead
 (`"a,b",24,"192.168.1.1",GE3`), and in Python a tuple of the parts works too.
-An `add` under the comma form stores each part as text: on a field declared
-`str | int` (a static route's `cidr_prefix`), `10.2.0.0,24,192.168.1.1,GE3`
-stores `'24'`, while the quoted form stores `24`. Use the quoted form, or give
-the field in the body, when the type of the value matters. A text that reads as
+An `add` under the comma form gives each part as text, and its field reads it:
+a text field keeps it, and a number field, such as a syslog collector's `port`,
+reads `10.0.0.9,UDP,514` as the port `514`. The quoted form and a tuple give
+what they say, and so does a value the body gives for the field, each read by
+its field the same way. A static route's prefix (`cidr_prefix`) is text, as
+the VCO stores it and as it accepts it: a whole number given for it is stored as
+its text, so `10.2.0.0,24,192.168.1.1,GE3`, `"10.2.0.0",24,"192.168.1.1",GE3`
+and the tuple `("10.2.0.0", 24, "192.168.1.1", "GE3")` each add a route whose
+prefix is `"24"`, and each names that route afterwards. A text that reads as
 two keys of the list, one as the quoted form (where `true` is a boolean, so
 `a,24,true,GE3` names the item `a,24,True,GE3`) and one as plain parts split at
 the commas, is refused with both items named, and the quoted form of each key
@@ -760,6 +779,9 @@ firewall: update
   refuses a `move` of such a segment (see "The patch format"). An edit made by
   assignment that moves such an entry, such as reordering the model's
   `segments` list in place, changes its place in the state only.
+  Segments are matched by `segmentId` as a number, whatever form it was stored
+  in; an edge module with an entry that has no `segmentId` gets no
+  placeholders, and its entries are written as read.
 - Deleting an edge segment that the profile also has leaves an empty entry for
   it in the write, as for a segment the edge never had.
 - A missing edge firewall or QoS module starts empty. It is inserted once it
@@ -808,18 +830,20 @@ firewall: update
   positional or untyped list, and a keyed list that holds an item with no key
   and no ID (a WAN link read without an `internalId`) or two items of one name
   read without IDs. Keys the models do not know are then dropped from every
-  item of that list, and the models' defaults are written into them. A list
-  inside an interface that is not a plain port (a LAG's `slaveInterfaces`) is
-  also written whole when something in it changes, and keys the models do not
-  know are dropped from its other items.
+  item of that list, and the models' defaults are written into them. A keyed
+  list inside an interface that is not a plain port (a LAG's `slaveInterfaces`)
+  is written item by item as well: each item of a list that holds several kinds
+  of interface is read as the kind it is.
 - A patch that moves items (a `move`) plans each item's change at the item, and
   one more change at the list: its order entry, which names the items that
   move, each with its new place. An item added to a keyed list has its place in
   its own change. In a keyed list the items' unknown keys are still kept.
-- When an added item would get the name of an item that was read (a new rule
-  named as a rule the same plan renames, or an item without a key at the
-  position of an item that is named by position), the two cannot be told apart
-  by name, and the list plans as one change.
+- When an added item would get the name of an item that was read and is still
+  in the list (a new rule named as a rule the same plan renames, or an item
+  without a key at the position of an item that is named by position), the two
+  cannot be told apart by name, and the list plans as one change. An item
+  deleted and added again under its key is not in the list any more: the plan
+  is a removal and an addition at that name (see "The patch format").
 - A cache of loaded modules must keep the JSON rows or `module.raw_data`. A
   `model_validate(module.model_dump())` round trip loses the raw snapshot, and
   with it the "as read" guarantee above.
@@ -1340,8 +1364,12 @@ write is sent with the new version, and what changed beside your edits is in
 `SaveResult.server_changes` with `merged` true. It raises `ConfigConflictError`
 (`error.sent` False, `error.stated` False, nothing sent) only where the change
 reached a path you edited too, or a list you edit an item of had items added or
-removed; `error.lost_edits` lists your edits, to redo on `error.module`. When
-the module already holds every one of your changes, nothing is sent for it. A
+removed; `error.lost_edits` lists your edits, to redo on `error.module`. An
+item deleted and added again under its key is not rebased when the module as
+stored still holds that item: the save raises `ConfigConflictError` with
+nothing of the module sent, as any conflict does for such an item (see "After
+a save"). When the module already holds every one of your changes, nothing is
+sent for it. A
 ref row your edit adds or removes (a QoS rule's backhaul hub) is derived again
 against the refs read, so a row already there is not added twice, and the hub's
 service is found in the device settings as that save stored them. The
@@ -1358,12 +1386,15 @@ of the version. With it on, the VCO refuses the write, and the save raises
 `ConfigConflictError`. With it off, the VCO does not store the data and
 answers with the module as it is. The save then raises `ConfigConflictError`
 too, when none of your changes is found stored and each value is as read. It
-raises `WriteNotAppliedError` in three cases: another writer also changed a
+raises `WriteNotAppliedError` in four cases: another writer also changed a
 value you edited (that edit is marked as a clash); another writer made one of
 your edits too, so that it counts as stored, while another of your edits is
-not; or the write carried refs and the VCO replaced them while it left the
+not; the write carried refs and the VCO replaced them while it left the
 data as it was, so that your refs changes are under `applied` and your data
-changes under `lost_edits`. Reading the version before a write that carries
+changes under `lost_edits`; or the write deleted an item and added one under
+its key, and the module as stored still holds the old item (the check takes it
+for the new one: the addition is marked as a clash, and the removal is listed
+under `applied` although the item is still stored). Reading the version before a write that carries
 refs prevents the last, unless the module changes between that read and the
 write.
 
@@ -1475,7 +1506,14 @@ except (ConfigConflictError, WriteNotAppliedError) as error:
 
 The patch puts an added item back in its place, as an `add`, and makes a lost
 order again, and it names each item as the stored list names it. An item you
-added is added again, never set on an item another writer put in its place. The
+added is added again, never set on an item another writer put in its place.
+The exception is an item you deleted and added again under its key, while the
+module as stored still holds the item: `redo_patch()` does not carry that edit
+(with `include_clashes=True` it is the `add` alone, which `apply` refuses because
+the key is in the list), `not_redone()` lists the addition, and the error may
+list the removal under `applied` although the item is still stored. Apply the
+delete and the add again, as two patches, on the state, which holds the module
+as stored, and save. The
 patch leaves out a clash, because redoing one overwrites what another writer
 stored there; `error.redo_patch(include_clashes=True)` redoes those too.
 A lost DNS or authentication provider (a ref row of a field that stands for

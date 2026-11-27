@@ -364,13 +364,13 @@ async def test_static_route_add_and_delete_by_composite_key() -> None:
     ]
     added = routes.static[-1]
     assert (added.cidr_prefix, added.gateway, added.wan_interface) == (
-        24,
+        "24",
         "192.168.1.1",
         "GE3",
     )
     assert sorted(change_paths(state)) == [
         'segments["Global Segment"].routes.static["10.2.0.0",24,"192.168.1.1",GE3]',
-        'segments["Global Segment"].routes.static["10.9.0.0",24,"192.168.1.1",GE3]',
+        'segments["Global Segment"].routes.static["10.9.0.0","24","192.168.1.1",GE3]',
     ]
     sent = (await payload(state))["segments"][0]["routes"]["static"]
     assert sent[0] == route("10.1.0.0", futureKey=1)
@@ -402,6 +402,25 @@ async def test_a_static_route_is_named_by_its_parts_joined_with_commas() -> None
         "its 4 parts (destination, cidr_prefix, gateway, wan_interface) joined by "
         "commas, as in 10.1.0.0,24,192.168.1.1,GE3"
     ) in exc.value.message
+
+
+async def test_static_routes_read_with_text_prefixes_keep_them_as_text() -> None:
+    raw = device_settings(
+        route("10.1.0.0", cidrPrefix="24"), route("10.2.0.0", cidrPrefix="24")
+    )
+    state = make_state({"deviceSettings": raw}, {"deviceSettings": PROFILE_DS})
+    assert state.plan().changed == ()
+
+    _ = await ConfigPipeline(None).apply(
+        state,
+        module="device_settings",
+        segment=SEGMENT,
+        path="routes.static",
+        patch={"10.2.0.0,24,192.168.1.1,GE3": {"cost": 5}},
+    )
+    sent = (await payload(state))["segments"][0]["routes"]["static"]
+    assert sent[0] == route("10.1.0.0", cidrPrefix="24")
+    assert [(r["cidrPrefix"], r.get("cost")) for r in sent] == [("24", None), ("24", 5)]
 
 
 # --- WAN links --------------------------------------------------------------

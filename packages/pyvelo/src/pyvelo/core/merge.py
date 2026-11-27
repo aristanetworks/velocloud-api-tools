@@ -68,7 +68,7 @@ from .fields import (
 )
 from .identity import ResolutionError, ResolverNotLoadedError, resolution_error
 from .layers import Edge, Kind, Layered, field_kind, inner_adapter
-from .owned import ByFlag, Owned, group_of, unwrap
+from .owned import ByFlag, Owned, group_of, groups_of, unwrap
 from .patch import (
     ItemOp,
     PatchError,
@@ -132,7 +132,7 @@ def apply_patch(
     return model
 
 
-def nest_patch(  # noqa: C901 (existing: split it when it next changes)
+def nest_patch(
     model: type[VcoModel],
     patch: object,
     *,
@@ -151,15 +151,22 @@ def nest_patch(  # noqa: C901 (existing: split it when it next changes)
 
     A part of *path* names a field by any name ``merge_patch`` accepts; the
     nested patch uses the python name. With *segment* the parts start at the
-    item class of the ``segments`` field, without at *model*. Every part but
-    the last must be a field that holds a single sub-model. Only the classes
-    are consulted, never an instance.
+    item type of the ``segments`` field, without at *model*. A part is looked
+    up in every class the value there can be: the variants of a union field,
+    and of the ``segments`` item type too. The nested patch uses the name of
+    the first class that has the field; the classes without it drop out.
+    Every part but the last must be a field that holds a sub-model, and the
+    next part is looked up in every model it can hold. Only the classes are
+    consulted, never an instance, so a patch for another variant than the
+    stored one is accepted here and refused by ``merge_patch``, as the nested
+    form is.
 
     A bad address raises ``PatchError`` at the path of the part that failed,
     in python names, under ``segments[S]`` when there is a *segment*: a part
-    that names no field (the message gives the class, the part and the field
-    names), a part before the last that is not a single sub-model, an empty
-    *path* or part, and *segment* for a class with no ``segments`` field.
+    that names no field of any class (the message gives the classes joined
+    with `` | ``, the part and the field names of them all), a part before the
+    last that holds no sub-model, an empty *path* or part, and *segment* for a
+    class with no ``segments`` field.
     """
     if segment is None and path is None:
         if not isinstance(patch, dict):
@@ -168,44 +175,13 @@ def nest_patch(  # noqa: C901 (existing: split it when it next changes)
                 "give an object, or name the place a value goes with segment or path"
             )
         return cast("dict[str, object]", checked_patch(patch))
-    cls = model
+    classes: tuple[type[VcoModel], ...] = (model,)
     walked = Path(())
     if segment is not None:
         walked = walked.child("segments")
-        field = cls.model_fields.get("segments")
-        if field is None:
-            raise PatchError(f"{cls.__name__} has no segments field", walked, "address")
-        item_type = list_item_type(field)
-        if item_type is None:
-            raise PatchError(
-                f"{cls.__name__}.segments is not a list of models", walked, "address"
-            )
-        cls, walked = item_type.variants[0], walked.child(Key(segment))
-    names: list[str] = []
-    parts = path.split(".") if path is not None else []
-    for index, part in enumerate(parts):
-        where = walked.child(part)
-        if not part:
-            raise PatchError(f"the path {path!r} has an empty part", where, "address")
-        try:
-            name = _field_name(cls._alias_map(), cls.__name__, part, walked)  # pyright: ignore[reportPrivateUsage]
-        except PatchError as exc:
-            fields = ", ".join(cls.model_fields)
-            raise PatchError(
-                f"{exc.message}; its fields are {fields}", where, "address"
-            ) from exc
-        names.append(name)
-        if index < len(parts) - 1:
-            sub = _field_model_type(cls.model_fields[name])
-            if sub is None:
-                raise PatchError(
-                    f"{cls.__name__}.{name} does not hold a single sub-model, "
-                    "so the path cannot continue past it",
-                    where,
-                    "address",
-                )
-            cls = sub
-        walked = where
+        classes = _segment_item_classes(model, walked)
+        walked = walked.child(Key(segment))
+    names = _address_names(classes, path, walked) if path is not None else []
     # Where the patch sits once nested, in python names, for its errors and its depth.
     where_nested = Path(
         (*(("segments", Key(segment)) if segment is not None else ()), *names)
@@ -216,6 +192,101 @@ def nest_patch(  # noqa: C901 (existing: split it when it next changes)
     if segment is None:
         return cast("dict[str, object]", nested)
     return {"segments": {segment: nested}}
+
+
+def _segment_item_classes(
+    model: type[VcoModel], walked: Path
+) -> tuple[type[VcoModel], ...]:
+    """Every variant of the item type of *model*'s ``segments`` field.
+
+    A class with no ``segments`` field, or one whose ``segments`` is not a list
+    of models, raises ``PatchError`` at *walked*.
+    """
+    field = model.model_fields.get("segments")
+    if field is None:
+        raise PatchError(f"{model.__name__} has no segments field", walked, "address")
+    item_type = list_item_type(field)
+    if item_type is None:
+        raise PatchError(
+            f"{model.__name__}.segments is not a list of models", walked, "address"
+        )
+    return item_type.variants
+
+
+def _address_names(
+    classes: tuple[type[VcoModel], ...], path: str, walked: Path
+) -> list[str]:
+    """The python name of each part of *path*, walked from *classes* at *walked*.
+
+    *classes* are the classes the value at *walked* can be. A part is looked
+    up in each of them (``_part_name``); the classes without that field drop
+    out, and below it the classes are every model the field can hold, over
+    the classes that remain.
+
+    An empty part, a part that names no field of any class, and a part before
+    the last that holds no sub-model each raise ``PatchError`` at the path of
+    that part.
+    """
+    names: list[str] = []
+    parts = path.split(".")
+    for index, part in enumerate(parts):
+        where = walked.child(part)
+        if not part:
+            raise PatchError(f"the path {path!r} has an empty part", where, "address")
+        name = _part_name(classes, part, walked)
+        names.append(name)
+        if index < len(parts) - 1:
+            having = tuple(
+                cls
+                for cls in classes
+                if cls._alias_map().get(part) == name  # pyright: ignore[reportPrivateUsage]
+            )
+            classes = _sub_model_classes(having, name, where)
+        walked = where
+    return names
+
+
+def _part_name(classes: tuple[type[VcoModel], ...], part: str, walked: Path) -> str:
+    """The python name *part* gives in the first of *classes* that has it.
+
+    A part that names no field of any of *classes* raises ``PatchError`` at
+    ``walked.child(part)``: the message names the classes (joined with
+    `` | ``) and lists the fields of all of them, each once.
+    """
+    names: dict[str, str] = {}
+    for cls in classes:
+        for key, name in cls._alias_map().items():  # pyright: ignore[reportPrivateUsage]
+            _ = names.setdefault(key, name)
+    try:
+        return _field_name(names, _variant_names(classes), part, walked)
+    except PatchError as exc:
+        fields = ", ".join(
+            dict.fromkeys(f for cls in classes for f in cls.model_fields)
+        )
+        raise PatchError(
+            f"{exc.message}; its fields are {fields}", walked.child(part), "address"
+        ) from exc
+
+
+def _sub_model_classes(
+    having: tuple[type[VcoModel], ...], name: str, where: Path
+) -> tuple[type[VcoModel], ...]:
+    """Every model the field *name* of *having* can hold, in order, each once.
+
+    When it holds none, raises ``PatchError`` at *where*, named after the first
+    of *having*: the path cannot continue past it.
+    """
+    found = dict.fromkeys(
+        sub for cls in having for sub in _field_model_types(cls.model_fields[name])
+    )
+    if not found:
+        raise PatchError(
+            f"{having[0].__name__}.{name} does not hold a single sub-model, "
+            "so the path cannot continue past it",
+            where,
+            "address",
+        )
+    return tuple(found)
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +323,7 @@ def _merge_model(
     before: JsonObject = {
         name: copy.deepcopy(_field_value(model, name)) for name, _ in updates
     }
+    _localize_groups(model, updates)
 
     for name, value in updates:
         _merge_field(
@@ -259,6 +331,31 @@ def _merge_model(
         )
 
     _auto_set_override_flags(model, before)
+
+
+def _localize_groups(model: VcoModel, updates: Sequence[tuple[str, object]]) -> None:
+    """Make local each coupled group the patch gives values, before any is merged.
+
+    A group of *model*, an edge layer, that is not local, and of which *updates* (python
+    name, value) gives some member a value and no member ``null``, is localized with
+    those members as ``given``: a member with no value of its own from the profile or
+    its default is the patch's to set (``GroupHandle.localize``), so a patch that gives
+    every member a value makes such a group local. A ``null`` for a member inherits the
+    whole group (``_merge_owned``), so a group given one is left to that.
+    """
+    if not isinstance(model, Layered):
+        return
+    for group in groups_of(type(model)).values():
+        members = group.members(type(model))
+        given = {name: value for name, value in updates if name in members}
+        if not given or any(value is None for value in given.values()):
+            continue
+        if not isinstance(_field_value(model, group.anchor), Owned):
+            continue
+        # The anchor holds an ``Owned`` on the edge layer only.
+        handle = group.handle(cast("Layered[Edge]", model))
+        if not handle.is_local:
+            handle.localize(given=given)
 
 
 _DIRECTIVES = ("_op", "_position")
@@ -2947,6 +3044,8 @@ def _new_list_item(
                     entry.path,
                     "exists",
                 )
+    if spec.kind == "keyed" and isinstance(new, VcoModel):
+        new.mark_added()
     return new
 
 

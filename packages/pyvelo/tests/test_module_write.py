@@ -1,14 +1,23 @@
 import copy
 import dataclasses
+import importlib
 import inspect
 import json
+import pkgutil
 import uuid
-from typing import Any, cast, overload
+from collections.abc import Mapping
+from typing import Any, cast, get_args, overload
 
 import pytest
+import pyvelo.client.models.configuration as configuration_models
+import yaml
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.exceptions import LossyFieldError, RefsNotLoadedError
+from pyvelo.client.exceptions import (
+    ConfigConflictError,
+    LossyFieldError,
+    RefsNotLoadedError,
+)
 from pyvelo.client.models.configuration import DeviceSettingsData, FirewallData
 from pyvelo.client.models.configuration.firewall.rules import FirewallOutboundRule
 from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
@@ -17,6 +26,8 @@ from pyvelo.client.module_write import (
     ModulePlan,
     missing_segments,
     plan_module,
+    rebase_onto,
+    wire_dump,
     with_hub_rows,
 )
 from pyvelo.client.schemas.configuration import (
@@ -28,14 +39,16 @@ from pyvelo.client.schemas.configuration import (
     QosConfigurationModule,
     new_edge_module,
 )
-from pyvelo.core import ConfigContext, Owned, add, at, delete
+from pyvelo.core import ConfigContext, Owned, VcoModel, add, at, delete
+from pyvelo.core.base import list_item_type
+from pyvelo.core.fields import get_key_spec
 from pyvelo.core.identity import (
     NetworkServiceIdentity,
     ResolverNotLoadedError,
     SegmentIdentity,
 )
 from pyvelo.core.layers import Edge, Profile, layer_for
-from pyvelo.core.rebase import Key
+from pyvelo.core.rebase import AddedItem, Key
 from pyvelo.testing import make_module_json
 from refs_helpers import (
     DNS_A,
@@ -234,6 +247,64 @@ def test_no_edit_does_not_write_just_to_reconcile() -> None:
         EDGE_RAW,
         ("Guest",),
     )
+
+
+def _global_entry(**descriptor: object) -> dict[str, Any]:
+    """The edge's Global Segment entry, its descriptor changed by *descriptor*."""
+    segment = {**desc(0, "Global Segment"), **descriptor}
+    if segment["segmentId"] is None:
+        del segment["segmentId"]
+    return {"segment": segment, "outbound": [], "futureKey": 1}
+
+
+@pytest.mark.parametrize(
+    ("segment_id", "reconciled"),
+    [("0", ("Guest",)), (None, ()), (0.0, ("Guest",))],
+)
+def test_no_edit_writes_nothing_whatever_form_the_segment_id_has(
+    segment_id: object, reconciled: tuple[str, ...]
+) -> None:
+    raw = {**EDGE_RAW, "segments": [_global_entry(segmentId=segment_id)]}
+    plan = plan_module(
+        fw(raw, layer=Edge),
+        level=EDGE,
+        profile=fw(PROFILE_RAW, module_id=2, layer=Profile),
+    )
+    assert (plan.operation, plan.data, plan.changes, plan.reconciled_segments) == (
+        "none",
+        raw,
+        (),
+        reconciled,
+    )
+
+
+def test_an_edit_keeps_an_entry_whose_segment_id_is_text_as_read() -> None:
+    entry = _global_entry(segmentId="0")
+    mod = fw({**EDGE_RAW, "segments": [entry]}, layer=Edge)
+    _ = mod.data.merge_patch({"syslog_forwarding": True})
+    plan = plan_module(
+        mod, level=EDGE, profile=fw(PROFILE_RAW, module_id=2, layer=Profile)
+    )
+    assert [str(c.path) for c in plan.changes] == ["syslog_forwarding"]
+    assert plan.data["segments"] == [
+        entry,
+        {"segment": desc(2, "Guest", vendorKey="x"), "outbound": []},
+    ]
+
+
+def test_missing_segments_reads_an_id_as_the_model_does() -> None:
+    prof = {
+        "segments": [
+            {"segment": desc(0, "Global Segment")},
+            {"segment": desc(2, "Guest")},
+        ]
+    }
+    text = {"segments": [{"segment": {**desc(0, "Global Segment"), "segmentId": "0"}}]}
+    assert missing_segments(text, prof, "firewall") == [
+        {"segment": desc(2, "Guest"), "outbound": []}
+    ]
+    no_id = {"segments": [{"segment": {"name": "Global Segment"}}]}
+    assert missing_segments(no_id, prof, "firewall") == []
 
 
 def test_edge_only_segment_is_kept_and_profile_level_never_reconciles() -> None:
@@ -969,13 +1040,8 @@ def test_an_edge_only_field_below_the_models_map_is_refused_on_a_profile() -> No
     assert exc.value.fields == ["models.edge510.routed_interfaces[GE3].description"]
 
 
-def test_a_list_inside_a_lag_interface_is_written_whole() -> None:
-    """Known limit: a list in an interface that is not a plain port is written whole.
-
-    The list is typed as that of a plain port, so one edit in it is written as
-    the whole list and the keys of its other items that the models do not know
-    are dropped.
-    """
+def test_a_list_inside_a_lag_interface_is_written_item_by_item() -> None:
+    """A list in an interface other than a plain port is read as the interface's own."""
     raw = {
         **DS_RAW,
         "models": {
@@ -1009,11 +1075,13 @@ def test_a_list_inside_a_lag_interface_is_written_whole() -> None:
     )
     plan = plan_module(mod, level=PROFILE)
     assert [str(c.path) for c in plan.changes] == [
-        "models.edge510.routedInterfaces[LAG1].slaveInterfaces"
+        "models.edge510.routedInterfaces[LAG1].slaveInterfaces[GE5].portPriority"
     ]
     slaves = plan.data["models"]["edge510"]["routedInterfaces"][0]["slaveInterfaces"]
-    assert slaves[0]["portPriority"] == 5
-    assert slaves[1] == {"name": "GE6", "portPriority": 2}
+    assert slaves == [
+        {"name": "GE5", "portPriority": 5},
+        {"name": "GE6", "portPriority": 2, "futureSlave": True},
+    ]
 
 
 # --- defaults generated per parse are not the caller's change --------------
@@ -1880,3 +1948,218 @@ async def test_with_hub_rows_refuses_a_row_to_remove_that_the_refs_lack_and_a_pl
     bare = await plan_with_refs(None)
     with pytest.raises(ValueError, match="hub rows go with an update that sends refs"):
         _ = with_hub_rows(bare, added=[hub_ref_row(601)], removed=[])
+
+
+def _stored_rule(name: str, **extra: object) -> dict[str, Any]:
+    return {"name": name, "match": {}, "action": {"allow_or_deny": "allow"}, **extra}
+
+
+def _outbound(ops: dict[str, object]) -> dict[str, object]:
+    return {"segments": {"Global Segment": {"outbound": ops}}}
+
+
+RULE_A = _stored_rule("a", ruleLogicalId="la", futureKey=1)
+RULE_B = _stored_rule("b", ruleLogicalId="lb", futureKey=2)
+TWO_RULES: dict[str, Any] = {
+    "segments": [{"segment": desc(0, "Global Segment"), "outbound": [RULE_A, RULE_B]}]
+}
+DENY = {"action": {"allow_or_deny": "deny"}, "match": {}}
+AT_A = 'segments["Global Segment"].outbound[a]'
+
+
+@pytest.mark.parametrize("then", ["nothing", "change", "copy"])
+def test_a_rule_deleted_and_added_again_under_its_name_is_a_new_rule(then: str) -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _ = mod.data.merge_patch(_outbound({"a": delete()}))
+    _ = mod.data.merge_patch(_outbound({"a": add(DENY, first=True)}))
+    if then == "change":
+        _ = mod.data.merge_patch(_outbound({"a": {"logging_enabled": True}}))
+    data = copy.deepcopy(mod.data) if then == "copy" else mod.data
+    assert data.segments[0].outbound[0].is_added
+    assert not data.segments[0].outbound[1].is_added
+
+    plan = plan_module(mod, data, level=EDGE)
+
+    assert [
+        (str(c.path), c.before is MISSING, c.after is MISSING) for c in plan.changes
+    ] == [(AT_A, False, True), (AT_A, True, False)]
+    assert plan.changes[0].before == RULE_A
+    sent_a, sent_b = plan.data["segments"][0]["outbound"]
+    assert sent_b == RULE_B
+    assert (sent_a["name"], sent_a["action"]["allow_or_deny"]) == ("a", "deny")
+    assert "futureKey" not in sent_a
+    assert "ruleLogicalId" not in sent_a
+    assert json.loads(json.dumps(plan.data)) == plan.data
+
+
+def test_a_rule_changed_in_place_is_still_the_rule_as_read() -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _ = mod.data.merge_patch(_outbound({"a": DENY}))
+    plan = plan_module(mod, level=EDGE)
+    assert [str(c.path) for c in plan.changes] == [f"{AT_A}.action.allow_or_deny"]
+    assert plan.data["segments"][0]["outbound"][0] == {
+        **RULE_A,
+        "action": {"allow_or_deny": "deny"},
+    }
+
+
+def test_wire_dump_marks_only_the_items_an_add_built() -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _ = mod.data.merge_patch(_outbound({"c": add(DENY)}))
+    dumped = wire_dump(mod.data, EDGE)["segments"][0]["outbound"]
+    assert [type(item) is AddedItem for item in dumped] == [False, False, True]
+    assert json.dumps(dumped[2]) == json.dumps(dict(dumped[2]))  # JSON as its dict
+    assert type(wire_dump(mod.data, EDGE)["segments"][0]) is dict
+
+
+ALLOW_LA = {"match": {}, "action": {"allow_or_deny": "allow"}, "ruleLogicalId": "la"}
+
+
+def _delete_and_add_again(
+    mod: FirewallConfigurationModule[Edge], body: Mapping[str, object]
+) -> None:
+    _ = mod.data.merge_patch(_outbound({"a": delete()}))
+    _ = mod.data.merge_patch(_outbound({"a": add(body, first=True)}))
+
+
+def test_a_rule_added_again_as_it_was_is_still_a_new_rule() -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _delete_and_add_again(mod, ALLOW_LA)
+    new_dump = dict(wire_dump(mod.data, EDGE)["segments"][0]["outbound"][0])
+
+    plan = plan_module(mod, level=EDGE)
+
+    assert [
+        (str(c.path), c.before is MISSING, c.after is MISSING) for c in plan.changes
+    ] == [(AT_A, False, True), (AT_A, True, False)]
+    assert plan.data["segments"][0]["outbound"] == [new_dump, RULE_B]
+    assert "futureKey" not in plan.data["segments"][0]["outbound"][0]
+
+
+def test_a_rule_added_again_as_stored_sends_what_is_stored() -> None:
+    exact = dict(
+        wire_dump(fw(TWO_RULES, layer=Edge).data, EDGE)["segments"][0]["outbound"][0]
+    )
+    assert "futureKey" not in exact
+    stored = {"segments": [{**TWO_RULES["segments"][0], "outbound": [exact, RULE_B]}]}
+    mod = fw(stored, layer=Edge)
+    _delete_and_add_again(mod, {k: v for k, v in exact.items() if k != "name"})
+
+    plan = plan_module(mod, level=EDGE)
+
+    assert plan.data["segments"][0]["outbound"] == [exact, RULE_B]
+    assert (plan.operation, plan.changes) == ("none", ())
+
+
+def test_a_list_beside_an_added_rule_is_sent_as_read() -> None:
+    rule_c = _stored_rule("c", ruleLogicalId="lc", futureKey=3)
+    guest = {"segment": desc(1, "Guest"), "outbound": [rule_c], "futureKey": 4}
+    mod = fw({"segments": [*TWO_RULES["segments"], guest]}, layer=Edge)
+    _delete_and_add_again(mod, ALLOW_LA)
+
+    plan = plan_module(mod, level=EDGE)
+
+    assert [str(c.path) for c in plan.changes] == [AT_A, AT_A]
+    assert plan.data["segments"][1] == guest
+    assert plan.data["segments"][0]["outbound"][1] == RULE_B
+
+
+def test_a_rule_deleted_and_added_again_is_not_rebased_onto_a_changed_module() -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _delete_and_add_again(mod, DENY)
+    plan = plan_module(mod, level=EDGE)
+    changed_b = {**RULE_B, "action": {"allow_or_deny": "deny"}}
+    fresh_raw = {
+        "segments": [{**TWO_RULES["segments"][0], "outbound": [RULE_A, changed_b]}]
+    }
+    fresh = FirewallConfigurationModule[Edge].model_validate(
+        make_module_json("firewall", copy.deepcopy(fresh_raw), version="v2")
+    )
+
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = rebase_onto(mod, plan, fresh)
+
+    error = caught.value
+    assert (error.sent, error.stated) == (False, False)
+    assert error.module is fresh
+    assert [(str(c.path), c.as_read is MISSING) for c in error.lost_edits] == [
+        (AT_A, True)
+    ]
+    assert error.redo_patch() == {}
+    assert error.not_redone() == error.lost_edits
+    # The way on: the delete and the add again, on the module as stored.
+    _delete_and_add_again(fresh, DENY)
+    again = plan_module(fresh, level=EDGE)
+    assert [
+        (str(c.path), c.before is MISSING, c.after is MISSING) for c in again.changes
+    ] == [(AT_A, False, True), (AT_A, True, False)]
+    assert again.data["segments"][0]["outbound"][1] == changed_b
+
+
+def test_a_plan_that_holds_an_added_rule_dumps_to_yaml_as_its_plain_data() -> None:
+    mod = fw(TWO_RULES, layer=Edge)
+    _ = mod.data.merge_patch(_outbound({"c": add(DENY)}))
+    plan = plan_module(mod, level=EDGE)
+    assert type(plan.data["segments"][0]["outbound"][2]) is AddedItem
+    plain = json.loads(json.dumps(plan.data))
+    assert yaml.safe_dump(plan.data) == yaml.safe_dump(plain)
+    assert yaml.dump(plan.data) == yaml.dump(plain)
+
+
+def _library_models() -> set[type[VcoModel]]:
+    found: set[type[VcoModel]] = set()
+    prefix = configuration_models.__name__ + "."
+    for info in pkgutil.walk_packages(configuration_models.__path__, prefix):
+        for value in vars(importlib.import_module(info.name)).values():
+            if isinstance(value, type) and issubclass(value, VcoModel):
+                found.add(value)
+    return found
+
+
+def _serializes_as_any(annotation: object) -> bool:
+    """Whether *annotation* holds a ``SerializeAsAny()`` at any depth."""
+    # Typed as an alias of Annotated, SerializeAsAny is no class to isinstance.
+    metadata: tuple[object, ...] = getattr(annotation, "__metadata__", ())
+    return any(type(m).__name__ == "SerializeAsAny" for m in metadata) or any(
+        _serializes_as_any(arg) for arg in get_args(annotation)
+    )
+
+
+def test_a_keyed_list_of_several_kinds_of_item_dumps_each_item_as_its_own_kind() -> (
+    None
+):
+    unions = {
+        f"{model.__name__}.{name}": field_info.annotation
+        for model in _library_models()
+        for name, field_info in model.model_fields.items()
+        if get_key_spec(field_info) is not None
+        and (items := list_item_type(field_info)) is not None
+        and len(items.variants) > 1
+    }
+    assert "DeviceSettingsData.routed_interfaces" in unions
+    assert "LanSettings.interfaces" in unions
+    assert [name for name, ann in unions.items() if not _serializes_as_any(ann)] == []
+
+    # A marked item of a kind that is not the first dumps as an item not marked.
+    mod = ds(
+        {
+            **DS_RAW,
+            "models": {
+                "edge510": {
+                    "routedInterfaces": [
+                        {"name": "LAG1", "slaveInterfaces": [{"name": "GE5"}]}
+                    ],
+                    "lan": {"interfaces": []},
+                }
+            },
+        }
+    )
+    models = mod.data.models
+    assert isinstance(models, dict)
+    interfaces = models["edge510"].routed_interfaces
+    assert isinstance(interfaces, list)
+    (lag,) = interfaces
+    assert type(lag).__name__ == "RoutedInterfaceLag"
+    unmarked = mod.data.model_dump(mode="json", by_alias=True)
+    lag.mark_added()
+    assert mod.data.model_dump(mode="json", by_alias=True) == unmarked

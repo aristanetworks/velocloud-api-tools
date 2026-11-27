@@ -1,10 +1,20 @@
 """Keys in a patch: alt keys, duplicate keys, composite keys, labels and ``KeySpec``."""
 
+import copy
+import json
+import pickle
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 import pytest
-from pydantic import MISSING, Field
+from pydantic import MISSING, Field, ValidationError
+from pyvelo.client.models.configuration import DeviceSettingsData
+from pyvelo.client.models.configuration.device_settings.root import ModelInterfaces
+from pyvelo.client.models.configuration.device_settings.segment import (
+    SegmentRoutes,
+    SegmentSyslog,
+    StaticRoute,
+)
 from pyvelo.client.models.configuration.wan.link import WanLink
 from pyvelo.client.models.configuration.wan.root import WanData
 from pyvelo.core import (
@@ -17,9 +27,20 @@ from pyvelo.core import (
     delete,
     move,
 )
+from pyvelo.core.base import list_item_type
 from pyvelo.core.fields import get_key_spec
 from pyvelo.core.merge import select_items
-from pyvelo.core.rebase import Key, Path, item_key, key_text
+from pyvelo.core.rebase import (
+    AddedItem,
+    Key,
+    KeyedList,
+    Path,
+    item_key,
+    key_text,
+    node_child,
+    pair_items,
+    python_path,
+)
 
 from .patch_models import Link, Root, Route, Rule
 
@@ -352,7 +373,185 @@ def test_an_add_under_the_comma_form_writes_the_parts_as_text() -> None:
         "192.168.1.1",
         "GE4",
     )
+
+    # The quoted form and a tuple say the type themselves.
+    quoted = '"10.2.0.0","24","192.168.1.1",GE4'
+    for selector in (quoted, ("10.2.0.0", "24", "192.168.1.1", "GE4")):
+        root = routes()
+        _ = root.merge_patch({"routes": {selector: add()}})
+        assert root.routes[2].prefix == "24"
+
+    # So does the body.
+    root = routes()
+    _ = root.merge_patch(
+        {"routes": {"10.2.0.0,24,192.168.1.1,GE4": add({"prefix": "24"})}}
+    )
+    assert root.routes[2].prefix == "24"
     assert "already in the list" in message_of(routes(), {"routes": {R1_TEXT: add()}})
+
+
+def test_a_comma_key_part_selects_and_adds_as_its_text() -> None:
+    assert select_items(routes(), "routes", "10.1.0.0,016,192.168.1.1,") == []
+    assert select_items(routes(), "routes", "10.1.0.0,16,192.168.1.1,") == [1]
+    huge = "1" + "0" * 4999
+    assert select_items(routes(), "routes", f"10.1.0.0,{huge},192.168.1.1,") == []
+    # Beside the stored 24, an add under 024 is another route, as the text says.
+    root = routes()
+    _ = root.merge_patch({"routes": {"10.0.0.0,024,192.168.1.1,GE3": add()}})
+    assert [route.prefix for route in root.routes] == [24, 16, "024"]
+
+
+STATIC_KEY_TEXT = "10.0.0.0,24,192.168.1.1,GE3"
+
+
+def static_route(destination: str, prefix: object) -> dict[str, object]:
+    return {
+        "destination": destination,
+        "netmask": "255.255.255.0",
+        "cidrPrefix": prefix,
+        "gateway": "192.168.1.1",
+        "wanInterface": "GE3",
+    }
+
+
+def sent_static(held: SegmentRoutes) -> list[dict[str, Any]]:
+    return held.model_dump(mode="json", by_alias=True)["static"]
+
+
+@pytest.mark.parametrize(
+    ("given", "held"),
+    [(24, "24"), ("24", "24"), ("024", "024"), (0, "0")],
+    ids=["int", "text", "text-with-a-leading-zero", "zero"],
+)
+def test_a_static_routes_prefix_is_held_as_text(given: object, held: str) -> None:
+    route = StaticRoute.model_validate(static_route("10.0.0.0", given))
+    assert route.cidr_prefix == held
+    assert type(route.cidr_prefix) is str
+    json_route = StaticRoute.model_validate_json(
+        json.dumps(static_route("10.0.0.0", given))
+    )
+    assert json_route.cidr_prefix == held
+
+
+@pytest.mark.parametrize("given", [True, False, 24.0, None])
+def test_a_static_routes_prefix_that_is_no_text_or_whole_number_is_refused(
+    given: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        _ = StaticRoute.model_validate(static_route("10.0.0.0", given))
+
+
+def test_a_static_route_added_under_the_comma_form_sends_its_prefix_as_text() -> None:
+    held = SegmentRoutes.model_validate({"static": [static_route("10.1.0.0", "16")]})
+    _ = held.merge_patch(
+        {"static": {"10.9.0.0,24,192.168.1.1,GE3": add({"netmask": "255.255.255.0"})}}
+    )
+    sent = sent_static(held)[1]
+    assert (sent["destination"], sent["cidrPrefix"], sent["gateway"]) == (
+        "10.9.0.0",
+        "24",
+        "192.168.1.1",
+    )
+    assert sent["wanInterface"] == "GE3"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        ("10.9.0.0", 24, "192.168.1.1", "GE3"),
+        ("10.9.0.0", "24", "192.168.1.1", "GE3"),
+        '"10.9.0.0",24,"192.168.1.1",GE3',
+    ],
+    ids=["tuple-with-a-number", "tuple-with-text", "quoted-with-a-number"],
+)
+def test_a_static_route_added_under_a_tuple_or_the_quoted_form_sends_its_prefix_as_text(
+    key: object,
+) -> None:
+    held = SegmentRoutes.model_validate({"static": [static_route("10.1.0.0", "16")]})
+    _ = held.merge_patch({"static": {key: add({"netmask": "255.255.255.0"})}})
+    sent = sent_static(held)[1]
+    expected = static_route("10.9.0.0", "24")
+    assert {name: sent[name] for name in expected} == expected
+
+
+def test_a_number_given_in_the_body_for_a_static_routes_prefix_is_stored_as_text() -> (
+    None
+):
+    held = SegmentRoutes.model_validate({"static": [static_route("10.1.0.0", "16")]})
+    _ = held.merge_patch(
+        {
+            "static": {
+                "10.9.0.0,24,192.168.1.1,GE3": add(
+                    {"netmask": "255.255.255.0", "cidr_prefix": 24}
+                ),
+                "10.1.0.0,16,192.168.1.1,GE3": {"cidr_prefix": 24},
+            }
+        }
+    )
+    assert [route.cidr_prefix for route in held.static] == ["24", "24"]
+    assert [route["cidrPrefix"] for route in sent_static(held)] == ["24", "24"]
+
+
+def test_an_add_under_the_comma_form_reads_a_number_part_as_its_field_does() -> None:
+    def collector(host: str, port: int) -> dict[str, object]:
+        return {"host": host, "protocol": "UDP", "port": port}
+
+    held = SegmentSyslog.model_validate({"collectors": [collector("10.0.0.1", 514)]})
+    _ = held.merge_patch(
+        {
+            "collectors": {
+                "10.0.0.9,UDP,514": add(),
+                "10.0.0.1,UDP,514": {"tag": "edited"},
+            }
+        }
+    )
+    added = held.collectors[1]
+    assert (added.host, added.protocol, added.port) == ("10.0.0.9", "UDP", 514)
+    assert type(added.port) is int
+    assert held.collectors[0].tag == "edited"
+
+
+STATIC_SELECTORS = [
+    pytest.param(STATIC_KEY_TEXT, id="comma-form"),
+    pytest.param(key_text(("10.0.0.0", "24", "192.168.1.1", "GE3")), id="key-text"),
+    pytest.param(("10.0.0.0", "24", "192.168.1.1", "GE3"), id="tuple-with-text"),
+    pytest.param(("10.0.0.0", 24, "192.168.1.1", "GE3"), id="tuple-with-a-number"),
+]
+
+
+def text_prefix_routes() -> SegmentRoutes:
+    return SegmentRoutes.model_validate(
+        {"static": [static_route("10.0.0.0", "24"), static_route("10.1.0.0", "16")]}
+    )
+
+
+@pytest.mark.parametrize("selector", STATIC_SELECTORS)
+def test_every_key_form_edits_a_static_route_whose_prefix_is_text(
+    selector: object,
+) -> None:
+    held = text_prefix_routes()
+    _ = held.merge_patch({"static": {selector: {"cost": 5}}})
+    assert [route["cost"] for route in sent_static(held)] == [5, 0]
+    assert [route["cidrPrefix"] for route in sent_static(held)] == ["24", "16"]
+
+
+@pytest.mark.parametrize("selector", STATIC_SELECTORS)
+def test_every_key_form_deletes_a_static_route_whose_prefix_is_text(
+    selector: object,
+) -> None:
+    held = text_prefix_routes()
+    _ = held.merge_patch({"static": {selector: delete()}})
+    assert [route["destination"] for route in sent_static(held)] == ["10.1.0.0"]
+
+
+@pytest.mark.parametrize("selector", STATIC_SELECTORS)
+def test_every_key_form_refuses_an_add_of_a_static_route_whose_prefix_is_text(
+    selector: object,
+) -> None:
+    held = text_prefix_routes()
+    message = message_of(held, {"static": {selector: add()}})
+    assert "already in the list" in message
+    assert len(held.static) == 2
 
 
 def test_a_part_that_holds_a_comma_needs_the_quoted_form() -> None:
@@ -639,3 +838,102 @@ def test_the_example_of_a_composite_key_selects_its_item() -> None:
     assert select_items(root, "routes", example) == [0]
     _ = root.merge_patch({"routes": {example: {"cost": 5}}})
     assert costs(root) == [5, 0]
+
+
+def test_a_union_list_names_the_variant_of_each_item() -> None:
+    routed = list_item_type(ModelInterfaces.model_fields["routed_interfaces"])
+    assert routed is not None
+    names = {
+        "GE3": "RoutedInterfaceGe",
+        "LAG1": "RoutedInterfaceLag",
+        "CELL1": "RoutedInterfaceCell",
+        "USB1": "RoutedInterfaceUsb",
+    }
+    for name, variant in names.items():
+        assert routed.variant_of({"name": name}).__name__ == variant
+    assert routed.variant_of({"name": "SFP1", "sfpType": "dsl"}).__name__ == (
+        "RoutedInterfaceSfpDsl"
+    )
+    assert routed.variant_of("junk") is routed.variants[0]
+
+
+def test_python_path_goes_through_a_union_item_to_a_field_of_its_variant() -> None:
+    path = Path.parse(
+        "models.edge510.routedInterfaces[LAG1].slaveInterfaces[GE5].portPriority"
+    )
+    assert str(python_path(path, DeviceSettingsData)) == (
+        "models.edge510.routed_interfaces[LAG1].slave_interfaces[GE5].port_priority"
+    )
+
+
+def test_pair_items_never_pairs_an_added_item() -> None:
+    node = node_child(Root, "rules")
+    assert isinstance(node, KeyedList)
+    old: list[object] = [{"name": "a", "ruleId": "la"}, {"name": "b"}]
+    new: list[object] = [AddedItem({"name": "a"}), {"name": "b"}]
+
+    pairing = pair_items(old, new, node)
+    assert pairing is not None
+    assert (pairing.pairs, pairing.added, pairing.removed) == (((1, 1),), (0,), (0,))
+
+    plain = pair_items(old, [{"name": "a"}, {"name": "b"}], node)
+    assert plain is not None
+    assert plain.pairs == ((0, 0), (1, 1))
+    # An item as read that cannot be told from another: the list is written whole.
+    twins: list[object] = [{"name": "a"}, {"name": "a"}, {"name": "b"}]
+    assert pair_items(twins, new, node) is None
+
+
+def _added_rule() -> Rule:
+    root = Root(rules=[])
+    _ = root.merge_patch({"rules": {"z": add({"priority": 3})}})
+    item = root.rules[0]
+    assert item.is_added
+    return item
+
+
+def test_an_added_item_equals_the_same_item_however_built() -> None:
+    item = _added_rule()
+    assert item == Rule(name="z", priority=3)
+    assert item == Rule.model_validate({"name": "z", "priority": 3})
+    assert not Rule(name="z", priority=3).is_added
+
+
+@pytest.mark.parametrize(
+    "dump",
+    [{}, {"mode": "json"}, {"by_alias": True}, {"exclude_unset": True}],
+)
+def test_an_added_item_dumps_as_an_item_not_added(dump: dict[str, Any]) -> None:
+    item, plain = _added_rule(), Rule(name="z", priority=3)
+    assert item.model_dump(**dump) == plain.model_dump(**dump)
+    assert repr(item) == repr(plain)
+
+
+@pytest.mark.parametrize(
+    "copied",
+    [
+        copy.deepcopy,
+        lambda item: item.model_copy(deep=True),
+        lambda item: item.model_copy(),
+        copy.copy,
+        lambda item: pickle.loads(pickle.dumps(item)),
+    ],
+    ids=["deepcopy", "model_copy_deep", "model_copy", "copy", "pickle"],
+)
+def test_an_added_item_is_added_in_every_copy(copied: Any) -> None:
+    item = _added_rule()
+    copy_of_item: Rule = copied(item)
+    assert copy_of_item is not item
+    assert copy_of_item.is_added
+
+
+def test_validate_keeps_the_added_item_and_construct_builds_one_not_added() -> None:
+    item = _added_rule()
+    assert Rule.model_validate(item) is item
+    assert not Rule.model_construct(**item.model_dump()).is_added
+
+
+def test_an_item_rebuilt_from_its_dump_is_not_added() -> None:
+    item = _added_rule()
+    assert not Rule.model_validate(item.model_dump()).is_added
+    assert not Rule.model_validate_json(item.model_dump_json()).is_added

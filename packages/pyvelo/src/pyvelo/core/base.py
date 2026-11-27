@@ -36,7 +36,7 @@ import datetime as dt
 import functools
 import sys
 import types
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Hashable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
@@ -442,6 +442,13 @@ def _models_inside(value: object, place: _Place) -> Iterator[tuple[_Place, BaseM
             yield from _models_inside(item, (*place, text))
 
 
+_ADDED = "__pyvelo_added__"
+"""The ``__dict__`` entry of a model an ``add`` built (``VcoModel.mark_added``).
+
+No field or alias is named so.
+"""
+
+
 def _raise_detached(model: VcoModel, name: str) -> Never:
     """Raise ``DetachedObjectError`` for an edit of *name* through *model*."""
     from pyvelo.client.exceptions import DetachedObjectError  # noqa: PLC0415 (it imports pyvelo.core)
@@ -719,6 +726,26 @@ class VcoModel(BaseModel):
                 model._detached = True
         return marked
 
+    def mark_added(self) -> None:
+        """Record that an ``add`` built this item.
+
+        A save then treats it as new and pairs it with no item as read of the
+        same key. The mark stays through a deep copy and a later change; it
+        ends when a save puts the stored module in the state. It is kept in the
+        instance ``__dict__`` under a name no field has, not as a private
+        attribute, because it records how the item came to be, not what it
+        holds, so it is kept out of what equality, ``model_dump`` and ``repr``
+        read. A keyed list that holds several kinds of item must dump each item
+        as its own class (``SerializeAsAny`` on its items), so that the entry
+        cannot change which member of the union pydantic dumps a marked item as.
+        """
+        object.__setattr__(self, _ADDED, True)
+
+    @property
+    def is_added(self) -> bool:
+        """Whether an ``add`` built this item (``mark_added``)."""
+        return vars(self).get(_ADDED) is True
+
     @override
     @classmethod
     def __pydantic_on_complete__(cls) -> None:
@@ -898,7 +925,10 @@ class VcoModel(BaseModel):
         - a member of a coupled group: ``null`` inherits the whole group,
           and any other value first makes the group local (``localize``:
           each member that is not local, copied from the profile), then
-          applies as above to that member;
+          applies as above to that member. A member that gets ``null`` from
+          the profile and from its default raises ``GroupOwnershipError``
+          unless the same patch gives it a value, and the anchor raises all
+          the same;
         - the flag of a ``ByFlag`` field (``override``) is not patchable: it
           follows the value, set when an object is given, and ``null``
           inherits.
@@ -1003,7 +1033,14 @@ class VcoModel(BaseModel):
           is the value and ``add`` takes no body; in a map it is the new key.
           Neither takes ``"+"``, and a map takes no ``"#n"``. A positional
           list of models takes ``add`` under ``"+"`` only, one of values none
-          (give a list value), and ``at(n)`` never takes one.
+          (give a list value), and ``at(n)`` never takes one. An item an
+          ``add`` builds is a new item: deleting a rule and then adding one
+          under the same name plans a removal and an addition, and nothing of
+          the old rule is kept, neither its logical ID (the VCO issues a new
+          one for a firewall rule) nor keys of it that pyvelo does not model.
+          To change a rule and keep it the same rule, change it:
+          ``{"a": {...}}``. One patch cannot delete an item and add one under
+          its key; send the delete, then the add.
         - ``delete()``, which is ``{"_op": "delete"}``: the item is removed.
           It carries nothing else.
         - ``move(**place)``, which is ``{"_position": P}``: the item moves.
@@ -1203,6 +1240,45 @@ class ListItemType:
             self.annotation,  # pyright: ignore[reportArgumentType]
             config=ConfigDict(hide_input_in_errors=True),
         )
+
+    @functools.cached_property
+    def _tagged_variants(
+        self,
+    ) -> tuple[Callable[[Any], Hashable], dict[Hashable, type[VcoModel]]] | None:
+        """The union's callable discriminator and the variant of each tag, or None.
+
+        None when the element annotation carries no ``Discriminator`` whose
+        ``discriminator`` is a callable.
+        """
+        discriminators = [
+            meta.discriminator
+            for meta in get_args(self.annotation)[1:]
+            if isinstance(meta, Discriminator) and callable(meta.discriminator)
+        ]
+        if not discriminators:
+            return None
+        by_tag: dict[Hashable, type[VcoModel]] = {}
+        for member in _union_members(_unwrap_annotated(self.annotation)):
+            variant = _unwrap_annotated(member)
+            if get_origin(member) is not Annotated or not _is_vco_model_type(variant):
+                continue
+            for meta in get_args(member)[1:]:
+                if isinstance(meta, Tag):
+                    _ = by_tag.setdefault(meta.tag, variant)
+        return discriminators[0], by_tag
+
+    def variant_of(self, value: object) -> type[VcoModel]:
+        """The variant *value*, a JSON item or a model, is.
+
+        For a union, the variant whose ``Tag`` the union's callable
+        discriminator gives for *value*. The first variant with one variant,
+        with no callable discriminator, or for a tag that no variant carries.
+        """
+        tagged = self._tagged_variants
+        if len(self.variants) == 1 or tagged is None:
+            return self.variants[0]
+        discriminator, by_tag = tagged
+        return by_tag.get(discriminator(value), self.variants[0])
 
     def validate(self, value: object, *, context: JsonObject | None = None) -> VcoModel:
         """*value* as the element type; for a union, the discriminator picks one."""

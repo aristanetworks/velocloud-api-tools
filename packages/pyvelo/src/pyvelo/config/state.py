@@ -640,11 +640,10 @@ class ConfigState:
     of them. ``ConfigPipeline.revert`` of one reads the configuration too, and
     deletes the module it finds there when it holds exactly what this state's
     module holds (``revert_module`` refuses it: it sends nothing)."""
-    _made_into_unset: list[tuple[AnyStoredModule, bool]] = field(
-        default_factory=list, repr=False
-    )
-    """Each module ``module(create=True)`` made where ``modules`` was unset, and
-    whether ``modules`` was in the config's ``model_fields_set`` then."""
+    _modules_were_unset: bool | None = field(default=None, repr=False)
+    """Whether ``modules`` was in the target config's ``model_fields_set`` when
+    ``module(create=True)`` made the list where it was unset; ``None`` when the
+    state did not make the list."""
     _replaced: list[_Replaced] = field(default_factory=list, repr=False)
     """Each module ``replace_module`` took out whose objects may still be held."""
 
@@ -702,7 +701,7 @@ class ConfigState:
             profile=self.profile_config,
         )
         if unset and module.is_new:
-            self._made_into_unset.append((module, was_set))
+            self._modules_were_unset = was_set
         return module
 
     def inherited_segment_ids(self, module: AnyStoredModule) -> frozenset[str]:
@@ -746,8 +745,9 @@ class ConfigState:
 
         It is one that ``module(create=True)`` made.
 
-        A ``modules`` list that the creation set, where it was unset, is unset
-        again once it is empty. Raises ``ValueError`` for a module that is not
+        A ``modules`` list that ``module(create=True)`` made where it was unset
+        is unset again once it is empty, whichever order the created modules
+        are dropped in. Raises ``ValueError`` for a module that is not
         new (``is_new``): one read from the VCO is never dropped. The module's
         name leaves ``unconfirmed_inserts``.
         """
@@ -761,16 +761,12 @@ class ConfigState:
         if config.modules is MISSING:
             return
         config.modules[:] = [m for m in config.modules if m is not module]
-        made = next(
-            (entry for entry in self._made_into_unset if entry[0] is module), None
-        )
-        if made is None:
+        if self._modules_were_unset is None or config.modules:
             return
-        self._made_into_unset.remove(made)
-        if not config.modules:
-            config.modules = MISSING
-            if not made[1]:
-                config.model_fields_set.discard("modules")
+        config.modules = MISSING
+        if not self._modules_were_unset:
+            config.model_fields_set.discard("modules")
+        self._modules_were_unset = None
 
     def replace_module(self, old: AnyStoredModule, new: AnyStoredModule) -> None:
         """Put *new* where *old* is in the target config.
@@ -823,7 +819,8 @@ class ConfigState:
                     snapshot.modules.append(stored)
                 else:
                     snapshot.modules[at] = stored
-        self._made_into_unset = [e for e in self._made_into_unset if e[0] is not old]
+        if old.is_new:
+            self._modules_were_unset = None
         # Last: the steps above work on *old* as a live module.
         self._detach(old)
 

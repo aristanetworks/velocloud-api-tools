@@ -5,6 +5,7 @@ from typing import Annotated, cast
 
 import pytest
 from pydantic import MISSING, Field
+from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.core import Alias, KeyField, PatchError, VcoModel
 from pyvelo.core.merge import nest_patch
 from pyvelo.core.rebase import Key, Path
@@ -138,3 +139,70 @@ def test_a_value_that_is_not_json_raises_under_its_address() -> None:
 def test_no_address_needs_a_dict() -> None:
     with pytest.raises(TypeError):
         _ = nest_patch(Outer, MappingProxyType({"sub": {"n": 1}}))
+
+
+class _Ike(VcoModel):
+    lifetime: int = 0
+
+
+class _Gre(VcoModel):
+    redirect: str = ""
+    greprop: int = 0
+
+
+class _Ipsec(VcoModel):
+    redirect: str = ""
+    ike_proposal: _Ike = Field(default_factory=_Ike)
+
+
+class _Css(VcoModel):
+    config: _Gre | _Ipsec | None = None
+
+
+class _UnionSegment(VcoModel):
+    name: str
+    css: _Css = Field(default_factory=_Css)
+
+
+class _UnionRoot(VcoModel):
+    segments: Annotated[list[_UnionSegment], KeyField("name")] = Field(
+        default_factory=list
+    )
+    css: _Css = Field(default_factory=_Css)
+
+
+def test_a_path_goes_through_a_union_to_a_field_of_a_later_variant() -> None:
+    assert nest_patch(_UnionRoot, 5, path="css.config.ikeProposal.lifetime") == {
+        "css": {"config": {"ike_proposal": {"lifetime": 5}}}
+    }
+    assert nest_patch(_UnionRoot, 1, segment="S", path="css.config.greprop") == {
+        "segments": {"S": {"css": {"config": {"greprop": 1}}}}
+    }
+    # A field both variants have is the first variant's name, and both are walked on.
+    assert nest_patch(_UnionRoot, "x", path="css.config.redirect") == {
+        "css": {"config": {"redirect": "x"}}
+    }
+
+
+def test_a_part_no_variant_has_is_refused_with_every_variant_named() -> None:
+    with pytest.raises(PatchError) as exc:
+        _ = nest_patch(_UnionRoot, 1, path="css.config.nope")
+    assert exc.value.kind == "address"
+    assert str(exc.value.path) == "css.config.nope"
+    assert "_Gre | _Ipsec has no field 'nope'" in exc.value.message
+    assert exc.value.message.endswith("its fields are redirect, greprop, ike_proposal")
+
+    # Past a field that only one variant has, only that variant is walked.
+    with pytest.raises(PatchError, match="_Ike has no field 'greprop'"):
+        _ = nest_patch(_UnionRoot, 1, path="css.config.ike_proposal.greprop")
+    with pytest.raises(PatchError, match="does not hold a single sub-model"):
+        _ = nest_patch(_UnionRoot, 1, path="css.config.greprop.x")
+
+
+def test_a_css_field_of_an_ipsec_variant_can_be_addressed() -> None:
+    nested = nest_patch(
+        DeviceSettingsData, 1, segment="Global Segment", path="css.config.ike_proposal"
+    )
+    assert nested == {
+        "segments": {"Global Segment": {"css": {"config": {"ike_proposal": 1}}}}
+    }

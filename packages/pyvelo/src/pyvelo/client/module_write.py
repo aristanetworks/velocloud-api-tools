@@ -144,6 +144,7 @@ from pyvelo.core.rebase import (
     carry_unset_defaults,
     find_lossy_assignments,
     is_override_flag,
+    mark_added_items,
     raw_changes,
     rebase,
 )
@@ -183,12 +184,27 @@ def _legacy_model(
 
 
 def wire_dump(model: VcoModel, level: ConfigContext | None) -> dict[str, Any]:
-    """The JSON a model is written as, at config level *level*."""
-    return model.model_dump(
+    """The JSON a model is written as, at config level *level*.
+
+    The dump of an item an ``add`` built is an ``AddedItem`` (``mark_added_items``),
+    so a save pairs it with no item as read.
+    """
+    dump = model.model_dump(
         mode="json",
         by_alias=True,
         context={"config_level": level} if level else None,
     )
+    mark_added_items(model, dump)
+    return dump
+
+
+def _described(entries: Sequence[object]) -> list[object]:
+    """The segment ID of each entry that has a ``segment`` descriptor object."""
+    return [
+        segment_id_of(entry)
+        for entry in entries
+        if is_dict(entry) and is_dict(entry.get("segment"))
+    ]
 
 
 def missing_segments(
@@ -199,8 +215,9 @@ def missing_segments(
     Segments are matched by ``segmentId``, in profile order. Nothing for a module
     that has no segment lists, for data that is not an object, or for a
     ``segments`` that is not a list (an absent or null one on the edge side is an
-    empty list). An entry without a ``segmentId`` is skipped on the profile side
-    and ignored on the edge side.
+    empty list). An entry without a ``segmentId`` is skipped on the profile side;
+    one on the edge side (a descriptor whose ID is not a number) means the
+    edge's segments cannot be matched with the profile's, so nothing is added.
     """
     if module_name not in SEGMENT_LISTS:
         return []
@@ -213,6 +230,8 @@ def missing_segments(
     if not (is_list(profile_segments) and is_list(edge_segments)):
         return []
     seen = [segment_id_of(entry) for entry in edge_segments]
+    if any(type(segment_id) is not int for segment_id in _described(edge_segments)):
+        return []
     missing: list[dict[str, Any]] = []
     for entry in profile_segments:
         segment_id = segment_id_of(entry)

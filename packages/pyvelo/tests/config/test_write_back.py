@@ -696,3 +696,150 @@ async def test_the_repr_of_a_save_result_holds_no_module_data() -> None:
     assert "server_changes={'deviceSettings': 0, 'firewall': 0}" in repr(result)
     assert "left_out={'deviceSettings': 0, 'firewall': 0}" in repr(result)
     assert "ModuleWrite(name='deviceSettings', operation='update'" in repr(result)
+
+
+AT_A = 'segments["Global Segment"].outbound[a]'
+STORED_A: dict[str, Any] = {
+    "name": "a",
+    "match": {},
+    "action": {"allow_or_deny": "allow"},
+    "ruleLogicalId": "la",
+    "futureKey": 1,
+}
+STORED_B: dict[str, Any] = {
+    "name": "b",
+    "match": {},
+    "action": {"allow_or_deny": "allow"},
+    "ruleLogicalId": "lb",
+}
+
+
+async def test_a_rule_deleted_and_added_again_is_saved_as_a_new_rule() -> None:
+    raw = copy.deepcopy(EDGE_FW)
+    raw["segments"][0]["outbound"] = [copy.deepcopy(STORED_A), copy.deepcopy(STORED_B)]
+    state = make_state(
+        edge_modules=[
+            make_module_json(
+                "firewall", raw, module_id=1, configuration_id=10, version="e1"
+            )
+        ]
+    )
+    client = MockVcoClient.for_state(state)
+    client.store.issue_rule_ids = True  # the store gives rule a an ID, as a VCO does
+    pipeline = ConfigPipeline(client)
+    outbound: dict[str, Any] = {
+        "module": "firewall",
+        "segment": "Global Segment",
+        "path": "outbound",
+    }
+    _ = await pipeline.apply(state, **outbound, patch={"a": {"_op": "delete"}})
+    _ = await pipeline.apply(
+        state,
+        **outbound,
+        patch={
+            "a": {
+                "_op": "add",
+                "action": {"allow_or_deny": "deny"},
+                "match": {},
+                "_position": "first",
+            }
+        },
+    )
+
+    lines = state.plan().render().splitlines()
+    assert f"  - {AT_A}" in lines
+    assert any(line.startswith(f"  + {AT_A} (first): ") for line in lines)
+    assert not any(f"{AT_A}." in line for line in lines)
+
+    result = await pipeline.save(state)
+
+    (request,) = client.update_requests
+    sent_a, sent_b = request.update.data["segments"][0]["outbound"]
+    assert (sent_a["name"], sent_a["action"]["allow_or_deny"]) == ("a", "deny")
+    assert "futureKey" not in sent_a
+    assert "ruleLogicalId" not in sent_a
+    assert sent_b == STORED_B
+    # The answer confirms the new rule: nothing is left out, and the state goes
+    # on from the stored module, with the ID the store gave and no mark.
+    assert result.left_out.get(FIREWALL, ()) == ()
+    stored = data_of(client.store, 1)
+    assert "ruleLogicalId" in stored["segments"][0]["outbound"][0]
+    assert state.module("firewall").raw_data == stored
+    assert state.plan().changed == ()
+    assert not any(m.is_added for m in models_in(state.edge.firewall))
+
+    _ = await pipeline.apply(
+        state, **outbound, patch={"a": {"action": {"allow_or_deny": "allow"}}}
+    )
+    assert [str(c.path) for m in state.plan().changed for c in m.changes] == [
+        f"{AT_A}.action.allow_or_deny"
+    ]
+
+
+def other_writer_denies_b(row: dict[str, Any]) -> None:
+    """Another writer's change to rule ``b``, which the caller does not edit."""
+    row["data"]["segments"][0]["outbound"][1]["action"]["allow_or_deny"] = "deny"
+
+
+@pytest.mark.parametrize(
+    ("conditional_check", "raised"),
+    [(False, WriteNotAppliedError), (True, ConfigConflictError)],
+)
+async def test_a_rule_deleted_and_added_again_is_redone_by_the_delete_and_the_add(
+    *,
+    conditional_check: bool,
+    raised: type[Exception],
+) -> None:
+    raw = copy.deepcopy(EDGE_FW)
+    raw["segments"][0]["outbound"] = [copy.deepcopy(STORED_A), copy.deepcopy(STORED_B)]
+    state = make_state(
+        edge_modules=[
+            make_module_json(
+                "firewall", raw, module_id=1, configuration_id=10, version="e1"
+            )
+        ]
+    )
+    client = MockVcoClient.for_state(state, conditional_check=conditional_check)
+    client.store.other_writer(1, other_writer_denies_b)
+    pipeline = ConfigPipeline(client)
+    outbound: dict[str, Any] = {
+        "module": "firewall",
+        "segment": "Global Segment",
+        "path": "outbound",
+    }
+    delete_a: dict[str, object] = {"a": {"_op": "delete"}}
+    add_a: dict[str, object] = {
+        "a": {
+            "_op": "add",
+            "action": {"allow_or_deny": "deny"},
+            "match": {},
+            "_position": "first",
+        }
+    }
+
+    async def delete_and_add_again() -> None:
+        _ = await pipeline.apply(state, **outbound, patch=delete_a)
+        _ = await pipeline.apply(state, **outbound, patch=add_a)
+
+    await delete_and_add_again()
+    with pytest.raises(raised) as exc:
+        _ = await pipeline.save(state)
+
+    error = exc.value
+    assert isinstance(error, ConfigConflictError | WriteNotAppliedError)
+    stored = data_of(client.store, 1)["segments"][0]["outbound"]
+    assert stored[0] == STORED_A  # nothing of the edit is stored
+    assert stored[1]["action"]["allow_or_deny"] == "deny"
+    # error.applied is not asserted: it lists the removal of a as stored.
+    assert error.redo_patch() == {}
+    assert [str(c.path) for c in error.not_redone()] == [AT_A]
+    assert error.not_redone()[0].as_read is MISSING
+    assert state.module("firewall").raw_data == data_of(client.store, 1)
+
+    await delete_and_add_again()
+    _ = await pipeline.save(state)
+
+    new_a, b = data_of(client.store, 1)["segments"][0]["outbound"]
+    assert (new_a["name"], new_a["action"]["allow_or_deny"]) == ("a", "deny")
+    assert "futureKey" not in new_a
+    assert b == {**STORED_B, "action": {"allow_or_deny": "deny"}}

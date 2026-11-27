@@ -341,8 +341,9 @@ def _child_node(node: _CheckNode, key: object) -> _CheckNode:
     """What the value under *key* is known to be.
 
     As ``node_child`` says, and a ``_ModelList`` for a list of models without a
-    ``KeyField`` (of the first variant, for a discriminated union, as
-    ``node_child`` does for a keyed list).
+    ``KeyField`` (of the first variant, for a discriminated union). For a keyed
+    list ``node_child`` gives a ``KeyedList``, whose ``.item`` is the first
+    variant.
     """
     parent = _rebase_node(node)
     child = node_child(parent, key)
@@ -354,7 +355,12 @@ def _child_node(node: _CheckNode, key: object) -> _CheckNode:
 
 
 def _item_node(node: _CheckNode) -> _CheckNode:
-    """What each item of a list of *node* is known to be."""
+    """What each item of a list of *node* is known to be.
+
+    For a list of several kinds of item, the first variant: the response check
+    reads every item of such a list as that kind, where the rebase reads each
+    item as the kind it is.
+    """
     return node.item if isinstance(node, (KeyedList, _ModelList)) else None
 
 
