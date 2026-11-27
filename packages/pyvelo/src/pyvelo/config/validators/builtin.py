@@ -3,6 +3,7 @@
 These are override_consistency, key_uniqueness, required_fields.
 """
 
+from collections.abc import Iterator
 from typing import cast
 
 from pydantic import MISSING, BaseModel
@@ -18,7 +19,7 @@ from pyvelo.config.validation import (
     validator,
 )
 from pyvelo.core import Kind, field_kind, unwrap
-from pyvelo.core.fields import get_key_spec
+from pyvelo.core.fields import KeySpec, get_key_spec
 from pyvelo.core.rebase import KeyForm, item_key, item_key_text, key_form
 
 
@@ -68,7 +69,44 @@ def override_consistency(state: ConfigStateLike) -> ValidationResult:
     return result
 
 
-def _walk_model_for_keys(  # noqa: C901 (existing: split it when it next changes)
+def _duplicate_keys(
+    items: list[object], spec: KeySpec, path: str
+) -> Iterator[ValidationError]:
+    """Report each item of a KeyField list whose key an earlier item has.
+
+    Keys compare in string form, part by part (24 and "24" are one).
+    """
+    seen_keys: dict[KeyForm, int] = {}
+    for i, item in enumerate(items):
+        form = key_form(item_key(item, spec.paths))
+        if form is not None:
+            if form in seen_keys:
+                key_str = item_key_text(item, spec.paths)
+                yield ValidationError(
+                    path=f"{path}[{i}]",
+                    message=(
+                        f"Duplicate key {key_str!r} (first at index {seen_keys[form]})"
+                    ),
+                    code="key_uniqueness",
+                )
+            else:
+                seen_keys[form] = i
+
+
+def _models_below(value: object, path: str) -> Iterator[tuple[BaseModel, str]]:
+    """The models a field's value holds, each with its path.
+
+    That is the value itself if it is a model, or the items of a list that are.
+    """
+    if isinstance(value, BaseModel):
+        yield value, path
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            if isinstance(item, BaseModel):
+                yield item, f"{path}[{i}]"
+
+
+def _walk_model_for_keys(
     model: BaseModel,
     path: str,
     errors: list[ValidationError],
@@ -77,38 +115,13 @@ def _walk_model_for_keys(  # noqa: C901 (existing: split it when it next changes
     for field_name, field_info in type(model).model_fields.items():
         spec = get_key_spec(field_info)
         val = unwrap(getattr(model, field_name))
+        field_path = f"{path}.{field_name}"
 
         if spec is not None and isinstance(val, list):
-            # Keys compare in string form, part by part (24 and "24" are one).
-            seen_keys: dict[KeyForm, int] = {}
-            for i, item in enumerate(cast("list[object]", val)):
-                form = key_form(item_key(item, spec.paths))
-                if form is not None:
-                    if form in seen_keys:
-                        key_str = item_key_text(item, spec.paths)
-                        errors.append(
-                            ValidationError(
-                                path=f"{path}.{field_name}[{i}]",
-                                message=(
-                                    f"Duplicate key {key_str!r} "
-                                    f"(first at index {seen_keys[form]})"
-                                ),
-                                code="key_uniqueness",
-                            )
-                        )
-                    else:
-                        seen_keys[form] = i
+            errors.extend(_duplicate_keys(cast("list[object]", val), spec, field_path))
 
-            # Recurse into list items
-            for i, item in enumerate(val):
-                if isinstance(item, BaseModel):
-                    _walk_model_for_keys(item, f"{path}.{field_name}[{i}]", errors)
-        elif isinstance(val, BaseModel):
-            _walk_model_for_keys(val, f"{path}.{field_name}", errors)
-        elif isinstance(val, list):
-            for i, item in enumerate(val):
-                if isinstance(item, BaseModel):
-                    _walk_model_for_keys(item, f"{path}.{field_name}[{i}]", errors)
+        for child, child_path in _models_below(val, field_path):
+            _walk_model_for_keys(child, child_path, errors)
 
 
 @validator(modules=[], phases=["read", "write"])
