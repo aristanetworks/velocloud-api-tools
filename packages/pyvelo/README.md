@@ -123,30 +123,8 @@ them holds. A request and every other result row (`CompositeFirewallModule` and
 the other composite modules, `GetApplicationsResult`, `CustomApp`,
 `GetEnterpriseEdgeListItem`, `PrivateNetwork`) dumps its own keys as the VCO's
 and the configuration model it holds by attribute name: pass `by_alias` for one
-form throughout. A value pyvelo does not model keeps the VCO's keys in a dump
-by name: the device settings module's `refs` are fields (`vpn_edge_hub`, whose
-rows have `logical_id`), while the `refs` of the QoS and firewall modules, a
-key no model declares, and a field held as raw JSON are written as the VCO
-stores them.
-
-`plan_module(module, data)` takes `data` as a model or as a mapping
-(`update_module` takes a model). A mapping is the JSON to send, as it is, so
-its keys are the VCO's: one made from a model is `model_dump(mode="json",
-by_alias=True)`. `plan_module` refuses a mapping that adds a field's python
-name as a key where the VCO's key is another (`rule_logical_id` for
-`ruleLogicalId`, which a dump without `by_alias` has at every depth). Sent, it
-would be a key the VCO does not know, the field itself would be left out or
-left as it was, and reading the module back, which takes either name, would not
-show it. The refusal is a `PatchError` of kind `unknown_field` at the first
-such key; it names a few of them with the VCO's key, counts the rest, and says
-what to do instead: give the model (`module.data`), dump it with
-`by_alias=True`, or make the change with a patch (`merge_patch`, or `apply`
-through the pipeline), which takes a field by either name. A key the module as
-read already has at that field is left alone, and so is everything below a key
-no model declares. The raw request models (`ConfigurationModuleUpdate.data`,
-`InsertQosConfigurationModule.data` and their like) and the `pyvelo.testing`
-fixtures (`make_module_json`, `as_stored`) take JSON as given and are not
-checked.
+form throughout. A plain-dict `data` is sent as it is, so one built from a
+model is built with `by_alias=True`.
 
 `plan.render()` is the plan as text: the module's Python name (`device_settings`
 for `deviceSettings`), then a line for each change. A line's path names a field
@@ -666,9 +644,8 @@ keys are `serviceRateLimit` and `qoe`.
 field reads it and a patch that names it is refused as an unknown field. A
 stored one is kept as read by every write, like any key the models do not know,
 and `compare_effective` reports one the VCO composed as `unconverted`. To
-change or remove it, plan the module from the data as a mapping in the VCO's
-keys (a copy of `module.raw_data`), with the key changed or left out, and write
-the plan: `plan = plan_module(module, data,
+change or remove it, plan the module from the data as a mapping, with the key
+changed or left out, and write the plan: `plan = plan_module(module, data,
 level=ConfigContext.EDGE)`, then `await client.write_module(module, plan)`
 (`ConfigContext.PROFILE` for a profile's module). (`update_module`
 takes a model, not a mapping.)

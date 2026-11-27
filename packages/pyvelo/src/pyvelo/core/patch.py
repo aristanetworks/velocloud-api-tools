@@ -83,11 +83,6 @@ class PatchError(ValueError):
       entry that is not editable.
 
     A pydantic ``ValidationError`` behind it is its ``__cause__``.
-
-    ``plan_module`` raises one of kind ``unknown_field`` for a mapping given as
-    a module's data that names a field by its attribute name where the VCO's
-    key is another: the mapping is sent as it is, and ``path`` is the key's
-    place in it.
     """
 
     path: Path

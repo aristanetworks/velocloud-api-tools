@@ -9,13 +9,11 @@ attribute and an item by the text a reader knows it by, in the one form
 between the data as read and as edited, ``named_error`` the path of a
 ``PatchError``, ``named_value`` the keys of a JSON value found at one, and
 ``item_part`` gives the part that names one item of a list.
-``attribute_name_keys`` finds the keys of a JSON document that are a field's
-attribute name where the VCO's key is another.
 """
 
 import functools
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from types import UnionType
@@ -26,7 +24,6 @@ from typing import (
     get_origin,
 )
 
-from pydantic import MISSING
 from pydantic.fields import FieldInfo
 
 from .base import (
@@ -36,7 +33,6 @@ from .base import (
     is_list,
     list_kind,
     python_name,
-    wire_name,
 )
 from .fields import KeySpec, get_key_spec
 from .identity import ResolverNotLoadedError
@@ -1095,32 +1091,6 @@ def named_value(
     return _named(value, place)
 
 
-def _item_place(place: _Place) -> _Place:
-    """The place of each item of a JSON list found at *place*.
-
-    None where no class says what the items are.
-    """
-    if isinstance(place, _Either):
-        return _Model(None, place.items)
-    if isinstance(place, _Items) and not place.is_map:
-        return _Model(None, place.classes)
-    return None
-
-
-def _object_place(place: _Place) -> tuple[_Place, bool]:
-    """The place of a JSON object found at *place*, and whether it is a map.
-
-    A map's keys are data, and the place is that of each of its values. Any
-    other object is one model: the one declared, or one item where only a
-    list is declared.
-    """
-    if isinstance(place, _Items):
-        return _Model(None, place.classes), place.is_map
-    if isinstance(place, _Either):
-        return _Model(None, place.models), False
-    return place, False
-
-
 def _named(value: object, place: _Place) -> object:
     """A copy of *value*, found at *place*, with its declared keys by attribute name.
 
@@ -1129,13 +1099,21 @@ def _named(value: object, place: _Place) -> object:
     list is declared, or a map where *place* is one.
     """
     if is_list(value):
-        below = _item_place(place)
+        below: _Place = None
+        if isinstance(place, _Either):
+            below = _Model(None, place.items)
+        elif isinstance(place, _Items) and not place.is_map:
+            below = _Model(None, place.classes)
         return [_named(item, below) for item in value]
     if not is_dict(value):
         return value
-    place, is_map = _object_place(place)
-    if is_map:
-        return {key: _named(item, place) for key, item in value.items()}
+    if isinstance(place, _Items):
+        entry = _Model(None, place.classes)
+        if place.is_map:
+            return {key: _named(item, entry) for key, item in value.items()}
+        place = entry
+    elif isinstance(place, _Either):
+        place = _Model(None, place.models)
     fields = {key: _field(place, key) for key in value}
     claims = Counter(found[0] for found in fields.values() if found is not None)
     named: dict[object, object] = {}
@@ -1147,97 +1125,3 @@ def _named(value: object, place: _Place) -> object:
             name, below = found
             named[name if claims[name] == 1 else key] = _named(item, below)
     return named
-
-
-def _vco_key(place: _Place, key: object) -> str | None:
-    """The VCO's key for the field *key* names by its attribute name alone.
-
-    None unless *key* is the attribute name of a field in every class of
-    *place* that reads a field from it, and in none of them a key the VCO
-    has for the field: the key it is written under, or the alias it is read
-    from. The key given is that of the first such class.
-    """
-    if not isinstance(place, _Model) or not isinstance(key, str):
-        return None
-    wire: str | None = None
-    for cls in place.classes:
-        found = node_field(cls, key)
-        if found is None:
-            continue
-        name, info = found
-        written = wire_name(cls, name)
-        if name != key or key in (written, info.validation_alias):
-            return None
-        wire = written if wire is None else wire
-    return wire
-
-
-@dataclass(frozen=True, slots=True)
-class _NameKey:
-    """A key that names a field by its attribute name alone (``_vco_key``)."""
-
-    path: Path
-    """Where it is: fields by attribute name, an item by its position."""
-    fields: tuple[str, ...]
-    """The fields on the way and its own, without the items and map keys."""
-    wire: str
-    """The key the VCO has for the field."""
-
-
-def _name_keys(
-    value: object, place: _Place, path: Path, fields: tuple[str, ...]
-) -> Iterator[_NameKey]:
-    """Each key of *value*, found at *place*, that ``_vco_key`` has a key for.
-
-    Walked as ``named_value`` walks: through the fields a class declares, the
-    items of a list and the values of a map. Nothing is looked for below a key
-    no class declares.
-    """
-    if is_list(value):
-        below = _item_place(place)
-        for position, item in enumerate(value):
-            yield from _name_keys(item, below, path.child(position), fields)
-        return
-    if not is_dict(value):
-        return
-    place, is_map = _object_place(place)
-    for key, item in value.items():
-        if is_map:
-            yield from _name_keys(item, place, path.child(str(key)), fields)
-            continue
-        found = _field(place, key)
-        if found is None:
-            continue
-        name, below = found
-        wire = _vco_key(place, key)
-        if wire is not None:
-            yield _NameKey(path.child(name), (*fields, name), wire)
-        yield from _name_keys(item, below, path.child(name), (*fields, name))
-
-
-def attribute_name_keys(
-    value: object, model: type[VcoModel] | None, read: object = MISSING
-) -> list[tuple[Path, str]]:
-    """The keys of JSON *value* that are a field's attribute name, not the VCO's key.
-
-    *value* is a document of *model*, as it would be sent. Each key found is
-    given with its path (the fields by attribute name, an item by its position
-    in *value*) and the key the VCO has for the field. A key is found where a
-    class declares a field of that name and writes it under another key, at any
-    depth the classes reach (``named_value`` walks the same way): sent as it
-    is, it would be a key the VCO does not know. A key that is also the VCO's
-    key for its field is not one, nor is a key no class declares.
-
-    *read* is the document as read, if there is one. A key it holds at the
-    same field is left out: the VCO stores it, whatever it means by it. The
-    items of a list, and the entries of a map, are one place for this, so an
-    item may be moved, renamed or added with the keys another item was read
-    with.
-    """
-    place: _Place = None if model is None else _Model(None, (model,))
-    stored = {found.fields for found in _name_keys(read, place, Path(()), ())}
-    return [
-        (found.path, found.wire)
-        for found in _name_keys(value, place, Path(()), ())
-        if found.fields not in stored
-    ]
