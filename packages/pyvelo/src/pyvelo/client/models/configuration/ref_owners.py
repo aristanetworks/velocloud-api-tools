@@ -19,16 +19,16 @@ import functools
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Annotated, Final, Literal, TypeAliasType, get_args, get_origin
+from typing import Final
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
 
-from pyvelo.core import ConfigContext, OwnsRef, RefOnly, VcoModel, field_kind, unwrap
+from pyvelo.core import ConfigContext, OwnsRef, RefOnly, VcoModel, unwrap
 from pyvelo.core.base import is_dict, is_list
 from pyvelo.core.fields import get_owns_ref, get_ref_only, get_resolvable
 from pyvelo.core.rebase import Path
-from pyvelo.core.walk import walk_fields
+from pyvelo.core.walk import can_hold_field, models_below, walk_fields
 
 SEGMENT_REF: Final = "deviceSettings:segment"
 """The ref name of a profile device settings segment's row."""
@@ -105,22 +105,6 @@ def _segment_of(item: object) -> SegmentRef | None:
     )
 
 
-def _model_classes(annotation: object) -> Iterator[type[VcoModel]]:
-    """The model classes a field type can hold.
-
-    Found through ``Annotated``, unions, ``list``, ``dict`` and ``tuple``.
-    """
-    if isinstance(annotation, TypeAliasType):
-        yield from _model_classes(annotation.__value__)
-    elif isinstance(annotation, type):
-        if issubclass(annotation, VcoModel):
-            yield annotation
-    elif get_origin(annotation) is not Literal:
-        args = get_args(annotation)  # ``Annotated`` has its type first, then markers
-        for arg in args[:1] if get_origin(annotation) is Annotated else args:
-            yield from _model_classes(arg)
-
-
 @functools.cache
 def can_hold_owner(model_cls: type[VcoModel]) -> bool:
     """Whether a model of *model_cls* can hold a declared owner, at any depth.
@@ -131,18 +115,7 @@ def can_hold_owner(model_cls: type[VcoModel]) -> bool:
     per class, from the declared field types: a subclass that adds an owner
     below a field declared with a class that has none is not found.
     """
-    seen: set[type[VcoModel]] = set()
-    pending = [model_cls]
-    while pending:
-        current = pending.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        for field_info in current.model_fields.values():
-            if get_owns_ref(field_info) is not None or get_ref_only(field_info):
-                return True
-            pending.extend(_model_classes(field_kind(field_info).inner_type))
-    return False
+    return can_hold_field(model_cls, _is_marked)
 
 
 @functools.cache
@@ -157,21 +130,14 @@ def declared_ref_names(
     the declared field types, as ``can_hold_owner`` is.
     """
     names: set[str] = set()
-    seen: set[type[VcoModel]] = set()
-    pending = [model_cls]
-    while pending:
-        current = pending.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        for field_info in current.model_fields.values():
+    for below in models_below(model_cls):
+        for field_info in below.model_fields.values():
             owns = get_owns_ref(field_info)
             ref_only = get_ref_only(field_info)
             if owns is not None and (owns.level is None or owns.level == level):
                 names.add(owns.name)
             if ref_only is not None and ref_only.default is not None:
                 names.add(ref_only.default)
-            pending.extend(_model_classes(field_kind(field_info).inner_type))
     return frozenset(names)
 
 

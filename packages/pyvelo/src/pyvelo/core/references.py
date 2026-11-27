@@ -17,20 +17,19 @@ is a ``per_segment`` one: the set of the segment the marked list sits in.
 """
 
 import functools
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from typing import cast
 
 from pydantic import MISSING
-from pydantic.fields import FieldInfo
 
-from .base import VcoModel, field_models, is_dict, is_list, wire_name
+from .base import VcoModel, is_dict, is_list, wire_name
 from .fields import get_key_spec, get_provides, get_refers_to
 from .merge import item_selector
 from .owned import unwrap
 from .rebase import Key, Path, PathPart, item_key
-from .walk import walk_fields
+from .walk import can_hold_field, walk_fields
 
 type SetKey = tuple[str, int | None]
 """A set: its name, and the ID of the segment it belongs to.
@@ -76,36 +75,13 @@ class ReferenceFindings:
     """References to a value that is not a member, held as the module was read."""
 
 
-def _can_hold(model_cls: type[VcoModel], marked: Callable[[FieldInfo], bool]) -> bool:
-    """Whether a model of *model_cls*, or one below it, has a field *marked* accepts.
-
-    The model below may be at any depth.
-
-    It follows the declared field types (through ``Annotated``, unions,
-    ``list``, ``dict`` and ``tuple``): a subclass that adds a marker below a
-    field declared with a class that has none is not found.
-    """
-    seen: set[type[VcoModel]] = set()
-    pending = [model_cls]
-    while pending:
-        current = pending.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        for field_info in current.model_fields.values():
-            if marked(field_info):
-                return True
-            pending.extend(field_models(field_info))
-    return False
-
-
 @functools.cache
 def can_refer(model_cls: type[VcoModel]) -> bool:
     """Whether a model of *model_cls* can hold a ``RefersTo`` value, at any depth.
 
     Computed once per class.
     """
-    return _can_hold(model_cls, lambda info: get_refers_to(info) is not None)
+    return can_hold_field(model_cls, lambda info: get_refers_to(info) is not None)
 
 
 @functools.cache
@@ -117,7 +93,7 @@ def can_provide(model_cls: type[VcoModel]) -> bool:
     The walk for the sets (``provided``) goes by this, so it passes over the
     rules of a QoS module, which refer to hubs and provide nothing.
     """
-    return _can_hold(model_cls, lambda info: get_provides(info) is not None)
+    return can_hold_field(model_cls, lambda info: get_provides(info) is not None)
 
 
 def _segment_id(segment: VcoModel | None) -> int | None:

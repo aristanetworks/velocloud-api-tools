@@ -42,7 +42,7 @@ from pyvelo.core.identity import (
 )
 from pyvelo.core.rebase import Path
 from pyvelo.core.show import patch_text
-from pyvelo.core.walk import walk_fields
+from pyvelo.core.walk import can_hold_field, walk_fields
 
 BACKHAUL_REF: Final = "deviceSettings:backHaulEdge"
 """The ref name of a QoS rule's backhaul hub row."""
@@ -61,18 +61,7 @@ def can_hold_hub_role(model_cls: type[VcoModel]) -> bool:
     model class that can. It is computed from the declared field types, once
     per class.
     """
-    seen: set[type[VcoModel]] = set()
-    pending = [model_cls]
-    while pending:
-        current = pending.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        for field_info in current.model_fields.values():
-            if get_hub_role(field_info) is not None:
-                return True
-            pending.extend(field_models(field_info))
-    return False
+    return can_hold_field(model_cls, lambda info: get_hub_role(info) is not None)
 
 
 @dataclass(frozen=True)
