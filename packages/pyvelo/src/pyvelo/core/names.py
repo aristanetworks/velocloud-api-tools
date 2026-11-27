@@ -37,7 +37,7 @@ from .base import (
 from .fields import ConfigContext, get_key_spec
 from .identity import ResolverNotLoadedError
 from .layers import field_kind
-from .merge import item_selector, select_items
+from .merge import item_selector, item_selectors, select_items
 from .owned import unwrap
 from .patch import PatchError, patch_key, selector_of
 from .rebase import (
@@ -50,6 +50,7 @@ from .rebase import (
     PathPart,
     item_key,
     item_parts,
+    item_text,
     key_text,
     node_child,
     node_field,
@@ -80,16 +81,46 @@ def item_part(model: VcoModel, field_name: str, position: int) -> ItemPart | Non
     if the field is not a list: an entry of a map is named by its key, which a
     path writes after a dot, and not by an item part.
     """
+    _refuse_a_map(model, field_name)
+    return _part_of(
+        model, field_name, position, item_selector(model, field_name, position)
+    )
+
+
+def shown_item_parts(model: VcoModel, field_name: str) -> list[ItemPart | None]:
+    """``item_part`` of each item of the list *field_name*, in the list's order.
+
+    The parts are the same as ``item_part`` gives one position at a time; the
+    selectors of all the items are found in one pass over the list
+    (``item_selectors``), so naming every item of a long list reads it about
+    once, not once for each item.
+
+    Raises ``TypeError`` as ``item_part`` does.
+    """
+    _refuse_a_map(model, field_name)
+    return [
+        _part_of(model, field_name, position, text)
+        for position, text in enumerate(item_selectors(model, field_name))
+    ]
+
+
+def _refuse_a_map(model: VcoModel, field_name: str) -> None:
+    """Raise ``TypeError`` where the field *field_name* of *model* is a map."""
     model_cls = type(model)
-    field_info = model_cls.model_fields[field_name]
-    kind = list_kind(field_info)
-    if kind == "map":
+    if list_kind(model_cls.model_fields[field_name]) == "map":
         raise TypeError(
             f"{model_cls.__name__}.{field_name} is a map: an item part would "
             "show its entry as an item of a list. A path names an entry of a "
             "map by its key, after a dot; use the key"
         )
-    text = item_selector(model, field_name, position)
+
+
+def _part_of(
+    model: VcoModel, field_name: str, position: int, text: str | None
+) -> ItemPart | None:
+    """``item_part`` of the item at *position*, whose ``item_selector`` is *text*."""
+    field_info = type(model).model_fields[field_name]
+    kind = list_kind(field_info)
     spec = get_key_spec(field_info)
     items: object = getattr(model, field_name)
     item = items[position] if is_list(items) else None
@@ -497,6 +528,10 @@ class ItemPairing:
     """
     added_by_position: frozenset[int]
     """The positions as edited of the added items a change names by position."""
+    read_parts: tuple[ItemPart, ...] = ()
+    """The part a change names each item as read by (``item_parts``), by position."""
+    edited_parts: tuple[ItemPart, ...] = ()
+    """The part a change names each item as edited by, by position."""
 
     def adds_at(self, position: int) -> bool:
         """Whether a change's *position* is an added item's, in the list as edited.
@@ -557,6 +592,8 @@ def _pairing(read: VcoModel, edited: VcoModel, field: str) -> ItemPairing | None
         dict(pairing.pairs),
         frozenset(i for i, part in enumerate(was_parts) if isinstance(part, int)),
         frozenset(j for j in pairing.added if isinstance(now_parts[j], int)),
+        tuple(was_parts),
+        tuple(now_parts),
     )
 
 
@@ -606,6 +643,58 @@ class ChangeNames:
 
         ``named_change_path`` says how.
         """
+        return Path(self._walk(path, removed=removed)[0])
+
+    def order_names(self, path: Path) -> dict[str, ItemPart] | None:
+        """The items of the keyed list at *path* by the names an order entry gives them.
+
+        *path* is the path of the order entry of the list (``RawChange.moves``).
+        Its values name an item by the text ``Path`` writes its part in
+        (``item_text``): an item as read by its part there, an item only the
+        list as edited has by its part there (``item_names``). Each name is
+        mapped to the part that shows its item, the item as edited: the partner
+        of an item as read (``pairing``), as ``item_part`` shows it, else its
+        position. The items are paired, and the list as edited named, in one
+        pass each (``shown_item_parts``), so the names of a long list cost
+        about the list once. None where the list is not one ``pairing``
+        pairs.
+        """
+        _, was, now = self._walk(path, removed=False)
+        if not (
+            isinstance(was, _Items)
+            and isinstance(now, _Items)
+            and was.owner is not None
+            and now.owner is not None
+            and was.field == now.field
+        ):
+            return None
+        pairing = self.pairing(was.owner, now.owner, now.field)
+        if pairing is None:
+            return None
+        try:
+            shown = shown_item_parts(now.owner, now.field)
+        except (PatchError, ResolverNotLoadedError, LookupError):
+            # As ``_item`` has it: a lookup that fails names nothing here.
+            return None
+        paired = set(pairing.partner.values())
+        names = {
+            item_text(part): j
+            for j, part in enumerate(pairing.edited_parts)
+            if j not in paired
+        }
+        names.update(
+            (item_text(pairing.read_parts[i]), j) for i, j in pairing.partner.items()
+        )
+        found: dict[str, ItemPart] = {}
+        for text, j in names.items():
+            part = shown[j]
+            found[text] = j if part is None else part
+        return found
+
+    def _walk(
+        self, path: Path, *, removed: bool
+    ) -> tuple[list[PathPart], _Place, _Place]:
+        """The parts of *path* as shown, and where it ends as read and as edited."""
         was: _Place = _holding(self.read, ())
         now: _Place = _holding(self.edited, ())
         parts: list[PathPart] = []
@@ -626,7 +715,7 @@ class ChangeNames:
                 unpaired = held and there is None
                 was = None if unpaired else _step(was, part, self.resolvers)[1]
             parts.append(shown)
-        return Path(parts)
+        return parts, was, now
 
 
 def named_change_path(

@@ -72,7 +72,7 @@ is reported (``legacy_keys``) and left, never written just to strip it.
 import copy
 import functools
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from typing import Any, Final, Literal, cast, override
@@ -401,39 +401,56 @@ class ModulePlan:
         shown_part = self.named(items.child(item)).parts[-1]
         return item if isinstance(shown_part, str) else shown_part
 
-    def _named_place(self, items: Path, place: ItemPlace) -> ItemPlace:
-        """*place* in the list at *items*, with the item it is after as shown."""
+    def _order_items(self, items: Path) -> Callable[[ItemPart], ItemPart]:
+        """What shows an item of the order entry of the list at *items*.
+
+        It shows each item as ``_named_item`` does, from the names of the whole
+        list found in one pass (``ChangeNames.order_names``), so the names of
+        all the items of a long list cost about the list once; an item those
+        lack is looked up alone.
+        """
+        names = self._change_names
+        found = None if names is None else names.order_names(items)
+
+        def shown(item: ItemPart) -> ItemPart:
+            part = None if found is None else found.get(item_text(item))
+            return self._named_item(items, item) if part is None else part
+
+        return shown
+
+    @staticmethod
+    def _named_place(
+        place: ItemPlace, name: Callable[[ItemPart], ItemPart]
+    ) -> ItemPlace:
+        """*place*, with the item it is after shown by *name*."""
         if place.after is None:
             return place
-        return ItemPlace(self._named_item(items, place.after))
+        return ItemPlace(name(place.after))
 
-    def _named_names(self, items: Path, names: object) -> object:
-        """*names*, the item names of the order entry of the list at *items*, as shown.
+    @staticmethod
+    def _named_names(names: object, name: Callable[[ItemPart], ItemPart]) -> object:
+        """*names*, the item names of an order entry, each shown by *name*.
 
         Each is the text ``Path`` writes an item in (``item_text``); it is read
-        back as that item and written as ``_named_item`` shows it.
+        back as that item and written as *name* shows it.
         """
         if not is_list(names):
             return names
         shown_names: list[object] = []
-        for name in names:
-            part = Path.parse(f"[{name}]").parts[0] if isinstance(name, str) else None
+        for text in names:
+            part = Path.parse(f"[{text}]").parts[0] if isinstance(text, str) else None
             shown_names.append(
-                name
-                if part is None or isinstance(part, str)
-                else item_text(self._named_item(items, part))
+                text if part is None or isinstance(part, str) else item_text(name(part))
             )
         return shown_names
 
+    @classmethod
     def _named_moves(
-        self, items: Path, moves: Sequence[ItemMove]
+        cls, moves: Sequence[ItemMove], name: Callable[[ItemPart], ItemPart]
     ) -> tuple[ItemMove, ...]:
-        """*moves*, of items of the list at *items*, with each item as shown."""
+        """*moves*, with each item shown by *name*."""
         return tuple(
-            ItemMove(
-                self._named_item(items, move.item),
-                self._named_place(items, move.place),
-            )
+            ItemMove(name(move.item), cls._named_place(move.place, name))
             for move in moves
         )
 
@@ -444,21 +461,25 @@ class ModulePlan:
         change removes what it names), and so are the item a place is after
         and the items of a move. A value is written by ``named_value``, with
         its keys by attribute name; the values of an order entry, the item
-        names in the order read and in the new order, are the items as shown.
-        ``render`` writes each line from it, and
-        ``ConfigState.get_field_changes`` is made of them.
+        names in the order read and in the new order, are the items as shown,
+        all of them named in one pass over the list (``_order_items``).
+        ``render`` writes each line from it but an order line, which names
+        only the moves it prints, as this does; ``ConfigState.get_field_changes``
+        is made of them.
         """
         path = self.named(change.path, removed=change.after is MISSING)
         if change.moves is not None:
+            name = self._order_items(change.path)
             return RawChange(
                 path,
-                self._named_names(change.path, change.before),
-                self._named_names(change.path, change.after),
-                moves=self._named_moves(change.path, change.moves),
+                self._named_names(change.before, name),
+                self._named_names(change.after, name),
+                moves=self._named_moves(change.moves, name),
             )
         place = change.place
         if place is not None:
-            place = self._named_place(Path(change.path.parts[:-1]), place)
+            items = Path(change.path.parts[:-1])
+            place = self._named_place(place, functools.partial(self._named_item, items))
         return RawChange(
             path,
             named_value(change.before, self.model, change.path),
@@ -474,7 +495,8 @@ class ModulePlan:
         the rest are counted.
         """
         if change.moves is not None:
-            printed = self._named_moves(change.path, change.moves[:MOVES_SHOWN])
+            name = functools.partial(self._named_item, change.path)
+            printed = self._named_moves(change.moves[:MOVES_SHOWN], name)
             moves = (*printed, *change.moves[MOVES_SHOWN:])
             return f"  ~ {self.named(change.path)}: order: {moves_text(moves)}"
         seen = self.shown_change(change)

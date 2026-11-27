@@ -8,6 +8,7 @@ the VCO's names: the save reads those.
 """
 
 import copy
+import sys
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -25,7 +26,7 @@ from profile_state import profile_state
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.module_write import ModulePlan, plan_module
 from pyvelo.client.schemas.configuration import DeviceSettingsConfigurationModule
-from pyvelo.config import ConfigPipeline, add
+from pyvelo.config import ConfigPipeline, add, move
 from pyvelo.config.state import ConfigState
 from pyvelo.core import delete
 from pyvelo.core.names import ChangeNames
@@ -41,6 +42,14 @@ from pyvelo.core.rebase import (
 from pyvelo.testing import make_module_json
 from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
 from shown_paths import reached
+from test_patch_real_models import (  # pyright: ignore[reportImplicitRelativeImport]
+    SEGMENT as FW_SEGMENT,
+)
+from test_patch_real_models import (  # pyright: ignore[reportImplicitRelativeImport]
+    firewall,
+    fw_rule,
+    make_state,
+)
 
 ROUTE_HUBS = "action.edge_to_edge_route_action.route_cfg.backhaul_edges"
 """The backhaul hubs of a rule's Edge to Edge route, below the rule."""
@@ -301,10 +310,12 @@ async def test_the_path_of_every_field_change_is_in_the_plan_text() -> None:
     state = await edited()
     lines = state.plan().render().splitlines()
     for change in state.get_field_changes():
+        heads = [f"  {sign} {change.path}" for sign in "+-~"]
+        # The path ends where the line does, at its ": " or at a place's " (".
         assert any(
-            line.startswith(f"  {sign} {change.path}")
+            line == head or line.startswith((f"{head}: ", f"{head} ("))
             for line in lines
-            for sign in "+-~"
+            for head in heads
         )
 
 
@@ -602,3 +613,53 @@ async def test_an_order_line_names_only_the_moves_it_prints(
     (change,) = state.get_field_changes("device_settings")
     assert change.moves is not None
     assert [str(move) for move in change.moves][-2:] == ["n3 after n4", "n2 after n3"]
+
+
+def work(call: Callable[[], object]) -> int:
+    """The Python functions *call* runs, each call counted: its work, not its time."""
+    calls = 0
+
+    def count(_frame: object, event: str, _arg: object) -> None:
+        nonlocal calls
+        if event == "call":
+            calls += 1
+
+    sys.setprofile(count)
+    try:
+        _ = call()
+    finally:
+        sys.setprofile(None)
+    return calls
+
+
+async def one_rule_moved_first(count: int) -> ConfigState:
+    """A firewall of *count* outbound rules, the last of them moved to first."""
+    rules = [fw_rule(f"r{i}", ruleLogicalId=f"l{i}") for i in range(count)]
+    state = make_state({"firewall": firewall(*rules)}, {"firewall": firewall()})
+    _ = await ConfigPipeline(None).apply(
+        state,
+        module="firewall",
+        segment=FW_SEGMENT,
+        path="outbound",
+        patch={f"r{count - 1}": move(first=True)},
+    )
+    return state
+
+
+async def test_an_order_entry_is_named_in_work_that_grows_with_the_list() -> None:
+    """Each item of the list is named once, not looked up in the list once each.
+
+    Four times the rules is at most about four times the work, for the plan
+    text and for the field changes, both of which plan the module again.
+    """
+    small, large = await one_rule_moved_first(40), await one_rule_moved_first(160)
+    for state in (small, large):  # the caches a first plan fills
+        _ = state.plan().render()
+        _ = state.get_field_changes()
+    assert work(lambda: large.plan().render()) <= 4.5 * work(
+        lambda: small.plan().render()
+    )
+    assert work(large.get_field_changes) <= 4.5 * work(small.get_field_changes)
+    (change,) = large.get_field_changes()
+    assert change.after == ["r159", *(f"r{i}" for i in range(159))]
+    assert change.moves == (ItemMove(Key("r159"), ItemPlace()),)

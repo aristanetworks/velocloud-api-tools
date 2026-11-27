@@ -111,8 +111,12 @@ _SEGMENT_MODULES = (
 class ConfigFieldChange:
     """One change of :meth:`ConfigState.plan`, in the names its text shows.
 
-    Each is the change as ``ModulePlan.shown_change`` shows it, so its module,
-    path and items read as the plan's line for it does.
+    A change of the module's data is the change as ``ModulePlan.shown_change``
+    shows it, so its path and items read as the plan's line for it does. A
+    segment added to a profile module is at the segment as ``ModulePlan.named``
+    shows it, with the entry as written in attribute names; a provider is at
+    the owner's field as ``named`` shows it, with logical IDs as its values.
+    Each names the module by its python name.
 
     Attributes:
         module: The module's python name (e.g. ``"firewall"``,

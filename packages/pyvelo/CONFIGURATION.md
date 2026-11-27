@@ -939,8 +939,9 @@ firewall: update
   modules. "Hubs", below, has all of it.
 - A segment added to a profile module has an `added segments: Guest` line, and
   `get_field_changes()` lists it as one change at `segments[Guest]`, from
-  `MISSING` to the entry as written, with its keys by attribute name. A QoS segment that lacks template
-  `defaults` has them added to the module's write when the module is written
+  `MISSING` to the entry as written, with its keys by attribute name. A QoS
+  segment that lacks template `defaults` has them added to the module's write
+  when the module is written
   (`repaired defaults: Guest: Default-Any-UDP, Default-Any-Other`); the plan
   warns with the code `defaults_repaired` either way, and `missing defaults`
   is the same line for entries it leaves out. A repaired default's

@@ -51,8 +51,13 @@ from pyvelo.core import (
     selector_of,
 )
 from pyvelo.core.layers import L
-from pyvelo.core.merge import nest_patch, nested_under
-from pyvelo.core.names import ChangeNames, named_change_path, named_error
+from pyvelo.core.merge import item_selectors, nest_patch, nested_under
+from pyvelo.core.names import (
+    ChangeNames,
+    named_change_path,
+    named_error,
+    shown_item_parts,
+)
 from pyvelo.core.rebase import (
     KeyedList,
     item_key,
@@ -564,6 +569,40 @@ def test_item_part_and_item_selector_agree_but_for_an_empty_label() -> None:
             text = None if part is None else selector_of(part)
             assert text == item_selector(model, field, position), (field, entry)
             compared += 1
+    assert compared > 1000
+
+
+def test_the_parts_of_a_whole_list_are_those_of_each_item() -> None:
+    """The one pass over a list names each item as a lookup of that item does."""
+    links = Links.model_validate(
+        {
+            "links": [
+                {"internalId": "x", "family": "true"},
+                {"internalId": "x", "family": "True"},
+                {"internalId": "#1"},
+                {"internalId": "x,true"},
+            ]
+        }
+    )
+    macs = Macs.model_validate(
+        {
+            "macs": [
+                {"macAddress": "AA:BB"},
+                {"macAddress": "aa:bb"},
+                {"macAddress": "#0"},
+            ]
+        }
+    )
+    compared = 0
+    for model, field in [*hostile_lists(), (links, "links"), (macs, "macs")]:
+        positions = range(len(entries_of(model, field)))
+        assert item_selectors(model, field) == [
+            item_selector(model, field, n) for n in positions
+        ], field
+        assert shown_item_parts(model, field) == [
+            item_part(model, field, n) for n in positions
+        ], field
+        compared += len(positions)
     assert compared > 1000
 
 

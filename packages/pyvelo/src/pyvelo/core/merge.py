@@ -2255,6 +2255,104 @@ def item_selector(model: VcoModel, field_name: str, position: int) -> str | None
     return None
 
 
+def item_selectors(model: VcoModel, field_name: str) -> list[str | None]:
+    """``item_selector`` of each item of *field_name*, in the list's order.
+
+    The texts are the same as ``item_selector`` gives one position at a time,
+    and the list is read once rather than once for each item: in a keyed
+    list a candidate is read (``_select``) against only the items that it
+    could name, those whose key, alt key or label is one of its readings,
+    found in an index of the list made once (``_ItemIndex``). A candidate
+    that reads as a position (``"#n"``) is read against the whole list,
+    whose length it depends on. Any other list is named position by
+    position, by ``item_selector``.
+
+    Raises ``TypeError`` if the field is neither a list nor a map of models.
+    """
+    model_cls = type(model)
+    spec = _list_spec(model_cls.model_fields[field_name])
+    if spec is None:
+        raise TypeError(
+            f"{model_cls.__name__}.{field_name} is not a list or a map of models"
+        )
+    current = _field_value(model, field_name)
+    if spec.kind != "keyed" or not is_list(current):
+        count = len(current) if is_list(current) or is_dict(current) else 0
+        return [item_selector(model, field_name, i) for i in range(count)]
+    index = _ItemIndex.of(spec, current)
+    return [index.selector(position) for position in range(len(current))]
+
+
+@dataclass(frozen=True, slots=True)
+class _ItemIndex:
+    """The items of a keyed list by what a selector may name them by.
+
+    Each map is from a value in the string form ``_select`` compares it in to
+    the positions of the items that have it.
+    """
+
+    spec: _ListSpec
+    items: Sequence[object]
+    keys: dict[KeyForm, list[int]]
+    """By key, as ``_with_key`` compares it (case-folded where the list folds case)."""
+    alts: dict[KeyForm, list[int]]
+    """By alt key, as ``_with_part`` compares it."""
+    labels: dict[KeyForm, list[int]]
+    """By label, as ``_with_part`` compares it."""
+
+    @classmethod
+    def of(cls, spec: _ListSpec, items: Sequence[object]) -> _ItemIndex:
+        """The index of *items*, a keyed list of *spec*."""
+        keys: dict[KeyForm, list[int]] = {}
+        alts: dict[KeyForm, list[int]] = {}
+        labels: dict[KeyForm, list[int]] = {}
+        label_path = spec.label_path
+        for position, item in enumerate(items):
+            key = _compared_key(spec, _item_key(item, spec.key_paths))
+            alt = _alt_key(spec, item)
+            label = None if label_path is None else _item_key(item, (label_path,))
+            for found, value in ((keys, key), (alts, alt), (labels, label)):
+                if value is not None:
+                    found.setdefault(value, []).append(position)
+        return cls(spec, items, keys, alts, labels)
+
+    def selector(self, position: int) -> str | None:
+        """``item_selector`` of the item at *position*."""
+        for candidate in _selector_candidates(self.spec, self.items, position):
+            try:
+                if self.select(candidate) == [position]:
+                    return candidate
+            except PatchError:
+                continue
+        return None
+
+    def select(self, candidate: str) -> list[int]:
+        """What ``select_items`` gives for *candidate*, a text, with no resolvers.
+
+        ``_select`` reads it against the items the index has for its
+        readings; those are all the items it can name, unless it reads as a
+        position, when the whole list is read.
+        """
+        spec, items = self.spec, self.items
+        where = Path(("items",))
+        if position_of(candidate) is not None:
+            selection = _select(items, spec, candidate, None)
+            _refuse_two_readings(selection, spec, items, candidate, where)
+            return selection.positions
+        near: set[int] = set()
+        for key in _selector_keys(spec, candidate):
+            form = _compared_key(spec, key_form(key))
+            if form is not None:
+                near.update(self.keys.get(form, ()))
+        near.update(self.alts.get(candidate, ()))
+        near.update(self.labels.get(candidate, ()))
+        positions = sorted(near)
+        subset = [items[i] for i in positions]
+        selection = _select(subset, spec, candidate, None)
+        _refuse_two_readings(selection, spec, subset, candidate, where)
+        return [positions[i] for i in selection.positions]
+
+
 def _selector_candidates(  # noqa: C901 (existing: split it when it next changes)
     spec: _ListSpec, entries: Sequence[object], position: int
 ) -> list[str]:
