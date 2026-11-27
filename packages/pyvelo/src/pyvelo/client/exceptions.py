@@ -842,19 +842,25 @@ def _and_more(total: int, limit: int | None, attribute: str) -> list[str]:
     return [f"  and {total - limit} more: error.{attribute} has them all"]
 
 
-def _where(change: PlannedChange | ServerChange) -> str:
+def _where(change: PlannedChange | ServerChange, plan: ModulePlan | None) -> str:
     """The path of *change*, with ``refs`` before it for a refs entry.
 
-    The keys of a refs entry are data: its path is written as the entry has
-    it. *change* is as a write error shows it (``ModuleWriteError._shown``), so
-    the path of a change of the data is in the names of the plan's text.
+    *change* is as a write error shows it (``ModuleWriteError._shown``), so
+    the path of a change of the data is in the names of the plan's text. A
+    refs entry that is a row *plan* adds or removes is named as the plan's
+    line for the row names it, then the row's identity
+    (``ModulePlan.ref_entry``); any other refs entry, and every refs entry of
+    an error with no plan, keeps its path as the check wrote it, its keys as
+    stored.
     """
-    return f"refs {change.path}" if change.part == "refs" else str(change.path)
+    if change.part != "refs":
+        return str(change.path)
+    return f"refs {change.path}" if plan is None else plan.ref_entry(change)
 
 
-def _what(change: PlannedChange) -> str:
-    """The path of *change*, then its place or its order."""
-    return _where(change) + _place_or_order(change.place, change.moves)
+def _what(change: PlannedChange, plan: ModulePlan | None) -> str:
+    """The path of *change* (``_where``), then its place or its order."""
+    return _where(change, plan) + _place_or_order(change.place, change.moves)
 
 
 def _written_whole(applied: Sequence[PlannedChange]) -> frozenset[Path]:
@@ -1038,9 +1044,10 @@ class ModuleWriteError(VcoError):
         for that change, and the path is one ``apply`` takes. An object among
         the values has its keys by attribute name.
 
-        A refs entry is returned as it is: its keys are data. So is every
-        change of an error that has no plan, which has nothing to name an
-        item by.
+        A refs entry is returned as it is: its keys are data, and its line
+        names a row the plan adds or removes as the plan's line does
+        (``_where``). So is every change of an error that has no plan, which
+        has nothing to name an item by.
         """
         plan = self.plan
         if plan is None or change.part == "refs":
@@ -1106,8 +1113,9 @@ class ModuleWriteError(VcoError):
         item's name is kept too. An object among the values has its keys by
         attribute name.
 
-        A refs entry is returned as it is, and so is every change of an
-        error that has no plan.
+        A refs entry is returned as it is: no server change is a row of the
+        plan, so its line keeps its path (``_where``). So is every change of
+        an error that has no plan.
         """
         plan = self.plan
         if plan is None or change.part == "refs":
@@ -1174,9 +1182,13 @@ class ModuleWriteError(VcoError):
         key, or the position, it has there, in its own line and in the order
         of its list; an item below a value the write added or replaced whole
         is shown by its position in that value; and a key the model does not
-        declare is kept as stored. A refs entry is ``refs <path>``, its keys
-        as stored. An error that has no plan keeps every path as the check
-        wrote it.
+        declare is kept as stored. A refs entry that is a row the plan adds
+        or removes is named as the plan's line for the row names it, then the
+        row's identity: ``refs deviceSettings:backHaulEdge (Guest) <logical
+        ID>``, a provider's row by the provider's field. Any other refs entry
+        (a row the VCO added or dropped, a row sent as read) is ``refs
+        <path>``, its keys as stored. An error that has no plan keeps every
+        path as the check wrote it.
         """
         lines = [self._headline(), *self._notes(limit)]
         if self.lost_edits:
@@ -1190,7 +1202,7 @@ class ModuleWriteError(VcoError):
                     change, seen.as_read, seen.intended, seen.stored
                 )
                 line = (
-                    f"  {_what(seen)}: read {as_read}, "
+                    f"  {_what(seen, self.plan)}: read {as_read}, "
                     f"meant {intended}, stored {stored}"
                 )
                 if change.clash:
@@ -1200,7 +1212,7 @@ class ModuleWriteError(VcoError):
         if self.applied:
             lines.append("already stored:")
             lines.extend(
-                f"  {_what(self._shown(change))}"
+                f"  {_what(self._shown(change), self.plan)}"
                 for change in _first(self.applied, limit)
             )
             lines.extend(_and_more(len(self.applied), limit, "applied"))
@@ -1214,7 +1226,8 @@ class ModuleWriteError(VcoError):
                     server_change, seen_change.as_read, seen_change.stored
                 )
                 lines.append(
-                    f"  {_where(seen_change)}: read {as_read}, stored {stored}"
+                    f"  {_where(seen_change, self.plan)}: read {as_read}, "
+                    f"stored {stored}"
                 )
             lines.extend(_and_more(len(self.server_changes), limit, "server_changes"))
         if self.completed:

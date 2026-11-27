@@ -202,8 +202,8 @@ is taken as the delete done. `state.revert_module(name)` sends nothing, so it
 refuses such a module and names `pipeline.revert`. Each of these refusals
 starts with the module's python name (`business_policy: the VCO holds a module
 of this name ...`), and a place it names (`it differs at ...`, `it also holds
-...`) is shown as a plan shows a path; a row of refs is `refs <path>`, as a
-write error writes it (see "After a save").
+...`) is shown as a plan shows a path; a row of refs is written as a write
+error writes it (see "After a save").
 `revert` takes back edits, not what a save already did: a role step a save
 sent before it stopped (see "Hubs", "When a step fails") stays on the VCO, and
 a state whose device settings edits are taken back plans nothing that mends
@@ -866,7 +866,12 @@ firewall: update
   and from how its changes paired the items of each list
   (`ModulePlan.paired_lists`), so a plan you keep while you edit further
   still names each item as it was then. `ModulePlan.shown_change(change)` is
-  one of those changes as `render()` shows it. `state.get_field_changes()`
+  one of those changes as `render()` shows it. `ModulePlan.ref_row_name(change)`
+  names a row of `ModulePlan.ref_changes` as its `refs` line does;
+  `ModulePlan.ref_change_of(entry)` is the row of `ref_changes` that a refs
+  entry of a write error is (None for a row the VCO added or dropped, and for
+  a row sent as read), and `ModulePlan.ref_entry(entry)` is the entry as the
+  error's message names it. `state.get_field_changes()`
   lists the same changes in the same names, through the same naming, so a
   line and its field change never differ: a `ConfigFieldChange` has the
   module's Python name as `module`, the line's path as `path`, `before` and
@@ -1875,11 +1880,17 @@ module has keeps the key it has there, or its position there
 in its own line and in the order of its list (`lan.networks: read ["Users",
 "Voice", "Guests"], stored ["#0", "Guests", "Users", "Voice"]`). A key the
 model does not declare is kept as stored
-(`segments[Guest].rules[Web].match.serverAdded`). A row of refs
-is `refs <path>`, the ref's name and the row's identity as stored
-(`refs "deviceSettings:backHaulEdge"[<logical ID>,<segment object ID>]`), and
-its values are shown as `"***"`. `written before this one: business_policy
-(update)` names the earlier writes of the save. An error made without a plan
+(`segments[Guest].rules[Web].match.serverAdded`). A row of refs your plan
+adds or removes is named as the plan's line for it names it, then the row's
+identity as that line has it
+(`refs deviceSettings:backHaulEdge (Guest) <logical ID>`, a provider's row by
+the provider's field: `refs segments[Guest].dns.primary_provider.service
+<logical ID>`). Any other row of refs (one the VCO added or dropped on its own,
+and one sent as read that the VCO did not keep) is `refs <path>`, the ref's
+name and the row's identity as stored, with the segment by its logical ID
+(`refs "deviceSettings:backHaulEdge"[<logical ID>,<segment's logical ID>]`).
+The values of a row of refs are shown as `"***"`. `written before this one:
+business_policy (update)` names the earlier writes of the save. An error made without a plan
 has nothing to name an item by, and keeps each path as the check wrote it.
 
 The message shows at most 20 entries of each list and says how many more there

@@ -1138,7 +1138,7 @@ async def test_a_provider_row_the_vco_skipped_is_refs_dropped(
         _ = await client.write_module(module, plan)
     (lost,) = caught.value.lost_edits
     assert lost.part == "refs"
-    assert PRIMARY in str(caught.value)
+    assert f"\n  refs {PRIMARY_OWNER} " in str(caught.value)
     assert lost.owner is not None
     assert str(lost.owner) == PRIMARY_OWNER
     assert [c.part for c in caught.value.applied] == ["data"]

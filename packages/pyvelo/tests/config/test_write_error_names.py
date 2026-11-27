@@ -8,6 +8,7 @@ write shows it; the lists of the error (``lost_edits``, ``applied``,
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -40,6 +41,9 @@ from test_shown_plan import (  # pyright: ignore[reportImplicitRelativeImport]
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from pyvelo.client.derived_refs import RefChange
     from pyvelo.client.schemas.configuration import (
         ConfigurationModuleBase,
         DeviceSettingsConfigurationModule,
@@ -47,7 +51,8 @@ if TYPE_CHECKING:
     from pyvelo.config.state import ConfigState
 
 HUB = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1"
-ROW = '"deviceSettings:backHaulEdge"[aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa,502]'
+SERVICE_ROW = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+ROW = f'"deviceSettings:backHaulEdge"[{SERVICE_ROW},502]'
 PORTS = {
     "segments": {
         "Guest": {"rules": {"Web": {"match": {"dport_low": 443, "dport_high": 443}}}}
@@ -130,7 +135,18 @@ async def test_a_lost_edit_reads_as_the_plan_s_line_for_it() -> None:
     )
     assert hub.startswith(f'  {hubs}: read {{"edge_id": 31, "edge_logical_id": "{HUB}"')
     assert ", meant (nothing), stored {" in hub
-    assert row == f'  refs {ROW}: read "***", meant (nothing), stored "***"'
+    assert row == (
+        "  refs deviceSettings:backHaulEdge (Guest) "
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa: "
+        'read "***", meant (nothing), stored "***"'
+    )
+    assert (
+        "  - refs deviceSettings:backHaulEdge (Guest): "
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    ) in plan.ref_lines()
+    assert _how_it_differs(error, plan).endswith(
+        "refs deviceSettings:backHaulEdge (Guest) aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    )
     assert lines_of(error, "already stored:") == [
         "  segments[Guest].rules[Web].match.destination_port_high"
     ]
@@ -543,6 +559,96 @@ def test_a_refusal_of_revert_names_a_refs_entry_as_a_write_error_does() -> None:
     assert _how_it_differs(error, plan) == (
         f"it differs at {entry}, lan.interfaces[GE1].vlan_ids"
     )
+
+
+HUB_ROW = Path(("deviceSettings:backHaulEdge", Key((SERVICE_ROW, 502))))
+HUB_ROW_NAMED = f"refs deviceSettings:backHaulEdge (Guest) {SERVICE_ROW}"
+
+
+async def hub_out_of_the_rule() -> tuple[ModulePlan, RefChange]:
+    """The plan that takes Hub-A out of the rule ``Web``, and the row it removes."""
+    state = await rule_uses_hub()
+    await edit(state, "QOS", OUT_OF_THE_RULE)
+    (plan,) = [m for m in state.plan().modules if m.name == "QOS"]
+    (removed,) = plan.ref_changes
+    return plan, removed
+
+
+def qos_error(
+    plan: ModulePlan | None,
+    *,
+    lost_edits: Sequence[PlannedChange] = (),
+    server_changes: Sequence[ServerChange] = (),
+) -> ModuleWriteError:
+    """A write error of the QoS module 11 with *plan* and these lists."""
+    return ModuleWriteError(
+        11,
+        "v1",
+        module_name="QOS",
+        plan=plan,
+        lost_edits=lost_edits,
+        server_changes=server_changes,
+    )
+
+
+async def test_a_ref_row_the_plan_removes_is_named_only_with_the_plan() -> None:
+    plan, removed = await hub_out_of_the_rule()
+    kept = PlannedChange(HUB_ROW, removed.row, MISSING, removed.row, part="refs")
+
+    with_plan = qos_error(plan, lost_edits=[kept])
+    without = qos_error(None, lost_edits=[kept])
+
+    assert str(HUB_ROW) == ROW
+    assert lines_of(with_plan, LOST) == [
+        f'  {HUB_ROW_NAMED}: read "***", meant (nothing), stored "***"'
+    ]
+    assert _how_it_differs(with_plan, plan) == f"it differs at {HUB_ROW_NAMED}"
+    # An error with no plan has nothing to name the row by.
+    assert lines_of(without, LOST) == [
+        f'  refs {ROW}: read "***", meant (nothing), stored "***"'
+    ]
+
+
+async def test_a_ref_row_only_the_vco_changed_keeps_its_path() -> None:
+    """A server change is no row of the plan, though it holds the row of one."""
+    plan, removed = await hub_out_of_the_rule()
+    dropped = ServerChange(HUB_ROW, removed.row, MISSING, part="refs")
+
+    error = qos_error(plan, server_changes=[dropped])
+
+    assert plan.ref_change_of(dropped) is None
+    assert lines_of(error, "stored otherwise than sent:") == [
+        f'  refs {ROW}: read "***", stored (nothing)'
+    ]
+
+
+async def test_a_refs_entry_that_is_no_row_of_the_plan_keeps_its_path() -> None:
+    """A row sent as read, and a row the plan neither adds nor removes."""
+    plan, removed = await hub_out_of_the_rule()
+    as_read = PlannedChange(HUB_ROW, removed.row, removed.row, MISSING, part="refs")
+    other = PlannedChange(HUB_ROW, MISSING, {"logicalId": HUB}, MISSING, part="refs")
+
+    error = qos_error(plan, lost_edits=[as_read, other])
+
+    assert plan.ref_change_of(as_read) is None
+    assert plan.ref_change_of(other) is None
+    assert lines_of(error, LOST) == [
+        f'  refs {ROW}: read "***", meant "***", stored (nothing)',
+        f'  refs {ROW}: read (nothing), meant "***", stored (nothing)',
+    ]
+    assert _how_it_differs(error, plan) == f"it differs at refs {ROW}"
+
+
+async def test_a_row_added_and_the_same_row_removed_are_told_apart() -> None:
+    plan, removed = await hub_out_of_the_rule()
+    added = replace(removed, added=True)
+    both = replace(plan, ref_changes=(removed, added))
+    gone = PlannedChange(HUB_ROW, removed.row, MISSING, MISSING, part="refs")
+    made = PlannedChange(HUB_ROW, MISSING, removed.row, MISSING, part="refs")
+
+    assert both.ref_change_of(gone) is removed
+    assert both.ref_change_of(made) is added
+    assert both.ref_entry(gone) == both.ref_entry(made) == HUB_ROW_NAMED
 
 
 def networks_module(*networks: dict[str, Any]) -> DeviceSettingsConfigurationModule:
