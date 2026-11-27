@@ -46,6 +46,7 @@ from pyvelo.core import (
     selector_of,
 )
 from pyvelo.core.layers import L
+from pyvelo.core.names import named_change_path
 from pyvelo.core.rebase import item_key
 
 
@@ -851,6 +852,135 @@ def test_a_value_is_copied_at_every_depth() -> None:
 def test_two_keys_of_one_field_are_each_kept_as_stored() -> None:
     value = {"logicalId": "a", "logical_id": "b", "name": "n"}
     assert named_value(value, Doc, Path.parse("rules[Web].hubs[h1]")) == value
+
+
+# ---------------------------------------------------------------------------
+# The path of a change: its items are named as read, and shown as edited
+# ---------------------------------------------------------------------------
+
+
+def rule_row(name: str, rule_id: str | None, *hubs: dict[str, object]) -> object:
+    return {"name": name, "ruleLogicalId": rule_id, "hubs": list(hubs)}
+
+
+def rules_doc(*rows: object) -> Doc:
+    return Doc.model_validate({"rules": list(rows)})
+
+
+def changed(text: str, read: Doc, edited: Doc, *, removed: bool = False) -> str:
+    return str(named_change_path(Path.parse(text), read, edited, removed=removed))
+
+
+def test_a_change_inside_a_renamed_item_is_shown_under_its_new_name() -> None:
+    read = rules_doc(rule_row("Web", "r1", A))
+    edited = rules_doc(rule_row("Web2", "r1", A))
+    assert changed("rules[Web].hubs[h1].logicalId", read, edited) == (
+        "rules[Web2].hubs[Hub-A].logical_id"
+    )
+    # ``named_path`` alone finds no rule ``Web`` in the data as edited.
+    assert shown("rules[Web].hubs[h1].logicalId", edited) == (
+        "rules[Web].hubs[h1].logical_id"
+    )
+
+
+def test_items_that_swap_names_are_paired_by_their_alt_key() -> None:
+    read = rules_doc(rule_row("One", "r1"), rule_row("Two", "r2"))
+    edited = rules_doc(rule_row("Two", "r1"), rule_row("One", "r2"))
+    assert changed("rules[One].name", read, edited) == "rules[Two].name"
+    assert changed("rules[Two].name", read, edited) == "rules[One].name"
+
+
+def test_items_without_an_alt_key_are_paired_by_their_key() -> None:
+    read = rules_doc(rule_row("Web", None, A))
+    edited = rules_doc(rule_row("Other", None), rule_row("Web", None, A))
+    assert changed("rules[#0].hubs[h1].name", read, edited) == (
+        "rules[Web].hubs[Hub-A].name"
+    )
+
+
+def test_a_removed_item_is_shown_as_read_below_what_is_shown_as_edited() -> None:
+    read = rules_doc(rule_row("Web", "r1", A, B))
+    edited = rules_doc(rule_row("Web2", "r1", B))
+    assert changed("rules[Web].hubs[h1]", read, edited, removed=True) == (
+        "rules[Web2].hubs[Hub-A]"
+    )
+    assert changed("rules[Web].hubs[h1].logicalId", read, edited, removed=True) == (
+        "rules[Web2].hubs[Hub-A].logical_id"
+    )
+    # An item both have is shown as edited, whatever the change does below it.
+    assert changed("rules[Web].hubs[h2].name", read, edited, removed=True) == (
+        "rules[Web2].hubs[h2].name"
+    )
+
+
+def test_an_item_with_no_partner_is_read_in_the_data_the_change_says() -> None:
+    """``X`` as read is removed, and ``Web`` is renamed to ``X``."""
+    read = rules_doc(
+        rule_row("Web", "r1", {"logicalId": "h1", "name": "New"}),
+        rule_row("X", "r2", {"logicalId": "h1", "name": "Old"}),
+    )
+    edited = rules_doc(rule_row("X", "r1", {"logicalId": "h1", "name": "New"}))
+    assert changed("rules[X].hubs[h1]", read, edited, removed=True) == (
+        "rules[X].hubs[Old]"
+    )
+    assert changed("rules[X].hubs[h1]", read, edited) == "rules[X].hubs[New]"
+    assert changed("rules[Web].hubs[h1]", read, edited) == "rules[X].hubs[New]"
+
+
+def test_an_added_item_is_found_in_the_data_as_edited() -> None:
+    read = rules_doc(rule_row("Web", "r1"))
+    edited = rules_doc(rule_row("Web", "r1", A))
+    assert changed("rules[Web].hubs[h1]", read, edited) == "rules[Web].hubs[Hub-A]"
+
+
+def test_a_part_neither_document_has_is_kept_and_the_fields_below_are_named() -> None:
+    read = rules_doc(rule_row("Web", "r1"))
+    for removed in (False, True):
+        assert changed("rules[Nope].ruleLogicalId", read, read, removed=removed) == (
+            "rules[Nope].rule_logical_id"
+        )
+        assert changed("nope.ruleLogicalId", read, read, removed=removed) == (
+            "nope.ruleLogicalId"
+        )
+
+
+def test_an_item_of_a_list_without_a_key_has_no_partner() -> None:
+    read = Doc.model_validate({"plain": [A, B]})
+    edited = Doc.model_validate({"plain": [B]})
+    assert changed("plain[#1].logicalId", read, edited, removed=True) == (
+        "plain[#1].logical_id"
+    )
+    assert changed("plain[#0].logicalId", read, edited) == "plain[#0].logical_id"
+
+
+def test_an_entry_of_a_map_is_its_key_in_both_documents() -> None:
+    read = shelf()
+    edited = Shelf.model_validate({"hubs": {"top": A}})
+    path = Path.parse('hubs."low:1".logicalId')
+    assert named_change_path(path, read, edited, removed=True) == (
+        'hubs."low:1".logical_id'
+    )
+    assert named_change_path(Path.parse("hubs.top.logicalId"), read, edited) == (
+        "hubs.top.logical_id"
+    )
+
+
+class Mac(VcoModel):
+    mac_address: str
+    note: str = ""
+
+
+class Macs(VcoModel):
+    macs: Annotated[list[Mac], KeyField("mac_address", fold_case=True)] = Field(
+        default_factory=list
+    )
+
+
+def test_keys_that_differ_by_letter_case_are_one_where_the_list_folds_case() -> None:
+    read = Macs.model_validate({"macs": [{"macAddress": "AA:BB"}]})
+    edited = Macs.model_validate({"macs": [{"macAddress": "aa:bb"}]})
+    path = Path(("macs", Key("AA:BB"), "note"))
+    assert named_change_path(path, read, edited, removed=True) == 'macs["aa:bb"].note'
 
 
 # ---------------------------------------------------------------------------

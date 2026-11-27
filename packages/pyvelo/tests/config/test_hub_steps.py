@@ -359,13 +359,13 @@ async def test_render_shows_the_steps_before_the_device_settings() -> None:
     lines = state.plan().render().splitlines()
 
     assert lines[1:6] == [
-        "QOS: none",
+        "business_policy: none",
         "firewall: none",
         "steps:",
         "  disable hub for Hub-B on segment Global Segment",
         "  enable hub for Hub-A on segment Global Segment",
     ]
-    assert lines[6].startswith(f"{DS}: update")
+    assert lines[6].startswith("device_settings: update")
 
 
 async def test_a_plan_that_only_adds_hubs_lists_the_device_settings_first() -> None:

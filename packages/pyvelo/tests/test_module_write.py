@@ -546,7 +546,7 @@ def test_render_of_a_move_is_one_short_line_beside_the_edit() -> None:
     rules[1].logging_enabled = True
     assert plan_module(mod, level=EDGE).render().splitlines() == [
         "firewall: update",
-        f"  + {OUTBOUND}[a].loggingEnabled: true",
+        f"  + {OUTBOUND}[a].logging_enabled: true",
         f"  ~ {OUTBOUND}: order: c first",
     ]
 
@@ -1542,7 +1542,7 @@ def test_a_patch_inside_an_inherited_section_turns_its_override_on_and_the_plan_
         ("segments", Key("Global Segment"), "bgp")
     ]
     lines = plan.render().splitlines()
-    assert lines[0] == "deviceSettings: update"
+    assert lines[0] == "device_settings: update"
     assert lines[1] == f"  ~ {BGP}.override: false -> true"
     assert lines[2].startswith(f'  + {BGP}.neighbors["10.0.0.2"] (first): ')
     assert lines[3:] == [
@@ -1586,7 +1586,7 @@ def test_the_flag_of_a_list_item_is_listed_at_the_item() -> None:
     assert [str(p) for p in plan.overrides_turned_on] == ["lan.networks[1]"]
     assert (
         plan.render().splitlines()[-1]
-        == f"  override turned on: lan.networks[1] {OVERRIDE_NOTE}"
+        == f"  override turned on: lan.networks[n] {OVERRIDE_NOTE}"
     )
 
 
@@ -1753,7 +1753,7 @@ def test_a_plan_with_nothing_to_write_has_no_refs() -> None:
     plan = plan_module(module)
     assert (plan.operation, plan.refs, plan.ref_changes) == ("none", None, ())
     assert plan.data == module.raw_data
-    assert plan.render() == "deviceSettings: none"
+    assert plan.render() == "device_settings: none"
     unread = plan_module(primary_provider_module(refs_loaded=False))
     assert (unread.operation, unread.refs) == ("none", None)
 
@@ -1833,14 +1833,14 @@ def test_render_lists_ref_rows_and_warnings() -> None:
     plan = plan_module(module, current)
     lines = plan.render().splitlines()
     assert lines[:2] == [
-        "deviceSettings: update",
+        "device_settings: update",
         f"  - refs {PRIMARY} (Global Segment): {DNS_A}",
     ]
     (warning,) = plan.warnings
     assert warning.code == "ref_without_owner"
     assert lines[2:] == [f"  warning: {warning.message}"]
     # A module nobody edited still reports what disagrees in it.
-    assert plan_module(module).render().splitlines()[0] == "deviceSettings: none"
+    assert plan_module(module).render().splitlines()[0] == "device_settings: none"
     assert f"  warning: {warning.message}" in plan_module(module).render()
 
 
@@ -1850,7 +1850,7 @@ async def test_render_lists_an_added_row_with_its_value() -> None:
     set_primary_provider(current, uuid.UUID(DNS_A))
     plan = plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
     assert plan.render().splitlines() == [
-        "deviceSettings: update",
+        "device_settings: update",
         f"  + refs {PRIMARY} (Global Segment): {DNS_A}",
     ]
 

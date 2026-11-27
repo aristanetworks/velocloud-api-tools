@@ -215,7 +215,7 @@ async def test_the_plan_lists_the_device_settings_last() -> None:
     assert lines.index("steps:") > lines.index("firewall: none")
     assert lines[lines.index("steps:") + 1 :][:2] == [
         "  disable hub for Hub-A on segment Guest",
-        "deviceSettings: update",
+        "device_settings: update",
     ]
 
 

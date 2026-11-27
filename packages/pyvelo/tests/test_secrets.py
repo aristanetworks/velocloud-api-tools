@@ -555,7 +555,7 @@ def test_a_plan_shows_no_secret_and_keeps_it_on_the_change() -> None:
     text = plan.render()
     assert OLD not in text
     assert NEW not in text
-    assert f'{NEIGHBOR}.md5Password: "***" -> "***"' in text
+    assert f'{NEIGHBOR}.md5_password: "***" -> "***"' in text
     assert plan.model is DeviceSettingsData
 
 
@@ -566,7 +566,7 @@ def test_a_plan_made_from_a_dict_hides_secrets_too() -> None:
     text = plan.render()
     assert OLD not in text
     assert NEW not in text
-    assert 'snmp.snmpv2c.community: "***" -> "***"' in text
+    assert 'snmp.v2c.community: "***" -> "***"' in text
 
 
 def test_the_repr_of_a_plan_and_of_a_write_hold_no_data() -> None:
@@ -746,6 +746,6 @@ def test_a_wan_network_s_isp_key_is_hidden_in_a_plan() -> None:
     text = plan.render()
     assert OLD not in text
     assert NEW not in text
-    assert f'networks[{NETWORK_ID},IPv4].ispKey: "***" -> "***"' in text
+    assert 'networks[LTE].isp_key: "***" -> "***"' in text
     path = Path(("networks", Key(f"{NETWORK_ID},IPv4"), "ispKey"))
     assert hide_secrets(WanData, path, OLD) == "***"

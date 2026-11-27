@@ -142,7 +142,8 @@ class ConfigPlan:
     render() is the text to show before a save. Its first line names what is
     written: "edge 101, enterprise 1, configuration 10" or
     'profile "Branch", enterprise 1, configuration 20' (an ID that is not known
-    is left out). Then, for each module of the target, its name and what the
+    is left out). Then, for each module of the target, its python name
+    (``business_policy`` for the module the VCO calls ``QOS``) and what the
     save does with it (none, update or insert), followed by a line for each
     change:
 
@@ -184,12 +185,12 @@ class ConfigPlan:
     before the device settings block, as a ``steps:`` line and a line for
     each, in the order they are made:
 
-        QOS: none
+        business_policy: none
         firewall: none
         steps:
           disable backhaul for Hub-B on segment Global Segment
           enable hub for Hub-A on segment Global Segment
-        deviceSettings: update
+        device_settings: update
 
     ``modules`` is in the write order. The device settings are written first,
     and the role steps right before them; in a save that removes a hub from a
@@ -197,9 +198,14 @@ class ConfigPlan:
     other modules, so that a rule stops using a hub before the hub loses its
     role. The other modules are in the order the configuration lists them.
 
-    Paths are in the names the VCO uses. A value is JSON, cut to 80 characters;
-    the two values of a "~" line are cut where they first differ. A secret
-    shows as ``"***"``.
+    A path names a field by its python attribute and an item by its name
+    (``segments[Guest].rules[Web].match.destination_port_low``): in the data as
+    edited, so a renamed rule is under its new name, and an item the save
+    removes in the data as read. It is a path ``apply`` takes as ``path``. A
+    value is JSON, cut to 80 characters, an object with its keys by attribute
+    name; the two values of a "~" line are cut where they first differ. A
+    secret shows as ``"***"``. What the plans hold (``ModulePlan.name``,
+    ``changes``) stays in the names the VCO uses.
 
     Attributes:
         modules: The plan of each module of the target.

@@ -71,8 +71,10 @@ firewall: update
   + firewall_logging_enabled: true
 ```
 
-Its first line names what would be written to. A module the save would create
-shows as `firewall: insert`; `preview.modules_inserted` and
+Its first line names what would be written to. Each module is headed by its
+Python name (`business_policy` for the module the VCO calls `QOS`), and a line
+names a field by its Python attribute and an item by its name. A module the
+save would create shows as `firewall: insert`; `preview.modules_inserted` and
 `preview.modules_updated` hold the names. "What a save writes" explains the
 lines.
 
@@ -520,7 +522,7 @@ patch; `state.profile` holds the profile's values. The plan shows the flag as
 a change and names the section in a line of its own:
 
 ```text
-deviceSettings: update
+device_settings: update
   ~ segments["Global Segment"].bgp.override: false -> true
   + segments["Global Segment"].bgp.neighbors["10.0.0.2"] (first): {...}
   override turned on: segments["Global Segment"].bgp (the edge's own values apply there from now on, and the profile's no longer do)
@@ -617,7 +619,7 @@ nested under `P`:
   `{"_op": "delete"}`.
 
 So a path read off a plan line, such as
-`~ segments["Global Segment"].outbound[allow-web].match.dport_high: 443 -> 8443`,
+`~ segments["Global Segment"].outbound[allow-web].match.destination_port_high: 443 -> 8443`,
 names the same place when it is given back:
 
 ```python
@@ -625,7 +627,7 @@ await pipeline.apply(
     state,
     module="firewall",
     path='segments["Global Segment"].outbound[allow-web].match',
-    patch={"dport_high": 8080},
+    patch={"destination_port_high": 8080},
 )
 # is
 await pipeline.apply(
@@ -634,7 +636,7 @@ await pipeline.apply(
     patch={
         "segments": {
             "Global Segment": {
-                "outbound": {"allow-web": {"match": {"dport_high": 8080}}}
+                "outbound": {"allow-web": {"match": {"destination_port_high": 8080}}}
             }
         }
     },
@@ -756,9 +758,9 @@ edge module lacks:
 ```text
 edge 101, enterprise 1, configuration 10
 firewall: update
-  ~ segments["Global Segment"].outbound[allow-web].match.dport_high: 443 -> 8443
+  ~ segments["Global Segment"].outbound[allow-web].match.destination_port_high: 443 -> 8443
   - segments["Global Segment"].outbound[old-rule]
-  + segments["Global Segment"].outbound[block-ssh] (after guest-wifi): {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…
+  + segments["Global Segment"].outbound[block-ssh] (after guest-wifi): {"action": {"allow_or_deny": "deny"}, "comments": null, "logging_enabled": false…
   ~ segments["Global Segment"].outbound: order: guest-wifi first
   ~ firewall_enabled: false -> true
   reconciled segments: Guest
@@ -784,6 +786,24 @@ firewall: update
   count. A value is shown as JSON, cut to 80 characters, and the two values of
   a `~` line are cut where they first differ. `SaveResult.plan` is the same
   plan, and `dry_run=True` reports it without writing.
+- The plan reads in the names you write a patch in. A module is headed by its
+  Python name (`business_policy`, `device_settings`). A line's path is written
+  as "Paths" describes: a field by its Python attribute, an item by its name
+  where it has one that is its alone, else by its key, else by its position.
+  An item is named in the data as edited, so a change inside a rule you
+  renamed is listed under the rule's new name, and the path is one `apply`
+  takes as `path`. An item the save removes is named as it was read, below
+  the parts above it as they are now. In a list whose key is the name and
+  that has no other key (a LAN interface), a renamed item is a `-` line under
+  the old name and a `+` line under the new one. An object after `+` has its
+  keys by attribute name; a key the model does not declare stays as stored.
+  The plan's own data is in the names the VCO uses: `ModulePlan.name` is
+  `QOS`, and the paths of `ModulePlan.changes` have the VCO's keys and each
+  item's key as read. `ModulePlan.named(path)` shows one of those paths as
+  `render()` does (with `removed=True` for a path the change removes), from
+  the copy of the data the plan took when it was made (`ModulePlan.planned`),
+  so a plan you keep while you edit further still names each item as it was
+  then.
 - The plan lists the modules in the order a save writes them. The device
   settings are written first, and the role steps right before them; in a save
   that removes a hub from a list (a plan with a `disable` step) they are written
@@ -1314,15 +1334,15 @@ edit needs, then writes the module.
 
   ```text
   profile "Branch profile", configuration 100
-  QOS: none
+  business_policy: none
   firewall: none
   steps:
     disable hub for Hub-A on segment Global Segment
     enable hub for Hub-B on segment Global Segment
     enable backhaul for Hub-B on segment Global Segment
-  deviceSettings: update
-    - segments["Global Segment"].vpn.edgeToEdgeHub.vpnHubs[a1a1a1a1-...]
-    + segments["Global Segment"].vpn.edgeToEdgeHub.vpnHubs[b2b2b2b2-...] (first): {...
+  device_settings: update
+    - segments["Global Segment"].vpn.hub_edges.vpn_hubs[Hub-A]
+    + segments["Global Segment"].vpn.hub_edges.vpn_hubs[Hub-B] (first): {...
   ```
 
   A plan with steps is for a profile; an edge has none. An added hub is looked

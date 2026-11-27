@@ -5,9 +5,10 @@ by its key or its position. What it prints names a field by its python
 attribute and an item by the text a reader knows it by, in the one form
 ``Path`` writes: ``segments[Guest].rules[Web].rule_logical_id``.
 
-``named_path`` converts a path, ``named_error`` the path of a ``PatchError``,
-``named_value`` the keys of a JSON value found at one, and ``item_part`` gives
-the part that names one item of a list.
+``named_path`` converts a path, ``named_change_path`` the path of a change
+between the data as read and as edited, ``named_error`` the path of a
+``PatchError``, ``named_value`` the keys of a JSON value found at one, and
+``item_part`` gives the part that names one item of a list.
 """
 
 import functools
@@ -40,12 +41,15 @@ from .patch import PatchError, patch_key, selector_of
 from .rebase import (
     ItemPart,
     Key,
+    KeyForm,
     KeyValue,
     Path,
     PathPart,
     item_key,
+    key_form,
     key_text,
     node_field,
+    pair_unique,
 )
 
 
@@ -461,6 +465,137 @@ def named_path(
         shown, place = _step(place, part, resolvers)
         parts.append(shown)
     return Path(parts)
+
+
+def named_change_path(
+    path: Path,
+    read: VcoModel,
+    edited: VcoModel,
+    *,
+    removed: bool = False,
+    resolvers: IdentityResolver | None = None,
+) -> Path:
+    """The path of a change from *read* to *edited*, as pyvelo shows it.
+
+    A change names an item both documents have by its key in *read*, also
+    where the edit renamed it, and an item only one of them has by its key
+    there (``raw_changes``). Each part is shown as ``named_path`` shows it, in
+    the data that has the place:
+
+    - An item both have is found in *read* and shown as its partner in
+      *edited* is named, so a change inside a renamed rule is shown under the
+      rule's new name, and the path names that rule in the data the caller
+      holds. The partner is the item with the same alt key, else with the
+      same key, each where it is one item's alone on each side: the first two
+      ways a save pairs the items of a keyed list (``pair_items``).
+    - An item with no partner is taken for one the edit added, and is found
+      in *edited*. With *removed* (the change removes what the path names) it
+      is the item the edit removed: it and all below it are shown as *read*
+      has them, below the parts above it as *edited* names them.
+    - An entry of a map is named by its key in both.
+
+    A part neither has is kept as written, and the fields below it are named
+    by their classes. Nothing is raised.
+    """
+    was: _Place = _holding(read, ())
+    now: _Place = _holding(edited, ())
+    parts: list[PathPart] = []
+    gone = False
+    for part in path.parts:
+        held, there = (False, None) if gone else _partner(was, now, part, resolvers)
+        if gone or (removed and held and there is None):
+            gone = True
+            shown, was = _step(was, part, resolvers)
+        else:
+            shown, now = _step(now, part if there is None else there, resolvers)
+            # An item of *read* that is not this one's partner is another item.
+            unpaired = held and there is None
+            was = None if unpaired else _step(was, part, resolvers)[1]
+        parts.append(shown)
+    return Path(parts)
+
+
+def _found(
+    place: _Place, part: PathPart, resolvers: IdentityResolver | None
+) -> int | None:
+    """The position of the one item *part* names in the list or map at *place*.
+
+    None where *place* is no list or map the data has, where *part* names no
+    item of it or several, and where the lookup fails (as ``_item`` has it).
+    """
+    if not isinstance(place, _Items) or place.owner is None:
+        return None
+    try:
+        return _position(place, place.owner, part, resolvers)
+    except (PatchError, ResolverNotLoadedError, LookupError):
+        return None
+
+
+def _partner(
+    was: _Place, now: _Place, part: PathPart, resolvers: IdentityResolver | None
+) -> tuple[bool, PathPart | None]:
+    """Whether *part* names an item at *was*, and the part for its partner at *now*.
+
+    *was* and *now* are one place of the data as read and as edited. The
+    partner of an item of a list is given as its position in the list as
+    edited (``_paired``); that of an entry of a map as *part*, where the map
+    as edited has that key. The part is None where *was* has no such item,
+    and where the item has no partner.
+    """
+    position = _found(was, part, resolvers)
+    if position is None or not isinstance(was, _Items):
+        return False, None
+    if not isinstance(now, _Items) or was.is_map != now.is_map:
+        return True, None
+    if was.is_map:
+        return True, None if _found(now, part, resolvers) is None else part
+    return True, _paired(was, now).get(position)
+
+
+def _paired(was: _Items, now: _Items) -> dict[int, int]:
+    """The items of the keyed list at *was* that have a partner in the one at *now*.
+
+    Each is a position as read with its partner's position as edited. The
+    items are paired by alt key, then those left by key, each for a value one
+    item has alone among those left on each side; keys that differ only by
+    letter case are one where the list folds case. Empty for a list without a
+    key, and where either side has no list.
+    """
+    if was.owner is None or now.owner is None:
+        return {}
+    spec = get_key_spec(type(was.owner).model_fields[was.field])
+    old: object = getattr(was.owner, was.field)
+    new: object = getattr(now.owner, now.field, None)
+    if spec is None or not (is_list(old) and is_list(new)):
+        return {}
+    pairs: dict[int, int] = {}  # position as edited -> position as read
+    old_left, new_left = list(range(len(old))), list(range(len(new)))
+    passes = (((spec.alt,), False),) if spec.alt is not None else ()
+    for paths, fold in (*passes, (spec.paths, spec.fold_case)):
+        pair_unique(
+            [_key_form(item, paths, fold=fold) for item in old],
+            [_key_form(item, paths, fold=fold) for item in new],
+            old_left,
+            new_left,
+            pairs,
+        )
+        paired = set(pairs.values())
+        old_left = [i for i in old_left if i not in paired]
+        new_left = [j for j in new_left if j not in pairs]
+    return {i: j for j, i in pairs.items()}
+
+
+def _key_form(item: object, paths: tuple[str, ...], *, fold: bool) -> KeyForm | None:
+    """The key of the model *item* at *paths* in string form.
+
+    Each part is case-folded with *fold*.
+    """
+    form = key_form(item_key(item, paths))
+    if form is None or not fold:
+        return form
+    if isinstance(form, tuple):
+        return tuple(text.casefold() for text in form)
+    return form.casefold()
 
 
 def named_error(

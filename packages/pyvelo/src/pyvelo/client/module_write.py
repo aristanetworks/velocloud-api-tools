@@ -87,6 +87,7 @@ from pyvelo.client.derived_refs import (
     derive_refs,
     sends_refs_always,
 )
+from pyvelo.client.enums.configuration import python_module_name
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     FixedListError,
@@ -139,8 +140,12 @@ from pyvelo.core.base import (
 )
 from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.layers import Edge, Layered, Profile
+from pyvelo.core.names import named_change_path, named_path, named_value
 from pyvelo.core.owned import UnflaggedInUse, unflagged_in_use_at
 from pyvelo.core.rebase import (
+    ItemMove,
+    ItemPart,
+    ItemPlace,
     Key,
     Path,
     RawChange,
@@ -333,6 +338,15 @@ class ModulePlan:
     ``update_request`` refuses such an update without it. It changes nothing for
     a module with a version, or for an insert.
     """
+    planned: VcoModel | None = dataclass_field(default=None, repr=False, compare=False)
+    """The module's data as planned: a copy, taken when the plan was made.
+
+    ``named`` finds in it the item a path names, so the text of a plan kept
+    while the data is edited further still names each item as it was when the
+    plan was made. None for a plan made from a mapping. Do not change it. A
+    plan made from this one (the hub rows) keeps it; a rebase plans again, and
+    has the rebased data.
+    """
 
     @override
     def __repr__(self) -> str:
@@ -341,8 +355,79 @@ class ModulePlan:
             f"changes={len(self.changes)})"
         )
 
+    def named(self, path: Path, *, removed: bool = False) -> Path:
+        """*path* as pyvelo shows it: fields by attribute, items by what names them.
+
+        *path* is one of this plan's: it names a field by the key the VCO uses
+        and an item by its key as read (``changes``, ``legacy_keys``,
+        ``overrides_turned_on``). An item is shown as the data as planned names
+        it, so a change inside a renamed rule is shown under the rule's new
+        name, and the path names the rule in the data the caller holds. With
+        *removed* (the change removes what *path* names) an item the plan
+        removes, and all below it, is shown as the data as read names it
+        (``named_change_path``).
+
+        A plan that lacks one of the two (it was made from a mapping, or of a
+        module that never carried data) shows the path in the one the state
+        asks for, and by the class of the data where it lacks that: the fields
+        are named, and each item keeps the key it is written with.
+        """
+        read, edited = self.as_read, self.planned
+        if read is not None and edited is not None:
+            return named_change_path(path, read, edited, removed=removed)
+        data = read if removed else edited
+        return named_path(path, self.model if data is None else data)
+
+    def _named_item(self, items: Path, item: ItemPart) -> ItemPart:
+        """*item*, an item of the list at *items* that is there as planned, as shown."""
+        shown_part = self.named(items.child(item)).parts[-1]
+        return item if isinstance(shown_part, str) else shown_part
+
+    def _named_place(self, items: Path, place: ItemPlace) -> ItemPlace:
+        """*place* in the list at *items*, with the item it is after as shown."""
+        if place.after is None:
+            return place
+        return ItemPlace(self._named_item(items, place.after))
+
+    def _change_line(self, change: RawChange) -> str:
+        """The line of ``render`` for *change*.
+
+        The path and the items of a place or a move are shown by ``named``, and
+        an object by ``named_value``. The secrets are found by the path as the
+        change has it, in the VCO's keys.
+        """
+        path = self.named(change.path, removed=change.after is MISSING)
+        if change.moves is not None:
+            moves = [
+                ItemMove(
+                    self._named_item(change.path, move.item),
+                    self._named_place(change.path, move.place),
+                )
+                for move in change.moves
+            ]
+            return f"  ~ {path}: order: {moves_text(moves)}"
+        if change.after is MISSING:
+            return f"  - {path}"
+        after = named_value(change.after, self.model, change.path)
+        if change.before is MISSING:
+            place = ""
+            if change.place is not None:
+                items = Path(change.path.parts[:-1])
+                place = f" ({self._named_place(items, change.place)})"
+            text = shown(after, model=self.model, path=change.path)
+            return f"  + {path}{place}: {text}"
+        before = named_value(change.before, self.model, change.path)
+        old, new = shown_together(before, after, model=self.model, path=change.path)
+        return f"  ~ {path}: {old} -> {new}"
+
     def render(self) -> str:
         """The plan as text: a headline, then a line for each change.
+
+        The headline names the module by its python name (``business_policy``
+        for the module the VCO calls ``QOS``). A path names a field by its
+        attribute and an item by its name (``named``), and is one ``apply``
+        takes as ``path``; an object is written with its keys by attribute
+        name.
 
         ``+ path: value`` is a key or an item that is added; an item added to a
         keyed list has its place after the path, ``(first)`` or ``(after
@@ -365,21 +450,8 @@ class ModulePlan:
         line for entries the plan leaves out (nothing else to write, or the
         repair off).
         """
-        lines = [f"{self.name}: {self.operation}"]
-        for change in self.changes:
-            if change.moves is not None:
-                lines.append(f"  ~ {change.path}: order: {moves_text(change.moves)}")
-            elif change.before is MISSING:
-                place = f" ({change.place})" if change.place is not None else ""
-                after = shown(change.after, model=self.model, path=change.path)
-                lines.append(f"  + {change.path}{place}: {after}")
-            elif change.after is MISSING:
-                lines.append(f"  - {change.path}")
-            else:
-                before, after = shown_together(
-                    change.before, change.after, model=self.model, path=change.path
-                )
-                lines.append(f"  ~ {change.path}: {before} -> {after}")
+        lines = [f"{python_module_name(self.name)}: {self.operation}"]
+        lines.extend(self._change_line(change) for change in self.changes)
         lines.extend(self.ref_lines())
         if self.reconciled_segments:
             label = "missing" if self.operation == "none" else "reconciled"
@@ -392,14 +464,14 @@ class ModulePlan:
                 f"  {label} defaults: {missing.segment}: {', '.join(missing.names)}"
             )
         lines.extend(
-            f"  override turned on: {path} (the edge's own values apply there "
-            "from now on, and the profile's no longer do)"
+            f"  override turned on: {self.named(path)} (the edge's own values "
+            "apply there from now on, and the profile's no longer do)"
             for path in self.overrides_turned_on
         )
         if self.legacy_keys and self.operation == "none":
             lines.append(
                 "  legacy keys (dropped when the module is written): "
-                + ", ".join(self.legacy_keys)
+                + ", ".join(self.named(path, removed=True) for path in self.legacy_keys)
             )
         lines.extend(f"  warning: {warning.message}" for warning in self.warnings)
         return "\n".join(lines)
@@ -1035,6 +1107,15 @@ def _defaults_findings(
     return warnings, repairs, targets
 
 
+def _copy_of(current: object) -> VcoModel | None:
+    """A copy of the data planned that shares nothing with it; None for a mapping.
+
+    The plan keeps it to name items by (``ModulePlan.planned``): the caller
+    goes on editing the data it gave.
+    """
+    return current.model_copy(deep=True) if isinstance(current, VcoModel) else None
+
+
 def _plan_of_unread(
     module: ConfigurationModuleBase,
     current: object,
@@ -1060,6 +1141,7 @@ def _plan_of_unread(
         changes=tuple(raw_changes({}, payload, model_type)),
         reconciled_segments=(),
         model=_document_model(model_type, module),
+        planned=_copy_of(current),
     )
 
 
@@ -1487,6 +1569,7 @@ def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its c
         repair_defaults=repair_defaults,
         missing_defaults=tuple(missing_defaults),
         as_read=planned.baseline,
+        planned=_copy_of(current),
     )
 
 

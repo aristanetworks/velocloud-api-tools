@@ -112,6 +112,16 @@ the class of `module`. When nothing changed it sends nothing and returns
 `module` itself. It is `plan_module` (`pyvelo.client.module_write`) followed by
 `write_module`.
 
+`plan.render()` is the plan as text: the module's Python name (`device_settings`
+for `deviceSettings`), then a line for each change. A line's path names a field
+by its Python attribute and an item by its name, in the data as planned (an
+item the write removes, as it was read), and an added object has its keys by
+attribute name. `plan.named(path)` gives that form for one path of
+`plan.changes`. What the plan holds stays in the VCO's names, because it is
+what is sent and compared: `plan.name`, the paths of `plan.changes` and
+`plan.data`. "What a save writes" in [CONFIGURATION.md](CONFIGURATION.md)
+explains the lines.
+
 The `defaults` rules of a QoS segment are fixed: their entries, keys and order
 stay as read, and only the `action` of a rule can change. `plan_module` compares
 its payload with the module as read, and raises `FixedListError` for a payload
