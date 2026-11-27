@@ -205,6 +205,9 @@ async def test_a_dry_run_after_a_lost_answer_reads_nothing_and_warns() -> None:
     assert [(w.module, w.path, w.code) for w in result.warnings] == [
         ("business_policy", "", "insert_unconfirmed")
     ]
+    assert result.warnings[0].message.startswith(
+        "an earlier insert of the business_policy module may have reached the VCO"
+    )
     assert state.unconfirmed_inserts == {"QOS"}
 
 

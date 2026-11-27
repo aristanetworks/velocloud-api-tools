@@ -318,7 +318,7 @@ async def test_missing_edge_module_is_inserted_from_an_empty_layer() -> None:
 def test_views_and_module_errors() -> None:
     state = make_state()
     assert state.profile.firewall.segments[1].segment.name == "Guest"
-    with pytest.raises(ValueError, match="Module 'deviceSettings' not found"):
+    with pytest.raises(ValueError, match="Module 'device_settings' not found"):
         _ = state.edge.device_settings  # not insertable, not present
     profile_only = ConfigState(
         edge_config=None,

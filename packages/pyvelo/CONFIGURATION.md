@@ -1897,8 +1897,8 @@ insert carries no version, so the state remembers it
 A module of that name found there is taken as the insert's answer and checked
 against the plan like any write, and nothing is inserted again; with none
 there, the save inserts. A `dry_run` does not read: it plans the insert and
-adds a warning with the code `insert_unconfirmed`, whose `module` is the
-module's python name and whose `path` is empty (it is about the whole
+adds a warning with the code `insert_unconfirmed`, whose message and `module`
+name the module by its python name and whose `path` is empty (it is about the whole
 module). To give up the module
 instead, `pipeline.revert(state, module=...)` reads the configuration in the
 same way and deletes the module it finds there when it holds exactly what this
@@ -1961,8 +1961,11 @@ Known limits:
   plane module was edited by assignment cannot be saved or dry-run
   (`TypeError`, before anything is sent) until it is loaded again. Both name
   the module by its python name (`control_plane: a save does not write this
-  module ...`), as every text that names a module does: the refusals of
-  `apply`, `assign_segment`, `revert`, a save and a write.
+  module ...`), as the refusals of `apply`, `assign_segment`, `revert` and of
+  a save before it sends do, and the error for a module a configuration lacks
+  (`Module 'business_policy' not found in configuration`). The low-level
+  `write_module` keeps the VCO's name in its refusal of a plan made for
+  another module (`the plan is for QOS, not firewall`).
 - A profile's segment is assigned with `assign_segment` or an `add`, but not
   removed: an edit that removes a segment the device settings module has
   raises `SegmentSetError` (a patch: `PatchError`), and only an orphan, a QoS

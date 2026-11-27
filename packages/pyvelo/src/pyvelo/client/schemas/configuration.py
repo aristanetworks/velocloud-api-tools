@@ -48,6 +48,7 @@ from pyvelo.client.enums.configuration import (
     ConfigurationModuleType,
     ConfigurationScope,
     ConfigurationType,
+    python_module_name,
 )
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.models.configuration import (
@@ -476,7 +477,7 @@ def _wrong_module(module: object, expected: type) -> TypeError:
     The module is one of a configuration's ``modules``.
     """
     return TypeError(
-        f"the {getattr(module, 'name', '?')} module is a "
+        f"the {python_module_name(str(getattr(module, 'name', '?')))} module is a "
         f"{type(module).__name__}, not a {expected.__name__}"
     )
 
@@ -510,7 +511,9 @@ class ConfigurationBase(VcoModel, Generic[L]):  # noqa: UP046 (one shared constr
         for m in self.modules:
             if m.name == module_name:
                 return m
-        raise ValueError(f"Module '{module_name}' not found in configuration")
+        raise ValueError(
+            f"Module '{python_module_name(module_name)}' not found in configuration"
+        )
 
     @overload
     def get_module(
@@ -601,7 +604,8 @@ def new_edge_module(
     """Build an empty edge-layer module that does not exist on the VCO yet."""
     if name not in EMPTY_EDGE_MODULE_DATA:
         raise ValueError(
-            f"Module {name.value!r} cannot be inserted as an empty edge layer"
+            f"Module {python_module_name(name)!r} cannot be inserted as an empty "
+            "edge layer"
         )
     now = dt.datetime.now(dt.UTC)
     row: dict[str, Any] = {

@@ -1414,9 +1414,10 @@ class ConfigPipeline:
             ValidationWarning(
                 path=Path(()),
                 message=(
-                    "an earlier insert of this module may have reached the "
-                    "VCO; the save reads the configuration first, and takes a "
-                    "module of this name it finds there as the insert's answer"
+                    f"an earlier insert of the {python_module_name(module_plan.name)} "
+                    "module may have reached the VCO; the save reads the "
+                    "configuration first, and takes a module of this name it "
+                    "finds there as the insert's answer"
                 ),
                 code="insert_unconfirmed",
                 module=python_module_name(module_plan.name),

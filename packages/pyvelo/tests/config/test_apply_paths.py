@@ -208,7 +208,7 @@ async def test_a_patch_by_path_with_no_segment_op_is_left_to_the_missing_module(
     path: str,
 ) -> None:
     state = _firewall_only()
-    with pytest.raises(ValueError, match="QOS") as error:
+    with pytest.raises(ValueError, match="business_policy") as error:
         _ = await apply(state, module="business_policy", path=path, patch={})
     assert not isinstance(error.value, PatchError)
 
