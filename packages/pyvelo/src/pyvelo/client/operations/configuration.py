@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Protocol, cast, overload
 
 from pydantic import (
@@ -550,6 +550,221 @@ def check_found_insert[M: ConfigurationModuleBase](
     return check_module_write(module, plan, stored, answer="row")
 
 
+def _require_plan_for(plan: ModulePlan, module: ConfigurationModuleBase) -> str:
+    """The name of *module*, when *plan* is for a module of that name.
+
+    It is the name as ``plan_module`` takes it: the base class declares none.
+    Otherwise raises ``ValueError``.
+    """
+    module_name = str(getattr(module, "name", MISSING))
+    if plan.name != module_name:
+        raise ValueError(f"the plan is for {plan.name}, not {module_name}")
+    return module_name
+
+
+@dataclass(frozen=True)
+class _Sending[M: ConfigurationModuleBase]:
+    """A module write's module and plan, with what it is sent through.
+
+    ``level`` is the config level of the module ``write_module`` was given,
+    kept when a rebase replaces ``module`` and ``plan``.
+    """
+
+    client: _ConfiguringClient
+    module: M
+    plan: ModulePlan
+    enterprise_id: int | None
+    level: ConfigContext | None
+
+
+async def _send_insert[M: ConfigurationModuleBase](
+    sending: _Sending[M], *, if_absent: bool
+) -> tuple[ConfigurationModuleBase, WriteAnswer]:
+    """The insert of a write sent, and the module it stored read back.
+
+    With *if_absent* the module of the plan's name the configuration already
+    holds is the answer, and nothing is sent. Returns the module as stored
+    and what the VCO said of the insert.
+    """
+    client, module, plan = sending.client, sending.module, sending.plan
+    enterprise_id = sending.enterprise_id
+    answer: WriteAnswer = "row"
+    insert = insert_request(module, plan, enterprise_id)
+    found = (
+        await find_named_module(client, module, plan, enterprise_id=enterprise_id)
+        if if_absent
+        else None
+    )
+    if found is not None:
+        return found, answer
+    try:
+        inserted = await client.insert_configuration_module(insert, level=sending.level)
+    except ValidationError as error:
+        raise _unknown_outcome(
+            module,
+            plan,
+            "the VCO's answer to the insert does not parse",
+            answer="row",
+            module_id=module.id_,
+        ) from error
+    if isinstance(inserted, InsertConfigurationModuleResult):
+        answer = "counted"
+        inserted_id = inserted.id_
+    else:
+        # The row says what was inserted; it promises no refs.
+        inserted = _require_this_module(module, plan, inserted, answer=answer)
+        inserted_id = inserted.id_
+    stored = await _read_stored(
+        client,
+        module,
+        plan,
+        enterprise_id,
+        answer=answer,
+        module_id=inserted_id,
+    )
+    return stored, answer
+
+
+async def _version_changed[M: ConfigurationModuleBase](
+    sending: _Sending[M], *, rebase: bool, version_checked: bool
+) -> bool:
+    """Whether the version the VCO holds for an update's module is not the one read.
+
+    It is read (``_read_version``) with *rebase*, or when the plan sends refs
+    and the caller has not checked the version itself; never for a module
+    with no ``version`` or no ``configuration_id``.
+    """
+    module = sending.module
+    return (
+        (rebase or (sending.plan.refs is not None and not version_checked))
+        and bool(module.version)
+        and module.configuration_id is not None
+        and await _read_version(sending.client, module, sending.enterprise_id)
+        != module.version
+    )
+
+
+async def _rebase[M: ConfigurationModuleBase](
+    sending: _Sending[M],
+    *,
+    resolvers: IdentityLookup | None,
+    profile_device_settings: ConfigurationModuleBase | None,
+) -> tuple[M, _Sending[M], tuple[ServerChange, ...]]:
+    """An update rebased onto its module as the VCO holds it now.
+
+    The module is read in full (``_read_held``) and the plan rebased onto it
+    (``rebase_onto``). Returns the module read, the write with the rebased
+    module and plan, and what changed under the caller.
+    """
+    module, plan = sending.module, sending.plan
+    fresh = _require_this_module(
+        module,
+        plan,
+        await _read_held(sending.client, module, plan, sending.enterprise_id),
+        answer="stale",
+    )
+    rebased, plan, merged = rebase_onto(
+        module,
+        plan,
+        fresh,
+        resolvers=resolvers,
+        profile_device_settings=profile_device_settings,
+    )
+    return fresh, replace(sending, module=rebased, plan=plan), merged
+
+
+async def _send_update[M: ConfigurationModuleBase](
+    sending: _Sending[M],
+) -> tuple[ConfigurationModuleBase, WriteAnswer, ConfigConflictError | None]:
+    """The update of a write sent, and the module it stored.
+
+    The module is read back when the VCO answers with no row: it refused the
+    version, or it answered with a row count. Returns the module as stored,
+    what the VCO said of the update, and its refusal, when it refused.
+    """
+    client, module, plan = sending.client, sending.module, sending.plan
+    enterprise_id = sending.enterprise_id
+    refusal: ConfigConflictError | None = None
+    answer: WriteAnswer = "row"
+    stored: ConfigurationModuleBase | None
+    update = update_request(
+        module,
+        plan,
+        enterprise_id,
+        return_data=has_checkable_change(module, plan),
+    )
+    try:
+        stored = await client.update_configuration_module(update, level=sending.level)
+    except ConfigConflictError as error:
+        # The VCO stated the refusal (its precondition error, or no rows
+        # modified) and returned no row. Read in this block, so that an
+        # error of the read has the refusal as its context.
+        refusal = error
+        answer = "refused"
+        stored = await _read_stored(client, module, plan, enterprise_id, answer=answer)
+    except ValidationError as error:
+        raise _unknown_outcome(
+            module,
+            plan,
+            "the VCO's answer to the update does not parse",
+            answer="row",
+            module_id=module.id_,
+        ) from error
+    if stored is None:
+        answer = "counted"
+        stored = await _read_stored(client, module, plan, enterprise_id, answer=answer)
+    return stored, answer, refusal
+
+
+async def _read_back_version[M: ConfigurationModuleBase](
+    sending: _Sending[M], stored: ConfigurationModuleBase, *, answer: WriteAnswer
+) -> M:
+    """*stored*, checked as the module written, with the version it is held at.
+
+    An update answered with a row that has no version is read again from its
+    configuration, so that the next write of the module is conditional.
+    """
+    module, plan = sending.module, sending.plan
+    checked = _require_this_module(module, plan, stored, answer=answer)
+    if plan.operation == "update" and answer == "row" and not checked.version:
+        # The next write of the module is conditional on this version.
+        # (An insert is already read back.)
+        reread = await _read_stored(
+            sending.client,
+            module,
+            plan,
+            sending.enterprise_id,
+            answer=answer,
+            module_id=checked.id_,
+        )
+        checked = _require_this_module(module, plan, reread, answer=answer)
+    return checked
+
+
+def _check_stored[M: ConfigurationModuleBase](
+    sending: _Sending[M],
+    stored: M,
+    *,
+    answer: WriteAnswer,
+    merged: tuple[ServerChange, ...],
+    refusal: ConfigConflictError | None,
+) -> ModuleWrite[M]:
+    """The write, when *stored* holds every change of the plan.
+
+    The changes *merged* by a rebase go first in its ``server_changes``. A
+    ``ModuleWriteError`` of the check is raised from *refusal*, when the VCO
+    refused the write.
+    """
+    try:
+        write = check_module_write(sending.module, sending.plan, stored, answer=answer)
+        return replace(write, server_changes=(*merged, *write.server_changes))
+    except ModuleWriteError as outcome:
+        if refusal is None:
+            raise
+        # The refusal, and the VCO's own error under it, stay in the chain.
+        raise outcome from refusal
+
+
 class ConfigurationMixin(Protocol):
     """Operations for configuration/ API endpoints."""
 
@@ -845,7 +1060,7 @@ class ConfigurationMixin(Protocol):
             return None
         return await _check_stale(self, module, plan, enterprise_id)
 
-    async def write_module[M: ConfigurationModuleBase](  # noqa: C901, PLR0912, PLR0913, PLR0915 (existing: split it when it next changes)
+    async def write_module[M: ConfigurationModuleBase](  # noqa: PLR0913 (a public operation: each argument is an option of the write)
         self: _ConfiguringClient,
         module: M,
         plan: ModulePlan,
@@ -968,133 +1183,38 @@ class ConfigurationMixin(Protocol):
         the read-back fails). Raises ``ValueError``, before sending, when *plan*
         is for a module of another name.
         """
-        # The name as plan_module takes it: the base class declares none.
-        module_name = str(getattr(module, "name", MISSING))
-        if plan.name != module_name:
-            raise ValueError(f"the plan is for {plan.name}, not {module_name}")
+        _require_plan_for(plan, module)
         if plan.operation == "none":
             return ModuleWrite(plan.name, "none", module, plan)
-        level = module.config_context
+        sending = _Sending(self, module, plan, enterprise_id, module.config_context)
         merged: tuple[ServerChange, ...] = ()
         refusal: ConfigConflictError | None = None
-        answer: WriteAnswer = "row"
-        stored: ConfigurationModuleBase | None
         if plan.operation == "insert":
-            insert = insert_request(module, plan, enterprise_id)
-            found = (
-                await find_named_module(self, module, plan, enterprise_id=enterprise_id)
-                if if_absent
-                else None
-            )
-            if found is not None:
-                stored = found
-            else:
-                try:
-                    inserted = await self.insert_configuration_module(
-                        insert, level=level
-                    )
-                except ValidationError as error:
-                    raise _unknown_outcome(
-                        module,
-                        plan,
-                        "the VCO's answer to the insert does not parse",
-                        answer="row",
-                        module_id=module.id_,
-                    ) from error
-                if isinstance(inserted, InsertConfigurationModuleResult):
-                    answer = "counted"
-                    inserted_id = inserted.id_
-                else:
-                    # The row says what was inserted; it promises no refs.
-                    inserted = _require_this_module(
-                        module, plan, inserted, answer=answer
-                    )
-                    inserted_id = inserted.id_
-                stored = await _read_stored(
-                    self,
-                    module,
-                    plan,
-                    enterprise_id,
-                    answer=answer,
-                    module_id=inserted_id,
-                )
+            stored, answer = await _send_insert(sending, if_absent=if_absent)
         else:
-            if (
-                (rebase or (plan.refs is not None and not version_checked))
-                and module.version
-                and module.configuration_id is not None
-                and await _read_version(self, module, enterprise_id) != module.version
+            if await _version_changed(
+                sending, rebase=rebase, version_checked=version_checked
             ):
                 if not rebase:
                     return await _check_stale(self, module, plan, enterprise_id)
-                fresh = _require_this_module(
-                    module,
-                    plan,
-                    await _read_held(self, module, plan, enterprise_id),
-                    answer="stale",
-                )
-                rebased, plan, merged = rebase_onto(
-                    module,
-                    plan,
-                    fresh,
+                fresh, sending, merged = await _rebase(
+                    sending,
                     resolvers=resolvers,
                     profile_device_settings=profile_device_settings,
                 )
-                if plan.operation == "none":
+                if sending.plan.operation == "none":
                     return ModuleWrite(
-                        plan.name,
+                        sending.plan.name,
                         "none",
                         fresh,
-                        plan,
+                        sending.plan,
                         server_changes=merged,
                     )
-                module = rebased
-            update = update_request(
-                module,
-                plan,
-                enterprise_id,
-                return_data=has_checkable_change(module, plan),
-            )
-            try:
-                stored = await self.update_configuration_module(update, level=level)
-            except ConfigConflictError as error:
-                # The VCO stated the refusal (its precondition error, or no rows
-                # modified) and returned no row. Read in this block, so that an
-                # error of the read has the refusal as its context.
-                refusal = error
-                answer = "refused"
-                stored = await _read_stored(
-                    self, module, plan, enterprise_id, answer=answer
-                )
-            except ValidationError as error:
-                raise _unknown_outcome(
-                    module,
-                    plan,
-                    "the VCO's answer to the update does not parse",
-                    answer="row",
-                    module_id=module.id_,
-                ) from error
-            if stored is None:
-                answer = "counted"
-                stored = await _read_stored(
-                    self, module, plan, enterprise_id, answer=answer
-                )
-        stored = _require_this_module(module, plan, stored, answer=answer)
-        if plan.operation == "update" and answer == "row" and not stored.version:
-            # The next write of the module is conditional on this version.
-            # (An insert is already read back.)
-            stored = await _read_stored(
-                self, module, plan, enterprise_id, answer=answer, module_id=stored.id_
-            )
-            stored = _require_this_module(module, plan, stored, answer=answer)
-        try:
-            write = check_module_write(module, plan, stored, answer=answer)
-            return replace(write, server_changes=(*merged, *write.server_changes))
-        except ModuleWriteError as outcome:
-            if refusal is None:
-                raise
-            # The refusal, and the VCO's own error under it, stay in the chain.
-            raise outcome from refusal
+            stored, answer, refusal = await _send_update(sending)
+        stored = await _read_back_version(sending, stored, answer=answer)
+        return _check_stored(
+            sending, stored, answer=answer, merged=merged, refusal=refusal
+        )
 
     @domain_tag(CONFIG)
     async def update_module[M: ConfigurationModuleBase](  # noqa: PLR0913 (existing: split it when it next changes)
