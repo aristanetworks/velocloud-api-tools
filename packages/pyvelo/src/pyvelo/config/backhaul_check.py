@@ -12,7 +12,6 @@ for a hub.
 """
 
 import dataclasses
-import functools
 from collections.abc import Mapping, Sequence
 from typing import Final, TypeGuard
 
@@ -32,7 +31,7 @@ from pyvelo.core.base import field_models, is_list
 from pyvelo.core.fields import get_fixed_list
 from pyvelo.core.rebase import Path
 from pyvelo.core.references import Reference, patch_keys, segment_name
-from pyvelo.core.walk import walk_fields
+from pyvelo.core.walk import can_hold, walk_fields
 
 ROUTE_ACTIONS: Final = (
     "edge_to_edge_route_action",
@@ -61,26 +60,6 @@ def names_no_hub(route_action: RouteAction) -> bool:
     return edges is MISSING or not edges
 
 
-@functools.cache
-def _can_hold(model_cls: type[VcoModel], target: type[VcoModel]) -> bool:
-    """Whether a model of *model_cls* is a *target* or can hold one, at any depth.
-
-    Computed once per pair of classes.
-    """
-    seen: set[type[VcoModel]] = set()
-    pending = [model_cls]
-    while pending:
-        current = pending.pop()
-        if current is target:
-            return True
-        if current in seen:
-            continue
-        seen.add(current)
-        for field_info in current.model_fields.values():
-            pending.extend(field_models(field_info))
-    return False
-
-
 def _deletable(segment: VcoModel | None, action_path: Path) -> bool:
     """Whether a patch can delete the rule whose ``action`` is at *action_path*.
 
@@ -104,7 +83,7 @@ def hubless_backhauls(module: str, data: VcoModel) -> tuple[HublessBackhaul, ...
     found: list[HublessBackhaul] = []
     for site in walk_fields(
         data,
-        holds=lambda model_cls: _can_hold(model_cls, QosRule),
+        holds=lambda model_cls: can_hold(model_cls, QosRule),
         fields=lambda field_info: QosRuleAction in field_models(field_info),
     ):
         rule = site.model
@@ -149,7 +128,7 @@ def left_without_hub(
             continue
         for site in walk_fields(
             data,
-            holds=lambda model_cls: _can_hold(model_cls, RouteAction),
+            holds=lambda model_cls: can_hold(model_cls, RouteAction),
             fields=lambda field_info: RouteConfig in field_models(field_info),
         ):
             if not is_hub_backhaul(site.model):

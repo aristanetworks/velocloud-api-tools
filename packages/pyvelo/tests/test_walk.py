@@ -7,6 +7,7 @@ from typing import Annotated
 
 import pytest
 from pydantic import Field
+from pydantic.fields import FieldInfo
 from pyvelo.core import (
     FieldSite,
     Key,
@@ -14,9 +15,13 @@ from pyvelo.core import (
     Path,
     Positional,
     VcoModel,
+    can_hold,
+    can_hold_field,
+    models_below,
     walk_fields,
 )
 from pyvelo.core import walk as walk_module
+from pyvelo.core.fields import get_key_spec
 from pyvelo.core.rebase import item_key
 
 
@@ -236,3 +241,59 @@ def test_the_field_filter_is_asked_once_for_each_field_of_a_class() -> None:
 
     # Root's three fields and Leaf's one, however many leaves there are.
     assert len(asked) == len(Root.model_fields) + len(Leaf.model_fields)
+
+
+class Tree(VcoModel):
+    """A class that can hold itself."""
+
+    name: str = ""
+    children: list["Tree"] = Field(default_factory=list)
+
+
+class Choice(VcoModel):
+    """A field of each shape ``models_below`` follows."""
+
+    either: Leaf | Meta | None = None
+    noted: Annotated[Entry, Positional()] | None = None
+    pair: tuple[Tree, int] | None = None
+
+
+def test_models_below_starts_with_the_class_and_names_each_class_once() -> None:
+    below = models_below(Root)
+
+    assert below[0] is Root
+    assert set(below) == {Root, Leaf, Segment, Meta, Entry, Big}
+    assert len(below) == len(set(below))
+
+
+def test_models_below_follows_unions_annotated_and_tuples() -> None:
+    assert set(models_below(Choice)) == {Choice, Leaf, Meta, Entry, Tree}
+
+
+def test_models_below_of_a_class_that_holds_itself_ends() -> None:
+    assert models_below(Tree) == (Tree,)
+
+
+def test_models_below_of_a_class_that_holds_no_model_is_the_class_alone() -> None:
+    assert models_below(Big) == (Big,)
+
+
+def test_can_hold_is_true_for_the_class_itself_and_for_a_class_below() -> None:
+    assert can_hold(Leaf, Leaf)
+    assert can_hold(Root, Leaf)
+    assert can_hold(Root, Entry)
+
+
+def test_can_hold_is_false_for_a_class_no_field_leads_to() -> None:
+    assert not can_hold(Big, Leaf)
+    assert not can_hold(Leaf, Root)
+
+
+def test_can_hold_field_finds_a_marked_field_below_the_class() -> None:
+    def keyed(field_info: FieldInfo) -> bool:
+        return get_key_spec(field_info) is not None
+
+    assert can_hold_field(Root, keyed)
+    assert can_hold_field(Segment, keyed)
+    assert not can_hold_field(Entry, keyed)
+    assert not can_hold_field(Leaf, keyed)

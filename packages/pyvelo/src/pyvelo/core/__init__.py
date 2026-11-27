@@ -13,7 +13,8 @@ This package is split into these submodules:
   kinds, Default and field_kind
 - effective: Origin and Resolved, a value of the effective view, and effective_view and
   effective_dump, which compute and write the view
-- walk: walk_fields, the walk over the fields of a model and the models below it
+- walk: walk_fields, the walk over the fields of a model and the models below it;
+  models_below, can_hold and can_hold_field, what a model class can hold
 - references: the values that name a member of a set the configuration provides, the
   check of them, and the patch that takes one out of its list
 - secrets: hide_secrets, which shows a value without its secrets
@@ -206,7 +207,7 @@ from .references import (
     union,
 )
 from .secrets import hide_secrets
-from .walk import FieldSite, walk_fields
+from .walk import FieldSite, can_hold, can_hold_field, models_below, walk_fields
 
 __all__ = [
     "Additive",
@@ -344,6 +345,8 @@ __all__ = [
     "at",
     "backhaul_hub_mending",
     "bind_layers",
+    "can_hold",
+    "can_hold_field",
     "check_references",
     "check_time_is_never",
     "delete",
@@ -375,6 +378,7 @@ __all__ = [
     "layer_for",
     "list_kind",
     "missing_or",
+    "models_below",
     "move",
     "nest_patch",
     "position_of",
