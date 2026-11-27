@@ -23,7 +23,7 @@ from pyvelo.client.schemas.configuration import (
     DeviceSettingsConfigurationModule,
     QosConfigurationModule,
 )
-from pyvelo.core import ConfigContext, Edge
+from pyvelo.core import ConfigContext, Edge, field_models, is_secret, shown_value
 from pyvelo.testing import make_module_json
 
 REF_NAME = "deviceSettings:clientConnector:config"
@@ -241,3 +241,20 @@ def test_a_sub_location_row_is_not_a_network_service() -> None:
     row = {**SUB_LOCATION_ROW, "object": "NETWORK_SERVICE"}
     with pytest.raises(ValidationError, match="ZSCALER_SUBLOCATION"):
         _ = DeviceSettingsZscalerSubLocationRef.model_validate(row)
+
+
+def test_the_data_of_every_ref_row_is_hidden_when_shown() -> None:
+    rows = [
+        (name, cls)
+        for name, info in DeviceSettingsRefs.model_fields.items()
+        for cls in field_models(info)
+    ]
+    assert len(rows) >= 25
+    for name, cls in rows:
+        assert is_secret(cls.model_fields["data"]), (name, cls.__name__)
+    refs = {
+        "deviceSettings:segment": [{"configurationId": 1, "data": {"segmentId": 2}}]
+    }
+    assert shown_value(refs, DeviceSettingsRefs) == {
+        "segment": [{"configuration_id": 1, "data": "***"}]
+    }

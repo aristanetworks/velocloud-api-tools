@@ -9,7 +9,7 @@ from typing import Annotated, Any, ClassVar, Literal
 from pydantic import MISSING, ConfigDict
 
 from pyvelo.client.models.configuration.ref import ConfigurationRef
-from pyvelo.core import Alias, VcoModel
+from pyvelo.core import Alias, Secret, VcoModel
 from pyvelo.core.enums import NetworkSegmentType
 
 DeviceSettingsRefName = Literal[
@@ -44,7 +44,7 @@ DeviceSettingsRefName = Literal[
 # Authentication Refs
 class DeviceSettingsAuthenticationRef(ConfigurationRef):
     ref: Literal["deviceSettings:authentication"] | MISSING = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # BackHaul Edge Refs
@@ -52,7 +52,7 @@ class DeviceSettingsBackHaulEdgeRef(ConfigurationRef):
     ref: Literal["deviceSettings:backHaulEdge"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
     type_: Annotated[Literal["edgeHub"] | MISSING, Alias("type")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # Client Connector Refs
@@ -60,7 +60,7 @@ class DeviceSettingsClientConnectorConfigRef(ConfigurationRef):
     ref: Literal["deviceSettings:clientConnector:config"] | MISSING = MISSING
     object_: Annotated[Literal["CLIENT_CONNECTOR"] | MISSING, Alias("object")] = MISSING
     status: str | None | MISSING = MISSING
-    data: dict[str, Any] | None | MISSING = MISSING
+    data: Annotated[dict[str, Any] | None | MISSING, Secret()] = MISSING
 
 
 # Cloud Security Service (CSS) Refs
@@ -68,7 +68,7 @@ class DeviceSettingsCssProviderRef(ConfigurationRef):
     ref: Literal["deviceSettings:css:provider"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
     type_: Annotated[str | MISSING, Alias("type")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsCssSiteRef(ConfigurationRef):
@@ -76,7 +76,7 @@ class DeviceSettingsCssSiteRef(ConfigurationRef):
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
     parent_group_id: int | None | MISSING = MISSING
     type_: Annotated[str | MISSING, Alias("type")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # Data Center Refs
@@ -84,39 +84,39 @@ class DeviceSettingsDataCenterRef(ConfigurationRef):
     ref: Literal["deviceSettings:dataCenter"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
     type_: Annotated[Literal["cloudSecurityService"] | MISSING, Alias("type")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # DNS Refs
 class DeviceSettingsDnsPrimaryProviderRef(ConfigurationRef):
     ref: Literal["deviceSettings:dns:primaryProvider"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsDnsBackupProviderRef(ConfigurationRef):
     ref: Literal["deviceSettings:dns:backupProvider"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsDnsPrivateProvidersRef(ConfigurationRef):
     ref: Literal["deviceSettings:dns:privateProviders"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # Edge Direct NVS Refs
 class DeviceSettingsEdgeDirectNvsProviderRef(ConfigurationRef):
     ref: Literal["deviceSettings:edgeDirectNvs:provider"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsEdgeDirectNvsSiteRef(ConfigurationRef):
     ref: Literal["deviceSettings:edgeDirectNvs:site"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # Hand-Off Gateways Refs
@@ -124,7 +124,7 @@ class DeviceSettingsHandOffGatewaysRef(ConfigurationRef):
     ref: Literal["deviceSettings:handOffGateways:gateways"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
     type_: Annotated[Literal["partnerGateway"] | MISSING, Alias("type")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # Security VNF Refs
@@ -132,13 +132,13 @@ class DeviceSettingsSecurityVnfServiceRef(ConfigurationRef):
     ref: Literal["deviceSettings:securityVnf:service"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
     type_: Annotated[Literal["securityVnfService"] | MISSING, Alias("type")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsSecurityVnfLicenseRef(ConfigurationRef):
     ref: Literal["deviceSettings:securityVnf:license"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # Segment Refs
@@ -146,20 +146,20 @@ class DeviceSettingsSegmentRef(ConfigurationRef):
     ref: Literal["deviceSettings:segment"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SEGMENT"] | MISSING, Alias("object")] = MISSING
     type_: Annotated[NetworkSegmentType | MISSING, Alias("type")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsSegmentNetflowCollectorsRef(ConfigurationRef):
     ref: Literal["deviceSettings:segment:netflowCollectors"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsSegmentNetflowFiltersRef(ConfigurationRef):
     ref: Literal["deviceSettings:segment:netflowFilters"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
     type_: Annotated[Literal["netflowFilter"] | MISSING, Alias("type")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # VNF Refs
@@ -167,7 +167,7 @@ class DeviceSettingsVnfsEdgeRef(ConfigurationRef):
     ref: Literal["deviceSettings:vnfs:edge"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
     type_: Annotated[Literal["securityVnf"] | MISSING, Alias("type")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsVnfsVnfImageRef(ConfigurationRef):
@@ -175,41 +175,41 @@ class DeviceSettingsVnfsVnfImageRef(ConfigurationRef):
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
     type_: Annotated[Literal["vnfImage"] | MISSING, Alias("type")] = MISSING
     status: str | None | MISSING = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # VPN Refs
 class DeviceSettingsVpnDataCenterRef(ConfigurationRef):
     ref: Literal["deviceSettings:vpn:dataCenter"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsVpnEdgeHubRef(ConfigurationRef):
     ref: Literal["deviceSettings:vpn:edgeHub"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
     type_: Annotated[Literal["edgeHub"] | MISSING, Alias("type")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsVpnEdgeHubClusterRef(ConfigurationRef):
     ref: Literal["deviceSettings:vpn:edgeHubCluster"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # Zscaler Refs
 class DeviceSettingsZscalerIaasSubscriptionRef(ConfigurationRef):
     ref: Literal["deviceSettings:zscaler:iaasSubscription"] | MISSING = MISSING
     object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsZscalerLocationRef(ConfigurationRef):
     ref: Literal["deviceSettings:zscaler:location"] | MISSING = MISSING
     object_: Annotated[Literal["ZSCALER_LOCATION"] | MISSING, Alias("object")] = MISSING
     type_: Annotated[Literal["zscaler"] | MISSING, Alias("type")] = MISSING
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 class DeviceSettingsZscalerSubLocationRef(ConfigurationRef):
@@ -217,7 +217,7 @@ class DeviceSettingsZscalerSubLocationRef(ConfigurationRef):
     object_: Annotated[Literal["ZSCALER_SUBLOCATION"] | MISSING, Alias("object")] = (
         MISSING
     )
-    data: dict[str, Any] | MISSING = MISSING
+    data: Annotated[dict[str, Any] | MISSING, Secret()] = MISSING
 
 
 # Container class for all DeviceSettings refs

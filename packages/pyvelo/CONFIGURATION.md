@@ -2145,7 +2145,8 @@ Known limits:
 - Three kinds of text leave secrets out. `render()` of a plan and the message
   of a write error (`str(error)`) show `"***"` in place of the value of every
   field the models mark as a secret (`Secret`, in `pyvelo.core`: passwords,
-  pre-shared keys, SNMP communities, a WAN network's ISP key), and in place of a ref row. `repr()` of a
+  pre-shared keys, SNMP communities, a WAN network's ISP key, the `data` of a
+  device settings ref row), and in place of a ref row. `repr()` of a
   plan or of a write holds no values, and `repr()` of a `SaveResult` holds
   neither module data nor the changes it reports, only their number per module
   (it still holds the validators' messages). A response that fails to parse
