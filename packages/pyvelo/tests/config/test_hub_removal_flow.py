@@ -22,11 +22,21 @@ from hub_helpers import (
     hub_row,
 )
 from hub_state import (
+    DS,
+    FROM_BOTH_LISTS,
+    GONE,
+    OUT_OF_THE_RULE,
+    QOS,
+    SERVICE,
+    SERVICE_ID,
+    edit,
     guest_backhaul_state,
     hub_backhaul_rule,
     hub_pipeline,
     hub_profile_state,
     profile_hub_rows,
+    removal_and_its_rule,
+    rule_uses_hub,
 )
 from pyvelo.client.exceptions import VcoError, WriteNotAppliedError
 from pyvelo.client.hub_services import BACKHAUL_REF
@@ -43,75 +53,14 @@ from pyvelo.testing import ModuleStore
 from refs_helpers import CONFIG, DS_ID, QOS_ID, segment_row
 from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
 
-DS = "deviceSettings"
-QOS = "QOS"
 UPDATE = "configuration/updateConfigurationModule"
 DISABLE_HUB = "edge/disableEdgeForEdgeHub"
 ENABLE_BACKHAUL = "edge/enableEdgeForBackhaul"
 SERVICE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 SERVICE_B_ID = 602
-SERVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-SERVICE_ID = 601
-GONE = {HUB_A.name: delete()}
 FROM_BACKHAUL: dict[str, Any] = {
     "segments": {"Guest": {"vpn": {"backHaulEdges": GONE}}}
 }
-FROM_BOTH_LISTS: dict[str, Any] = {
-    "segments": {
-        "Guest": {
-            "vpn": {
-                "backHaulEdges": GONE,
-                "edgeToEdgeHub": {"enabled": False, "vpnHubs": GONE},
-            }
-        }
-    }
-}
-RULE_ENTRY = {"Hub-A": {"_op": "delete"}}
-OUT_OF_THE_RULE = {
-    "segments": {
-        "Guest": {
-            "rules": {
-                "Web": {
-                    "action": {
-                        "edge2EdgeRouteAction": {
-                            "routeCfg": {"backhaulEdges": RULE_ENTRY}
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-
-async def rule_uses_hub() -> ConfigState:
-    """Guest has Hub-A as hub and backhaul hub, and its rule ``Web`` backhauls to it."""
-    refs = profile_hub_rows(
-        segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
-        segment_row(GUEST[0], GUEST[3], GUEST[2]),
-        hub_row(
-            HUB_A,
-            service_id=SERVICE_ID,
-            service_logical_id=SERVICE,
-            segment=GUEST,
-            roles=("hub", "backhaul"),
-        ),
-    )
-    backhaul = backhaul_row(
-        HUB_A,
-        service_id=SERVICE_ID,
-        service_logical_id=SERVICE,
-        segment=GUEST,
-        module_id=QOS_ID,
-    )
-    rule = backhaul_rule("Web", backhaul_entry(HUB_A, SERVICE))
-    return await hub_profile_state(
-        [ds_entry(GLOBAL), ds_with_vpn(GUEST, hubs=(HUB_A,), backhaul=(HUB_A,))],
-        [qos_entry(GLOBAL), qos_entry(GUEST, rules=[rule])],
-        [firewall_entry(GLOBAL), firewall_entry(GUEST)],
-        ds_refs=refs,
-        qos_refs={BACKHAUL_REF: backhaul},
-    )
 
 
 async def rules_use_hub_two_ways() -> ConfigState:
@@ -150,10 +99,6 @@ async def rules_use_hub_two_ways() -> ConfigState:
         ds_refs=refs,
         qos_refs={BACKHAUL_REF: backhaul},
     )
-
-
-async def edit(state: ConfigState, module: str, patch: dict[str, Any]) -> None:
-    _ = await ConfigPipeline(client=None).apply(state, module=module, patch=patch)
 
 
 def refused(state: ConfigState) -> DanglingReferenceError:
@@ -258,14 +203,6 @@ def sent(store: ModuleStore) -> list[tuple[str, int]]:
         for method, params in store.requests
         if method == UPDATE or method.startswith(("edge/enable", "edge/disable"))
     ]
-
-
-async def removal_and_its_rule() -> tuple[ConfigPipeline, ModuleStore, ConfigState]:
-    state = await rule_uses_hub()
-    await edit(state, DS, FROM_BOTH_LISTS)
-    await edit(state, QOS, OUT_OF_THE_RULE)
-    pipeline, store = hub_pipeline(state, vpn_check=True)
-    return pipeline, store, state
 
 
 async def test_the_plan_lists_the_device_settings_last() -> None:
