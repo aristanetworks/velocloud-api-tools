@@ -48,3 +48,13 @@ def test_qos_is_not_a_module_name() -> None:
         "image_update, management_plane, meta_data, properties, wan (the VCO's "
         "own name, such as QOS or deviceSettings, is accepted too)"
     )
+
+
+def test_the_python_name_is_importable_beside_the_enum() -> None:
+    from pyvelo.config import (  # noqa: PLC0415 (the import is what this test checks)
+        ConfigurationModuleName as Exported,
+        python_module_name as exported,
+    )
+
+    assert exported(Exported.QOS) == "business_policy"
+    assert type(exported(Exported.DEVICE_SETTINGS)) is str
