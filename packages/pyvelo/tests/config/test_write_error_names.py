@@ -11,7 +11,7 @@ import copy
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from hub_state import OUT_OF_THE_RULE, edit, rule_uses_hub
+from hub_state import OUT_OF_THE_RULE, edit, guest_backhaul_state, rule_uses_hub
 from pydantic import MISSING
 from pyvelo.client.exceptions import (
     ConfigConflictError,
@@ -36,6 +36,7 @@ from test_shown_plan import (  # pyright: ignore[reportImplicitRelativeImport]
     lan_plan,
     lan_state,
     net,
+    rule_with_id,
 )
 
 if TYPE_CHECKING:
@@ -373,6 +374,54 @@ def test_below_a_value_stored_whole_an_item_keeps_its_position() -> None:
     ]
     assert [str(change.path) for change in error.server_changes] == [
         "ntpServer.keys[#0].serverAdded"
+    ]
+
+
+def rule_of_id(name: str, number: int) -> dict[str, Any]:
+    """A QoS rule *name* with a logical ID of its own, made of *number*."""
+    rule = rule_with_id(name, 80 + number)
+    rule["ruleLogicalId"] = f"{number:08d}-0000-4000-8000-000000000000"
+    return rule
+
+
+async def test_below_a_list_stored_whole_no_position_is_read_as_an_item_as_read() -> (
+    None
+):
+    """Rule ``a`` is renamed ``c``, and a new rule ``a`` is added after ``b``.
+
+    The added rule has the name of one as read, so the list is planned, and
+    checked, whole: the VCO's key in each rule is at the rule's position as
+    planned. The rule as read at position 0 is ``a``, and the plan has
+    another ``a`` at position 2: position 0 is neither's name.
+    """
+    state = await guest_backhaul_state(rule_of_id("a", 1), rule_of_id("b", 2))
+    rules = state.profile.qos.segments[1].rules
+    rules[0].name = "c"
+    rules.append(type(rules[0]).model_validate(rule_of_id("a", 3)))
+    (plan,) = [m for m in state.plan().modules if m.name == "QOS"]
+    assert [str(change.path) for change in plan.changes] == ["segments[Guest].rules"]
+    module = state.module("QOS")
+    stored = copy.deepcopy(plan.data)
+    (guest,) = [s for s in stored["segments"] if s["segment"]["name"] == "Guest"]
+    assert [rule["name"] for rule in guest["rules"]] == ["c", "b", "a"]
+    for position, rule in enumerate(guest["rules"]):
+        rule["serverAdded"] = position
+    write = check_module_write(module, plan, as_stored(module, stored))
+
+    error = ModuleWriteError(
+        11,
+        "v1",
+        module_name="QOS",
+        plan=plan,
+        applied=write.applied,
+        server_changes=write.server_changes,
+    )
+
+    assert lines_of(error, "already stored:") == ["  segments[Guest].rules"]
+    assert lines_of(error, "stored otherwise than sent:") == [
+        f"  segments[Guest].rules[#{position}].serverAdded: "
+        f"read (nothing), stored {position}"
+        for position in range(3)
     ]
 
 
