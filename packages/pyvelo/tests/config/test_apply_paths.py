@@ -504,7 +504,62 @@ async def test_a_provider_held_as_one_object_is_reached_through_its_fields() -> 
     assert (error.value.kind, error.value.path) == ("unknown_field", f"{provider}.nope")
 
 
-# --- reached: the walk the round trips of the shown paths are checked with ---
+# --- a patch error names an item as pyvelo shows it ----------------------------
+
+
+async def test_an_error_below_an_item_names_it_as_pyvelo_shows_it() -> None:
+    state = await rule_uses_hub()
+    with pytest.raises(PatchError) as error:
+        _ = await apply(
+            state,
+            module="business_policy",
+            patch={"segments": {"Guest": {"rules": {"#0": {"bogus": 1}}}}},
+        )
+    assert str(error.value) == (
+        "segments[Guest].rules[Web].bogus: QosRule has no field 'bogus'"
+    )
+    round_trips(error.value.path)
+
+
+async def test_an_item_that_does_not_exist_keeps_the_selector_written() -> None:
+    """A guard."""
+    state = await rule_uses_hub()
+    with pytest.raises(PatchError) as error:
+        _ = await apply(
+            state,
+            module="business_policy",
+            patch={"segments": {"Guest": {"rules": {"Nope": {"name": "x"}}}}},
+        )
+    assert str(error.value).startswith("segments[Guest].rules[Nope]: no item has")
+
+
+@pytest.mark.parametrize(
+    ("address", "patch", "shown"),
+    [
+        (
+            {},
+            {"segments": {"Guest": {"rules": [{"bogus": 1}]}}},
+            "segments[Guest].rules[#0].bogus: QosRule has no field 'bogus'",
+        ),
+        (
+            {"path": "segments[Guest].rules"},
+            [float("nan")],
+            "segments[Guest].rules[#0]: nan is not a JSON number",
+        ),
+    ],
+    ids=["merge", "address"],
+)
+async def test_an_item_of_a_list_value_is_not_named_by_the_item_read_there(
+    address: dict[str, str], patch: object, shown: str
+) -> None:
+    """The first item of the value is not the rule ``Web`` the data has there."""
+    state = await rule_uses_hub()
+    with pytest.raises(PatchError) as error:
+        _ = await apply(state, module="business_policy", patch=patch, **address)
+    assert str(error.value).startswith(shown)
+
+
+# --- reached:the walk the round trips of the shown paths are checked with ---
 
 
 class _Item(VcoModel):

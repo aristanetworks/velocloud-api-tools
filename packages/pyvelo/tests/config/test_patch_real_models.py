@@ -708,7 +708,7 @@ LAN_DS: dict[str, Any] = {
         (
             "lan.networks",
             {"10": {"ospf": {"passive_interface": ""}}},
-            'lan.networks["10"].ospf.passive_interface',
+            "lan.networks[Corp].ospf.passive_interface",
         ),
         (
             "lan.networks",
@@ -777,7 +777,7 @@ async def test_true_is_not_a_vlan_id() -> None:
             path="lan.networks",
             patch={"20": {"vlan_id": True}},
         )
-    assert str(exc.value.path) == 'lan.networks["20"].vlan_id'
+    assert str(exc.value.path) == "lan.networks[Voice].vlan_id"
     assert [n.vlan_id for n in state.edge.device_settings.lan.networks] == [10, 20]
 
 

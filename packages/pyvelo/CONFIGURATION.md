@@ -236,7 +236,14 @@ A patch is strict and all or nothing:
 - A patch that cannot be applied raises `PatchError` (a `ValueError`). Its
   `path` is where in the patch it failed, its `message` the reason, and its
   `kind` one of the thirteen values below, for a caller that reacts to the
-  cause. Resolver errors keep their types (`ResolutionError` for an unknown
+  cause. The path is written as pyvelo shows one (see "Paths"): an item the
+  data has is named by what names it alone, whatever selector the patch
+  used, so `{"segments": {"Guest": {"rules": {"#0": {"bogus": 1}}}}}` fails
+  at `segments[Guest].rules[Web].bogus` where the first rule is `Web`, and an
+  entry of a map is its key after a dot. An item the data lacks keeps the
+  selector as written (`rules[Nope]`), and so does an item of a list the
+  patch gives whole, which is the list value's item and not the data's
+  (`rules[#0]` is the first item of the value). Resolver errors keep their types (`ResolutionError` for an unknown
   name). A patch that applies but that a
   save could not write raises `LossyFieldError` (see "What a save writes"),
   and a patch to a module a save does not write (control plane) raises

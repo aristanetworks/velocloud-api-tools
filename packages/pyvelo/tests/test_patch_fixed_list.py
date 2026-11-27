@@ -119,7 +119,7 @@ def test_an_alt_key_change_is_refused() -> None:
         ),
         ({"+": add({"name": "Delta"})}, 'defaults["+"]'),
         ({"Beta": {"_position": {"before": "Alpha"}}}, "defaults[Beta]"),
-        ({at(1): delete()}, "defaults[#1]"),
+        ({at(1): delete()}, "defaults[Beta]"),
     ],
     ids=["add", "delete", "move", "position", "add-plus", "before", "by-position"],
 )

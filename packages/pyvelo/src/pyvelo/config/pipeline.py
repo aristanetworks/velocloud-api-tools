@@ -146,6 +146,7 @@ from pyvelo.core.merge import (
     read_given_id,
     select_items,
 )
+from pyvelo.core.names import named_error
 from pyvelo.core.owned import unwrap
 from pyvelo.core.patch import ItemOp, at, is_new, parse_item_op, patch_key
 from pyvelo.core.rebase import Key, Path, PathPart, raw_changes
@@ -2653,11 +2654,12 @@ def _edit_of(
     """The ``_Edit`` of *patch* at its address to *mod* of *state*.
 
     Raises ``PatchError`` for an address the class of the module's data does
-    not have (``nest_patch``), and for a position in it that the patch would
+    not have (``nest_patch``), with each item the data has named as pyvelo
+    shows it (``_nested_patch``), and for a position in it that the patch would
     read as another item of the data (``_refuse_misread_positions``).
     """
     data = mod.data
-    nested = nest_patch(type(data), patch, segment=segment, path=path)
+    nested = _nested_patch(data, patch, segment, path, state.resolvers)
     _refuse_misread_positions(data, address_path(segment, path), state.resolvers)
     edge = state.target_type == "edge"
     profile_rules = (
@@ -2685,6 +2687,43 @@ def _edit_of(
         inherited=inherited,
         unserved=unserved,
     )
+
+
+def _nested_patch(
+    data: VcoModel,
+    patch: object,
+    segment: str | None,
+    path: str | Path | None,
+    resolvers: IdentityResolver | None,
+) -> dict[str, object]:
+    """*patch* nested under its address for the class of *data* (``nest_patch``).
+
+    A ``PatchError`` is raised with each item *data* has named as pyvelo shows
+    it (``named_error``), outside the handler: the error is one, with the
+    cause and the traceback of the error it names.
+    """
+    try:
+        return nest_patch(type(data), patch, segment=segment, path=path)
+    except PatchError as error:
+        named = named_error(
+            error, data, resolvers, patch=_addressed(segment, path, patch)
+        )
+        traceback = error.__traceback__
+    raise named.with_traceback(traceback)
+
+
+def _addressed(segment: str | None, path: str | Path | None, patch: object) -> object:
+    """*patch* under the keys of its address, as written; None for no address.
+
+    For naming an error of ``nest_patch`` (``named_error``): an item the
+    address selects is an item of the data, and one in a list value of
+    *patch* is not. None where the address cannot be read: its error is at
+    the empty path.
+    """
+    try:
+        return nested_under(address_path(segment, path), patch)
+    except PatchError:
+        return None
 
 
 def _refuse_misread_positions(

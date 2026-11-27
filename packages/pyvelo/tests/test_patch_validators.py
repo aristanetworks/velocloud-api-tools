@@ -91,7 +91,7 @@ def on() -> Flow:
         ({"flow": {"collectors": {"c": delete()}}}, "flow"),
         ({"flow": {"collectors": []}}, "flow"),
         ({"flows": {at(0): {"collectors": []}}}, "flows[#0]"),
-        ({"by_name": {"x": {"collectors": []}}}, "by_name[x]"),
+        ({"by_name": {"x": {"collectors": []}}}, "by_name.x"),
         ({"by_name": {"y": add({"enabled": True})}}, "by_name[y]"),
     ],
 )
