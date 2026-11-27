@@ -1135,8 +1135,10 @@ with the value itself, its `origin` and its `source`:
 | `Origin.PROFILE` | the profile's, because the edge inherits it |
 | `Origin.FACTORY` | a display default, because neither layer stores one; it is never written |
 
-`source` is where the value sits in the layer it came from (for a rule,
-`segments[1].outbound[0]`). The view is read-only, is computed again on each
+`source` is where the value sits in the layer it came from, as text in the
+VCO's keys with each list item by its position in that layer (for a rule,
+`segments[1].outbound[0]`: the first rule of that layer's second segment). The
+view is read-only, is computed again on each
 read so it follows your edits, and creates nothing: an edge with no row for a
 module has the profile's view. A value the profile has turned off for every
 edge (`firewall_enabled: false`) is shown as the profile's, whatever the edge
@@ -1153,8 +1155,8 @@ state.effective.qos.service_rate_limit.origin  # the same, for QoS
 The view is the client's reading of rules the VCO applies on its own, so
 `pipeline.compare_effective(state)` checks it against the VCO's answer. It reads
 the modules the library has converted (`modules=None`, which is the firewall
-and QoS; name one with `modules=["QOS"]`, and another module raises
-`ValueError`) with
+and QoS; name one with `modules=["business_policy"]`, by either of its names,
+and another module raises `ValueError`) with
 `edge/getEdgeConfigurationModules` for the edge the state was loaded for, and
 compares each with `state.effective`, by wire path and by value only, since the
 VCO's answer has no origins. Before it compares, it reads the state's profile
@@ -1170,7 +1172,45 @@ assert not comparison.findings
 ```
 
 Each difference is an `EffectiveDifference` (module, path, the two values,
-the view's origin and source, a category, and a reason where there is one).
+the view's origin and source, a category, and a reason where there is one),
+and it is shown as every other output is:
+
+```text
+business_policy
+  differs segments[Guest].rules[#0].name: client "Web", server "Mail" [profile segments[#1].rules[#0]]
+firewall
+  differs syslog_forwarding: client true, server false [edge syslog_forwarding]
+  unconverted services.icmp: client (none), server {"allowSelectedIp": [], "enabled": true} [the library does not know this key yet, so the view has no value]
+```
+
+- `module` is the module's python name (`business_policy`, not `QOS`).
+- `path` is a `Path`: each field by its attribute name and a segment by its
+  name (`segments[Guest]`). A segment the view lacks keeps the ID the VCO gives
+  it (`segments[9]`).
+- **An item of a list below a segment is shown by its position, not by its
+  name**: `rules[#0]`. In `path` the position counts in the view's list, which
+  for a segment's rules is the edge's entries and then the profile's. So
+  `rules[#0]` is the first rule the edge uses, and it is the first rule of your
+  own data only where your layer's rules come first: look a position up in
+  `state.effective`, and do not send it in a patch as it is.
+- `source` is the view's `source` of that value, shown in names: fields by
+  attribute name, and every item by its position in the layer the value came
+  from, the segment too. `[profile segments[#1].rules[#0]]` is the first rule
+  of the profile's second segment, whatever its place in the view.
+- A key no model declares is kept as the VCO writes it, after the parts that
+  are named (`services.icmp`, `etm`, `qosClientConnector`, and the keys the
+  composer adds to a rule, below). A key that holds a dot or a bracket is one
+  part, quoted (`services."x.y"`). A path the two documents hold in more than
+  one way, which only such a key can cause, is not named at all: it is the
+  comparison's own text as one quoted part, and its values are as the VCO
+  writes them.
+- The two values are JSON. An object has the keys its model declares by
+  attribute name (`{"allow_selected_ip": []}`), at every depth; a key no model
+  declares, and a scalar, stay as the VCO writes them.
+
+These paths say where the view and the VCO differ. The view is not a layer, so
+none of them is promised to be a path `apply` takes.
+
 There are six categories, and three of them are findings:
 
 | Category | Meaning | A finding? |
@@ -1180,7 +1220,7 @@ There are six categories, and three of them are findings:
 | `server_only` | the server's answer has a value the view lacks | yes |
 | `factory` | the view gives a display default where the server has no value, or the same one | no, information |
 | `ignored` | the path is on the ignore list, is a secret, or is a segment the composer left out; reported with its reason | no |
-| `unconverted` | the path is not converted yet (the firewall's `inbound`, `inboundV6` and `services.icmp`, a segment's `firewall_logging_enabled` and `etm`, a QoS segment's `webProxy` and a QoS module's `qosClientConnector`), so the view has no value to compare | no, information |
+| `unconverted` | the path is not converted yet (the firewall's `inbound`, `inbound_v6` and `services.icmp`, a segment's `firewall_logging_enabled` and `etm`, a QoS segment's `web_proxy` and a QoS module's `qosClientConnector`), so the view has no value to compare | no, information |
 
 `comparison.findings` is the entries that are findings, and `entries` all of
 them. A key is reported once, at the highest path that is absent from a side.
@@ -1191,9 +1231,9 @@ empty list the server lacks is `client_only`. Segments are matched by
 `segmentId` in any order (the view puts the profile's first and the composer
 the edge's), and the rules of a segment, edge entries then profile entries, by
 position. For QoS the segments' `rules` are compared the same way, and a
-segment's `cosMapping` is the edge's stored object even when its `override` flag
-is off, because that is the object the composer takes; the module's
-`serviceRateLimit` and `qoe` and a segment's `cosMapping`
+segment's `cos_mapping` is the edge's stored object even when its `override`
+flag is off, because that is the object the composer takes; the module's
+`service_rate_limit` and `qoe` and a segment's `cos_mapping`
 are display defaults (`factory`) where neither layer stores one and the server
 has none.
 
@@ -1203,8 +1243,8 @@ loopback, and the Global Segment) in its device settings, QoS and firewall. A
 segment the view has and the composed module lacks is `ignored` with that
 reason; one the composed module has and the view lacks is `server_only`. The
 composed read also returns `null` for a module it could not compose, which it
-does without saying why: that is `ComposedModuleError` (its `module` is the
-module's python name), not a finding.
+does without saying why: that is `ComposedModuleError` (its `module` and its
+message name the module by its python name), not a finding.
 
 The call does not ask the VCO for encrypted keys (`encryptKeys`), which a VCO
 may refuse. A secret is never compared: a path that holds one is `ignored` with
@@ -1212,7 +1252,9 @@ that reason, and its value is shown as `***`.
 
 When a rule of the view names a security service group
 (`securityServiceGroup`), the composer adds three keys to it that neither layer
-stores: `urlCategoryFiltering`, `urlReputationFiltering` and `atp_action`. They
+stores: `urlCategoryFiltering`, `urlReputationFiltering` and `atp_action`. No
+model declares them, so a difference at one shows the VCO's key
+(`segments[Guest].outbound[#0].urlCategoryFiltering.unknownCategoryAction`). They
 are confirmed, not ignored. `compare_effective` reads the enterprise's security
 objects (`enterprise/getSecurityObjects` for `securityServiceGroup`,
 `urlCategoryFiltering`, `urlReputationFiltering` and `idps`: four reads, with
@@ -1227,7 +1269,7 @@ rules are not searched), and expects:
 
 A group that names no object of a type expects no key for it. The expected
 values are compared like the rule's own keys, with the rule's origin and a
-source of its `securityServiceGroup`: a match makes no entry, a different value
+source of its `security_service_group`: a match makes no entry, a different value
 is `differs`, an expected key the server lacks is `client_only`, and a key on a
 rule that names no group is `server_only`. When the group, or an object it
 names, is not among the enterprise's security objects, nothing can be expected
@@ -1241,7 +1283,13 @@ expected: a key the composer adds for one is `server_only`.
 `pyvelo.config.effective.EFFECTIVE_IGNORES` is the list of known
 divergences, each an `EffectiveIgnore` with its module, a path (whole parts,
 `*` for one part, `[*]` for one list item; it covers everything below it) and
-the reason. It is empty: an entry is added only after a divergence is
+the reason. An ignore is input, and it is written in the form the comparison
+computes in, not the one a difference shows: the module by the VCO's name
+(`QOS`), and the path in the VCO's keys with a segment as
+`segments[<segmentId>]` and any other list item as `[<index>]`. The ignore of
+what is shown as `segments[Guest].rules[#0].rule_logical_id`, where Guest has
+the ID 2, is `EffectiveIgnore("QOS", "segments[2].rules[0].ruleLogicalId",
+reason)`. The list is empty: an entry is added only after a divergence is
 understood, so that a divergence is visible in the comparison and never hidden.
 A finding you meet is either a wrong rule in the library, which gets fixed, or
 a divergence you have understood, which gets an entry with its reason.

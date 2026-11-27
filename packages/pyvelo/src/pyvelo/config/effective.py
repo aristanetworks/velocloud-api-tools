@@ -5,9 +5,17 @@
 composed for the same edge. ``ConfigPipeline.compare_effective`` reads the
 composed modules and calls it for each module that is converted.
 
-Paths are wire keys, dotted. A segment is ``segments[<segmentId>]`` and any
-other list item ``[<index>]``; a path in an ``Additive`` list is the item's
-position in the view (the edge's entries, then the profile's).
+The comparison computes in the VCO's keys: a path there is wire keys, dotted,
+a segment is ``segments[<segmentId>]`` and any other list item ``[<index>]``;
+a path in an ``Additive`` list is the item's position in the view (the edge's
+entries, then the profile's). An ``EffectiveIgnore`` is written in that form.
+
+A difference ``compare_module`` returns is shown as every other output is
+(``shown_effective_path``): the module by its python name, each field by its
+attribute name, a segment by its name, and the keys of its two values by
+attribute name. An item of a list below a segment is shown by its position,
+``rules[#0]``, and not by its name: the view holds those items wrapped, and
+the comparison matched them by position.
 
 How each part of a module is matched:
 
@@ -29,15 +37,17 @@ the rule's own keys.
 
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import cache
+from itertools import islice
 from typing import Annotated, Any, cast, get_args, get_origin
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
 
+from pyvelo.client.enums.configuration import python_module_name
 from pyvelo.config.composed_security import (
     UNRESOLVED,
     SecurityObjects,
@@ -48,7 +58,9 @@ from pyvelo.core import Origin, Resolved, effective_dump
 from pyvelo.core.base import JsonObject, VcoModel, is_dict, is_list, wire_name
 from pyvelo.core.fields import get_key_spec, is_secret
 from pyvelo.core.layers import Effective, Kind, Layered, field_kind
-from pyvelo.core.rebase import KeyValue, key_text
+from pyvelo.core.names import item_part, named_path, named_value
+from pyvelo.core.patch import PatchError
+from pyvelo.core.rebase import Key, KeyValue, Path, PathPart, key_text
 
 __all__ = [
     "CONVERTED_MODULES",
@@ -61,6 +73,7 @@ __all__ = [
     "EffectiveIgnore",
     "compare_module",
     "module_attribute",
+    "shown_effective_path",
 ]
 
 OMITTED_SEGMENT = (
@@ -127,8 +140,10 @@ UNMODELED_KEYS: Mapping[str, frozenset[str]] = {
 }
 """Keys of a module that no model declares, as paths.
 
-``[*]`` stands for any one list item. Each is reported as ``unconverted`` and not as
-``server_only``.
+They are written as the comparison computes: by the VCO's name of the module,
+in the VCO's keys. ``[*]`` stands for any one list item. Each is reported as
+``unconverted`` and not as ``server_only``, at a path that keeps the key as the
+VCO writes it (``services.icmp``): it has no attribute name.
 """
 
 
@@ -147,7 +162,14 @@ class EffectiveIgnore:
 
     It holds its module, the path it applies to, and why.
 
-    *path* is matched against whole parts of a wire path (a key, or a
+    *module* is the VCO's name of the module (``QOS``). *path* is written in
+    the VCO's keys, a segment as ``segments[<segmentId>]`` and any other list
+    item as ``[<index>]``: the form the comparison computes in, not the one a
+    difference shows. So the ignore of what is shown as
+    ``segments[Guest].rules[#0].rule_logical_id``, where Guest has the ID 2,
+    is ``segments[2].rules[0].ruleLogicalId``.
+
+    *path* is matched against whole parts of such a path (a key, or a
     ``[...]`` list item), from its start: ``segments[*].outbound[0]`` matches
     that path and everything below it. ``*`` matches any one part and ``[*]``
     any one list item.
@@ -166,22 +188,47 @@ An entry is added only after the divergence is understood, so that none is hidde
 
 
 @dataclass(frozen=True)
-class EffectiveDifference:
+class EffectiveDifference[P: str = Path]:
     """One difference between the view and the server's composed module.
 
+    *module* is the module's python name (``business_policy``). *path* is
+    where the difference is, as pyvelo shows a path: each field by its
+    attribute name and a segment by its name
+    (``segments[Guest].rules[#0].rule_logical_id``). A key no model declares
+    is kept as the VCO writes it (``services.icmp``), and a segment the view
+    lacks keeps the ID the VCO gives it (``segments[9]``).
+
+    An item of a list below a segment is shown by its position, not by its
+    name. In *path* the position counts in the view's list, which for a
+    segment's rules is the edge's entries and then the profile's: ``rules[#0]``
+    is the first rule the edge uses there, which is the first rule of a layer's
+    own data only where that layer's rules come first. So a position is looked
+    up in the view (``state.effective``), and is not sent in a patch as it is.
+
     *client* and *server* are the two values as JSON, ``MISSING`` where a side
-    has none; a secret is shown as ``***``. *origin* and *source* are the
-    view's (``source`` is where the value sits in the layer it came from), and
-    ``None`` where the view's value is not a single resolved one. *reason*
-    says why a path is ``ignored``, ``unconverted`` or ``factory``.
+    has none; an object has the keys its model declares by attribute name, a
+    scalar is as the VCO writes it, and a secret is shown as ``***``. *origin*
+    and *source* are the view's, and ``None`` where the view's value is not a
+    single resolved one. *source* is where the value sits in the layer it came
+    from (the edge's data for ``Origin.EDGE``, the profile's for
+    ``Origin.PROFILE``), with fields by attribute name and every item by its
+    position in that layer's own list, the segment too:
+    ``segments[#1].rules[#0]`` is the first rule of that layer's second
+    segment. *reason* says why a path is ``ignored``, ``unconverted`` or
+    ``factory``.
+
+    The class is generic in how it holds its paths only for the comparison's
+    own walk, whose entries hold the text it computes with. An entry
+    ``compare_module`` returns, and so every entry of an
+    ``EffectiveComparison``, holds each as a ``Path``.
     """
 
     module: str
-    path: str
+    path: P
     client: object
     server: object
     origin: Origin | None
-    source: str | None
+    source: P | None
     category: EffectiveCategory
     reason: str | None
 
@@ -211,7 +258,11 @@ class EffectiveComparison:
         return tuple(e for e in self.entries if e.category in FINDINGS)
 
     def render(self) -> str:
-        """Text by module and path: a header line per module, then a line per entry."""
+        """Text by module and path.
+
+        A header line per module, which is its python name, then a line per
+        entry, in the order of the paths as they are shown.
+        """
         if not self.entries:
             return "no differences"
         lines: list[str] = []
@@ -253,6 +304,10 @@ def compare_module(
 
     *server* is the raw data the VCO composed for *module*.
 
+    *module* is the VCO's name of the module, which the ignores and
+    ``UNMODELED_KEYS`` are looked up by; each difference names it by its python
+    name, and is shown in names (``EffectiveDifference``).
+
     The ignores of other modules are not applied. See the module's text for how
     the two are matched.
 
@@ -272,7 +327,7 @@ def compare_module(
         _expect_security_keys(client, resolved, reasons, security_objects)
     run = _Comparison(module, ignores, resolved, reasons)
     run.model(view, client, server, "")
-    return run.entries
+    return [_shown(entry, view, client, server) for entry in run.entries]
 
 
 def _expect_security_keys(
@@ -409,7 +464,7 @@ class _Comparison:
         ]
         self.resolved: Mapping[str, Resolved[object]] = resolved
         self.reasons: Mapping[str, str] = reasons
-        self.entries: list[EffectiveDifference] = []
+        self.entries: list[EffectiveDifference[str]] = []
 
     def emit(  # noqa: PLR0913 (existing: split it when it next changes)
         self,
@@ -823,6 +878,288 @@ class _Comparison:
                     self.deep(where, mine[position], theirs[position], cover, typ)
         elif not _same(client, server):
             self.emit(path, EffectiveCategory.DIFFERS, client, server, cover=cover)
+
+
+# ---------------------------------------------------------------------------
+# A difference as it is shown
+# ---------------------------------------------------------------------------
+
+
+def shown_effective_path(
+    view: VcoModel, path: str, client: object, server: object
+) -> Path:
+    """The comparison's own *path* as pyvelo shows a path.
+
+    *path* is the text the comparison of *view* writes: wire keys,
+    ``segments[<segmentId>]`` and ``[<index>]``. *client* is the view's dump
+    and *server* the VCO's data, the two documents the comparison walked. The
+    text is read against them, so a key that holds a dot or a bracket is one
+    part (``services."x.y"``) and is never taken for two.
+
+    Each field is shown by its attribute name. A segment is shown by its name
+    in the view; one the view lacks keeps the ID the VCO gives it
+    (``segments[9]``). Every other item is its position, ``[#n]``. A key no
+    model declares, and the key of an entry of a map, is kept as stored.
+
+    Where the two documents do not hold the text in exactly one way (they
+    hold none of it, or a key with a dot makes two readings of it), nothing is
+    named: the result is the whole text as one part, which prints as a quoted
+    string. Nothing is raised: a difference that could not be shown would be
+    hidden.
+    """
+    read = _read(view, path, client, server)
+    return Path((path,)) if read is None else named_path(read, type(view))
+
+
+def _shown(
+    entry: EffectiveDifference[str], view: VcoModel, client: object, server: object
+) -> EffectiveDifference:
+    """*entry* of the comparison of *view* as it is shown: in names.
+
+    Its two values are named where its path is read, and kept as stored where
+    it is not.
+    """
+    read = _read(view, entry.path, client, server)
+    model = None if read is None else type(view)
+    return EffectiveDifference(
+        python_module_name(entry.module),
+        Path((entry.path,)) if read is None else named_path(read, model),
+        named_value(entry.client, model, read),
+        named_value(entry.server, model, read),
+        entry.origin,
+        None if entry.source is None else _shown_source(view, entry.source),
+        entry.category,
+        entry.reason,
+    )
+
+
+def _shown_source(view: VcoModel, source: str) -> Path:
+    """A ``Resolved``'s *source* as it is shown.
+
+    A source is a place in the layer the value came from: the wire keys of
+    fields, and positions in that layer's own lists. Each field is shown by
+    its attribute name, by the classes of *view* (a layer's are the same
+    models), and each position as ``[#n]``. A text that is not keys and
+    positions is kept whole, as one part.
+    """
+    parts: list[PathPart] = []
+    written = ""
+    for part in _parts(source):
+        if not part.startswith("["):
+            parts.append(part)
+            written += f".{part}" if written else part
+        elif _POSITION.fullmatch(part):
+            parts.append(int(part[1:-1]))
+            written += part
+    if written != source:
+        return Path((source,))
+    return named_path(Path(parts), type(view))
+
+
+_POSITION = re.compile(r"\[([0-9]+)\]")
+
+
+@cache
+def _attributes(model: type[VcoModel]) -> dict[str, str]:
+    """The attribute of *model* that each of its wire keys is read as."""
+    return {wire_name(model, name): name for name in model.model_fields}
+
+
+@dataclass(frozen=True, slots=True)
+class _Matched:
+    """A list whose items the comparison matches by key, as a segment is.
+
+    It is what ``_Comparison.segments`` walks: the view's models, in the order
+    of the view's dump, and the wire keys an item is identified by.
+    """
+
+    owner: VcoModel
+    """The view's model the list is a field of."""
+    field: str
+    """The attribute name of the list on *owner*."""
+    alt: tuple[str, ...] | None
+    keys: tuple[tuple[str, ...], ...]
+
+    def text(self, item: object, position: int) -> str:
+        """What the comparison writes in the brackets of *item* of a dump.
+
+        The alt key where the item has one (a segment's ID), else its key,
+        else *position*, as ``_Comparison.segments`` does.
+        """
+        if self.alt is not None:
+            found = _dig(item, self.alt)
+            if found not in (None, MISSING):
+                return str(found) or str(position)
+        values = [_dig(item, keys) for keys in self.keys]
+        if any(value in (None, MISSING) for value in values):
+            return str(position)
+        if len(values) == 1:
+            return str(values[0]) or str(position)
+        return key_text(cast("KeyValue", tuple(values))) or str(position)
+
+    def part(self, text: str, position: int | None) -> PathPart:
+        """The path part of the item written as *text*.
+
+        *position* is the item's in the view, None for an item the view lacks.
+        An item of the view is shown as ``item_part`` names it, and by its
+        position where nothing names it alone; one the view lacks keeps what
+        the comparison wrote, a number as a number.
+        """
+        if position is None:
+            return Key(int(text)) if _NUMBER.fullmatch(text) else Key(text)
+        try:
+            named = item_part(self.owner, self.field, position)
+        except (PatchError, LookupError, TypeError):
+            # A list whose items are not plain models cannot be asked for a
+            # name: the position is what is left.
+            named = None
+        return position if named is None else named
+
+    def model(self, position: int | None) -> VcoModel | None:
+        """The view's model of the item at *position*; None where it has none."""
+        items: object = getattr(self.owner, self.field)
+        if position is None or not is_list(items) or position >= len(items):
+            return None
+        item: object = items[position]
+        return item if isinstance(item, VcoModel) else None
+
+
+_NUMBER = re.compile(r"0|[1-9][0-9]*")
+
+
+@dataclass(frozen=True, slots=True)
+class _Here:
+    """Where a reading of a comparison path stands."""
+
+    model: VcoModel | None
+    """The view's model here; None below a value the comparison walks as JSON."""
+    matched: _Matched | None
+    """How the items of the list here are matched, where it is by key."""
+    mine: object
+    """The view's dump here; ``MISSING`` where it has nothing."""
+    theirs: object
+    """The server's data here; ``MISSING`` where it has nothing."""
+
+
+type _Step = tuple[PathPart, int, _Here]
+"""One part read off the front of a path's text.
+
+The part, the length of text that wrote it, and where the reading stands below it.
+"""
+
+
+def _read(view: VcoModel, path: str, client: object, server: object) -> Path | None:
+    """The parts of the comparison's own *path*, in wire keys.
+
+    A key is its text, a segment the part that shows it, another item its
+    position. None where *client* and *server* do not hold the text in
+    exactly one way.
+    """
+    start = _Here(view, None, client, server)
+    readings = list(islice(_readings(path, start, first=True), 2))
+    return Path(readings[0]) if len(readings) == 1 else None
+
+
+def _readings(
+    rest: str, here: _Here, *, first: bool = False
+) -> Iterator[tuple[PathPart, ...]]:
+    """Each way the documents at *here* hold all of the text *rest*.
+
+    The comparison writes a key after a dot (the first key of a path after
+    none) and an item in brackets, so a key is tried only where the dot is and
+    an item only where a bracket opens.
+    """
+    if not rest:
+        yield ()
+        return
+    if rest.startswith("["):
+        steps = _item_steps(rest, here)
+    elif first:
+        steps = _key_steps(rest, here)
+    elif rest.startswith("."):
+        rest = rest[1:]
+        steps = _key_steps(rest, here)
+    else:
+        return
+    for part, length, below in steps:
+        for more in _readings(rest[length:], below):
+            yield (part, *more)
+
+
+def _key_steps(rest: str, here: _Here) -> Iterator[_Step]:
+    """Each key of the objects at *here* that *rest* starts with."""
+    keys: dict[str, None] = {}
+    for document in (here.mine, here.theirs):
+        if is_dict(document):
+            keys.update(dict.fromkeys(k for k in document if isinstance(k, str)))
+    for key in keys:
+        if rest.startswith(key):
+            yield key, len(key), _below_key(here, key)
+
+
+def _below_key(here: _Here, key: str) -> _Here:
+    """Where a reading stands below *key* of the objects at *here*.
+
+    The view's model is followed as ``_Comparison.model`` follows it: into a
+    nested model, and to a list it matches by key.
+    """
+    mine, theirs = _dig(here.mine, (key,)), _dig(here.theirs, (key,))
+    owner = here.model
+    name = None if owner is None else _attributes(type(owner)).get(key)
+    if owner is None or name is None:
+        return _Here(None, None, mine, theirs)
+    info = type(owner).model_fields[name]
+    held: object = getattr(owner, name)
+    if isinstance(held, Layered):
+        return _Here(cast("Layered[Effective]", held), None, mine, theirs)
+    spec = get_key_spec(info)
+    item_class = _layered_items(field_kind(info).inner_type)
+    if spec is None or item_class is None:
+        return _Here(None, None, mine, theirs)
+    matched = _Matched(
+        owner,
+        name,
+        None if spec.alt is None else _wire_path(item_class, spec.alt),
+        tuple(_wire_path(item_class, path) for path in spec.paths),
+    )
+    return _Here(None, matched, mine, theirs)
+
+
+def _item_steps(rest: str, here: _Here) -> Iterator[_Step]:
+    """Each item of the lists at *here* that the brackets *rest* opens with name."""
+    matched = here.matched
+    if matched is None:
+        found = _POSITION.match(rest)
+        if found is None:
+            return
+        position = int(found.group(1))
+        mine, theirs = _at(here.mine, position), _at(here.theirs, position)
+        if mine is not MISSING or theirs is not MISSING:
+            yield position, found.end(), _Here(None, None, mine, theirs)
+        return
+    items: dict[str, tuple[int | None, object, object]] = {}
+    for position, item in enumerate(_entries(here.mine)):
+        _ = items.setdefault(matched.text(item, position), (position, item, MISSING))
+    for position, item in enumerate(_entries(here.theirs)):
+        text = matched.text(item, position)
+        at, mine, theirs = items.get(text, (None, MISSING, MISSING))
+        if theirs is MISSING:
+            items[text] = (at, mine, item)
+    for text, (at, mine, theirs) in items.items():
+        if rest.startswith(f"[{text}]"):
+            below = _Here(matched.model(at), None, mine, theirs)
+            yield matched.part(text, at), len(text) + 2, below
+
+
+def _entries(value: object) -> list[object]:
+    """The items of *value* where it is a list; none where it is not."""
+    return value if is_list(value) else []
+
+
+def _at(value: object, position: int) -> object:
+    """The item at *position* of the list *value*; ``MISSING`` where there is none."""
+    items = _entries(value)
+    return items[position] if position < len(items) else MISSING
 
 
 def _layered_items(inner: object) -> type[Layered[Any]] | None:

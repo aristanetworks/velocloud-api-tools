@@ -15,6 +15,11 @@ from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
 )
+from pyvelo.client.schemas.edge import (
+    CompositeFirewallModule,
+    CompositeQosModule,
+    EdgeConfigurationModulesResult,
+)
 from pyvelo.config import (
     ComposedModuleError as IntentComposedModuleError,
 )
@@ -33,6 +38,7 @@ from pyvelo.config.effective import (
     EffectiveIgnore,
     compare_module,
     module_attribute,
+    shown_effective_path,
 )
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolverContext
@@ -44,9 +50,11 @@ from pyvelo.core import (
     Default,
     Effective,
     Inheritable,
+    Key,
     KeyField,
     Layered,
     Origin,
+    Path,
     Profile,
     Secret,
     VcoModel,
@@ -56,7 +64,9 @@ from pyvelo.core import (
 )
 from pyvelo.core.identity import NetworkServiceIdentity, ResolverNotLoadedError
 from pyvelo.core.layers import L
+from pyvelo.core.names import named_value
 from pyvelo.testing import MockVcoClient, make_module_json
+from shown_paths import round_trips
 from test_state_plan import desc  # pyright: ignore[reportImplicitRelativeImport]
 
 EDGE_ID = 42
@@ -64,6 +74,8 @@ ENTERPRISE_ID = 5
 PROFILE_MODULE_ID = 2
 Json = dict[str, Any]
 
+GLOBAL = 'segments["Global Segment"]'
+"""The Global Segment as a path shows it."""
 OMITTED = (
     "the composer keeps only the segments in use on the edge "
     "(VLANs, routed interfaces, loopbacks and the Global Segment)"
@@ -475,7 +487,7 @@ async def test_server_only() -> None:
     composed_modules(client)["services"] = {**services, "extra": True}
     comparison = await pipeline.compare_effective(state)
 
-    found = {e.path: e for e in comparison.findings}
+    found: dict[str, EffectiveDifference] = {e.path: e for e in comparison.findings}
     key = found["composerKey"]
     assert key.category is EffectiveCategory.SERVER_ONLY
     assert key.client is MISSING
@@ -498,11 +510,13 @@ async def test_factory_where_the_server_has_no_value() -> None:
     services = found["services"]
     assert services.category is EffectiveCategory.FACTORY
     assert services.server is MISSING
-    assert services.client == defaults(state)["services"]
+    assert services.client == named_value(
+        defaults(state)["services"], type(state.effective.firewall), Path(("services",))
+    )
     assert str(services.origin) == "factory"
     assert services.source == "services"
     # The same value as the server's is also information.
-    same = found["securityFeatures"]
+    same = found["security_features"]
     assert same.category is EffectiveCategory.FACTORY
     assert same.server != MISSING
     line = next(ln for ln in comparison.render().splitlines() if " services" in ln)
@@ -532,7 +546,7 @@ async def test_a_nested_key_the_server_lacks_under_a_display_default_is_informat
     comparison = await pipeline.compare_effective(state)
 
     assert comparison.findings == ()
-    entry = by_path(comparison)["services.ssh.allowSelectedIp"]
+    entry = by_path(comparison)["services.ssh.allow_selected_ip"]
     assert entry.category is EffectiveCategory.FACTORY
     assert entry.server is MISSING
     assert str(entry.origin) == "factory"
@@ -564,7 +578,7 @@ async def test_a_stored_empty_list_the_server_lacks_is_client_only() -> None:
 
     (finding,) = comparison.findings
     assert finding.category is EffectiveCategory.CLIENT_ONLY
-    assert finding.path == "services.ssh.allowSelectedIp"
+    assert finding.path == "services.ssh.allow_selected_ip"
     assert finding.client == []
     assert str(finding.origin) == "profile"
 
@@ -577,7 +591,7 @@ async def test_an_empty_list_only_the_server_has_is_server_only() -> None:
 
     (finding,) = comparison.findings
     assert finding.category is EffectiveCategory.SERVER_ONLY
-    assert finding.path == "services.ssh.allowSelectedIp"
+    assert finding.path == "services.ssh.allow_selected_ip"
     assert finding.server == []
 
 
@@ -620,14 +634,14 @@ async def test_an_ignored_path_is_reported_with_its_reason() -> None:
         "firewall", state.effective.firewall, server, ignores=ignores
     )
 
-    found = {e.path: e for e in entries}
+    found: dict[str, EffectiveDifference] = {e.path: e for e in entries}
     assert found["syslog_forwarding"].category is EffectiveCategory.IGNORED
     assert found["syslog_forwarding"].reason == "the VCO turns it off"
     assert (found["syslog_forwarding"].client, found["syslog_forwarding"].server) == (
         True,
         False,
     )
-    inner = found["segments[0].outbound[0]"]
+    inner = found[f"{GLOBAL}.outbound[#0]"]
     assert inner.category is EffectiveCategory.IGNORED
     assert inner.reason == "a known rewrite"
     assert not [e for e in entries if e.category in FINDINGS]
@@ -660,9 +674,9 @@ async def test_unconverted() -> None:
     found = by_path(comparison)
     for path in (
         "inbound",
-        "inboundV6",
+        "inbound_v6",
         "etm",
-        "segments[0].firewall_logging_enabled",
+        f"{GLOBAL}.firewall_logging_enabled",
     ):
         entry = found[path]
         assert entry.category is EffectiveCategory.UNCONVERTED, path
@@ -681,8 +695,8 @@ async def test_a_stored_rules_logging_flags_match_the_server() -> None:
 
     assert comparison.findings == ()
     found = by_path(comparison)
-    for key in flags:
-        assert f"segments[0].outbound[0].{key}" not in found
+    for name in ("hosted_logging_enabled", "syslog_forwarding_enabled"):
+        assert f"{GLOBAL}.outbound[#0].{name}" not in found
 
 
 async def test_a_logging_flag_the_view_lacks_is_server_only() -> None:
@@ -693,9 +707,9 @@ async def test_a_logging_flag_the_view_lacks_is_server_only() -> None:
     comparison = await pipeline.compare_effective(state)
 
     found = by_path(comparison)
-    for key in ("hostedLoggingEnabled", "syslogForwardingEnabled"):
-        entry = found[f"segments[0].outbound[0].{key}"]
-        assert entry.category is EffectiveCategory.SERVER_ONLY, key
+    for name in ("hosted_logging_enabled", "syslog_forwarding_enabled"):
+        entry = found[f"{GLOBAL}.outbound[#0].{name}"]
+        assert entry.category is EffectiveCategory.SERVER_ONLY, name
         assert entry.client is MISSING
     assert len(comparison.findings) == 2
 
@@ -739,7 +753,7 @@ async def test_the_composers_security_keys_match_the_group() -> None:
 
     assert comparison.findings == ()
     for key in SECURITY_KEYS:
-        assert not [e for e in comparison.entries if f"outbound[0].{key}" in e.path]
+        assert not [e for e in comparison.entries if f"outbound[#0].{key}" in e.path]
 
 
 async def test_a_security_key_that_differs_from_its_object_is_differs() -> None:
@@ -751,15 +765,15 @@ async def test_a_security_key_that_differs_from_its_object_is_differs() -> None:
 
     found = by_path(comparison)
     assert {e.path for e in comparison.findings} == {
-        "segments[0].outbound[0].urlCategoryFiltering.unknownCategoryAction",
-        "segments[0].outbound[0].atp_action.ips_enabled",
+        f"{GLOBAL}.outbound[#0].urlCategoryFiltering.unknownCategoryAction",
+        f"{GLOBAL}.outbound[#0].atp_action.ips_enabled",
     }
-    entry = found["segments[0].outbound[0].urlCategoryFiltering.unknownCategoryAction"]
+    entry = found[f"{GLOBAL}.outbound[#0].urlCategoryFiltering.unknownCategoryAction"]
     assert entry.category is EffectiveCategory.DIFFERS
     assert (entry.client, entry.server) == ("allow", "block")
     # It is the rule's origin, and the key's source is the rule's group.
     assert entry.origin is Origin.EDGE
-    assert entry.source == "segments[0].outbound[0].securityServiceGroup"
+    assert entry.source == "segments[#0].outbound[#0].security_service_group"
     assert entry.reason is None
 
 
@@ -771,11 +785,11 @@ async def test_an_expected_security_key_the_server_lacks_is_client_only() -> Non
 
     (finding,) = comparison.findings
     assert finding.category is EffectiveCategory.CLIENT_ONLY
-    assert finding.path == "segments[0].outbound[0].urlReputationFiltering"
+    assert finding.path == f"{GLOBAL}.outbound[#0].urlReputationFiltering"
     assert finding.client == REPUTATION
     assert finding.server is MISSING
     assert finding.origin is Origin.EDGE
-    assert finding.source == "segments[0].outbound[0].securityServiceGroup"
+    assert finding.source == "segments[#0].outbound[#0].security_service_group"
 
 
 async def test_a_profile_rules_security_keys_carry_the_profile_origin() -> None:
@@ -794,10 +808,10 @@ async def test_a_profile_rules_security_keys_carry_the_profile_origin() -> None:
     (finding,) = comparison.findings
     assert (
         finding.path
-        == "segments[0].outbound[1].urlCategoryFiltering.unknownCategoryAction"
+        == f"{GLOBAL}.outbound[#1].urlCategoryFiltering.unknownCategoryAction"
     )
     assert finding.origin is Origin.PROFILE
-    assert finding.source == "segments[0].outbound[0].securityServiceGroup"
+    assert finding.source == "segments[#0].outbound[#0].security_service_group"
 
 
 async def test_a_security_key_on_a_rule_without_a_group_is_server_only() -> None:
@@ -808,7 +822,7 @@ async def test_a_security_key_on_a_rule_without_a_group_is_server_only() -> None
 
     (finding,) = comparison.findings
     assert finding.category is EffectiveCategory.SERVER_ONLY
-    assert finding.path == "segments[0].outbound[0].atp_action"
+    assert finding.path == f"{GLOBAL}.outbound[#0].atp_action"
     assert finding.client is MISSING
     assert finding.reason is None
 
@@ -820,10 +834,10 @@ async def test_an_unknown_group_reports_its_reason() -> None:
 
     found = by_path(comparison)
     assert {e.path for e in comparison.findings} == {
-        f"segments[0].outbound[0].{key}" for key in SECURITY_KEYS
+        f"{GLOBAL}.outbound[#0].{key}" for key in SECURITY_KEYS
     }
     for key in SECURITY_KEYS:
-        entry = found[f"segments[0].outbound[0].{key}"]
+        entry = found[f"{GLOBAL}.outbound[#0].{key}"]
         assert entry.category is EffectiveCategory.SERVER_ONLY, key
         assert entry.reason == UNRESOLVED
     assert UNRESOLVED in comparison.render()
@@ -836,7 +850,7 @@ async def test_an_object_the_group_names_that_is_missing_reports_its_reason() ->
 
     (finding,) = comparison.findings
     assert finding.category is EffectiveCategory.SERVER_ONLY
-    assert finding.path == "segments[0].outbound[0].atp_action"
+    assert finding.path == f"{GLOBAL}.outbound[#0].atp_action"
     assert finding.reason == UNRESOLVED
 
 
@@ -863,10 +877,10 @@ async def test_only_the_key_of_a_missing_object_carries_the_reason() -> None:
 
     found = by_path(comparison)
     assert {e.path for e in comparison.findings} == {
-        f"segments[0].outbound[0].{key}" for key in SECURITY_KEYS
+        f"{GLOBAL}.outbound[#0].{key}" for key in SECURITY_KEYS
     }
     reasons = {
-        key: found[f"segments[0].outbound[0].{key}"].reason for key in SECURITY_KEYS
+        key: found[f"{GLOBAL}.outbound[#0].{key}"].reason for key in SECURITY_KEYS
     }
     assert reasons == {
         "atp_action": None,
@@ -898,7 +912,7 @@ async def test_a_rule_in_a_segment_with_another_id_than_its_position_is_compared
     (finding,) = comparison.findings
     assert (
         finding.path
-        == "segments[3].outbound[0].urlCategoryFiltering.unknownCategoryAction"
+        == "segments[Guest].outbound[#0].urlCategoryFiltering.unknownCategoryAction"
     )
     assert finding.origin is Origin.PROFILE
 
@@ -962,12 +976,12 @@ def test_a_security_key_a_layer_stores_is_compared_as_stored() -> None:
         "firewall", view, server, ignores=(), security_objects=objects
     )
 
-    found = {e.path: e for e in entries}
-    entry = found["segments[0].outbound[0].atp_action.atp_enabled"]
+    found: dict[str, EffectiveDifference] = {e.path: e for e in entries}
+    entry = found[f"{GLOBAL}.outbound[#0].atp_action.atp_enabled"]
     assert entry.category is EffectiveCategory.DIFFERS
     assert (entry.client, entry.server) == (False, True)
     # The layer's own value, not the group's.
-    assert entry.source == "segments[0].outbound[0]"
+    assert entry.source == "segments[#0].outbound[#0]"
 
 
 async def test_another_rule_key_the_view_lacks_is_still_a_finding() -> None:
@@ -977,7 +991,7 @@ async def test_another_rule_key_the_view_lacks_is_still_a_finding() -> None:
 
     (finding,) = comparison.findings
     assert finding.category is EffectiveCategory.SERVER_ONLY
-    assert finding.path == "segments[0].outbound[0].somethingNew"
+    assert finding.path == f"{GLOBAL}.outbound[#0].somethingNew"
 
 
 class Credentials(VcoModel):
@@ -1008,8 +1022,8 @@ def test_a_secret_is_ignored_with_its_reason() -> None:
     }
     entries = compare_module("secret", view, server, ignores=())
 
-    found = {e.path: e for e in entries}
-    assert set(found) == {"login.password", "logins[0].password"}
+    found: dict[str, EffectiveDifference] = {e.path: e for e in entries}
+    assert set(found) == {"login.password", "logins[#0].password"}
     for entry in found.values():
         assert entry.category is EffectiveCategory.IGNORED
         assert entry.reason == SECRET
@@ -1032,7 +1046,7 @@ async def test_a_segment_the_composer_omits_is_ignored() -> None:
     comparison = await pipeline.compare_effective(state)
 
     assert comparison.findings == ()
-    entry = by_path(comparison)["segments[2]"]
+    entry = by_path(comparison)["segments[Guest]"]
     assert entry.category is EffectiveCategory.IGNORED
     assert entry.reason == OMITTED
     assert entry.server is MISSING
@@ -1046,8 +1060,8 @@ async def test_an_answer_with_no_segments_key_omits_every_segment() -> None:
 
     assert comparison.findings == ()
     found = by_path(comparison)
-    assert set(found) >= {"segments[0]", "segments[2]"}
-    for path in ("segments[0]", "segments[2]"):
+    assert set(found) >= {GLOBAL, "segments[Guest]"}
+    for path in (GLOBAL, "segments[Guest]"):
         assert found[path].category is EffectiveCategory.IGNORED
         assert found[path].reason == OMITTED
         assert found[path].server is MISSING
@@ -1064,7 +1078,16 @@ async def test_a_segment_only_the_server_has_is_server_only() -> None:
     assert finding.category is EffectiveCategory.SERVER_ONLY
     assert finding.path == "segments[9]"
     assert finding.client is MISSING
-    assert finding.server == extra
+    assert finding.path.parts == ("segments", Key(9))
+    assert finding.server == {
+        "segment": {
+            "segment_id": 9,
+            "name": "Extra",
+            "type_": "REGULAR",
+            "segment_logical_id": "00000000-0000-0000-0000-000000000009",
+        },
+        "outbound": [rule("x")],
+    }
 
 
 async def test_segment_order_is_not_compared() -> None:
@@ -1085,7 +1108,7 @@ async def test_a_difference_inside_a_segment_is_found_by_the_segments_id() -> No
     comparison = await pipeline.compare_effective(state)
 
     (finding,) = comparison.findings
-    assert finding.path == "segments[2].segment.name"
+    assert finding.path == "segments[Guest].segment.name"
     assert (finding.client, finding.server) == ("Guest", "Renamed")
 
 
@@ -1095,18 +1118,18 @@ async def test_additive_rules_compare_by_position() -> None:
     composed_modules(client)["segments"][0]["outbound"].reverse()
     comparison = await pipeline.compare_effective(state)
 
-    found = {e.path: e for e in comparison.findings}
-    first = found["segments[0].outbound[0].name"]
-    second = found["segments[0].outbound[1].name"]
+    found: dict[str, EffectiveDifference] = {e.path: e for e in comparison.findings}
+    first = found[f"{GLOBAL}.outbound[#0].name"]
+    second = found[f"{GLOBAL}.outbound[#1].name"]
     assert (first.client, first.server) == ("e1", "p1")
     assert (second.client, second.server) == ("p1", "e1")
     assert (str(first.origin), first.source) == (
         "edge",
-        "segments[0].outbound[0]",
+        "segments[#0].outbound[#0]",
     )
     assert (str(second.origin), second.source) == (
         "profile",
-        "segments[0].outbound[0]",
+        "segments[#0].outbound[#0]",
     )
 
 
@@ -1117,7 +1140,7 @@ async def test_an_additive_rule_the_server_lacks_is_client_only() -> None:
 
     (finding,) = comparison.findings
     assert finding.category is EffectiveCategory.CLIENT_ONLY
-    assert finding.path == "segments[0].outbound[1]"
+    assert finding.path == f"{GLOBAL}.outbound[#1]"
     assert str(finding.origin) == "profile"
 
 
@@ -1127,7 +1150,7 @@ async def test_an_absent_list_is_an_empty_one() -> None:
         entry.pop("outbound", None)
     comparison = await pipeline.compare_effective(state)
     # Global has two rules the server lacks; Guest has none, which is no difference.
-    assert [e.path for e in comparison.findings] == ["segments[0].outbound"]
+    assert [e.path for e in comparison.findings] == [f"{GLOBAL}.outbound"]
 
 
 # --- QoS ---------------------------------------------------------------------
@@ -1144,7 +1167,7 @@ async def test_qos_is_compared_by_default() -> None:
     comparison = await pipeline.compare_effective(state)
 
     assert comparison.findings == ()
-    assert {e.module for e in comparison.entries} == {"firewall", "QOS"}
+    assert {e.module for e in comparison.entries} == {"firewall", "business_policy"}
     (params,) = composed_calls(client)
     assert params["modules"] == ["firewall", "QOS"]
 
@@ -1155,7 +1178,7 @@ async def test_a_qos_display_default_the_server_lacks_is_factory() -> None:
     comparison = await pipeline.compare_effective(state, modules=["QOS"])
 
     assert comparison.findings == ()
-    found = by_path(comparison)["serviceRateLimit"]
+    found = by_path(comparison)["service_rate_limit"]
     assert found.category is EffectiveCategory.FACTORY
     assert found.server is MISSING
     assert str(found.origin) == "factory"
@@ -1168,11 +1191,11 @@ async def test_a_qos_display_default_the_server_lacks_is_factory() -> None:
     }
     comparison = await pipeline.compare_effective(state, modules=["QOS"])
     assert {e.path for e in comparison.findings} == {
-        "serviceRateLimit.enabled",
-        "serviceRateLimit.value",
+        "service_rate_limit.enabled",
+        "service_rate_limit.value",
     }
     assert {e.category for e in comparison.findings} == {EffectiveCategory.DIFFERS}
-    assert "serviceRateLimit" not in categories(comparison)
+    assert "service_rate_limit" not in categories(comparison)
 
 
 async def test_a_client_connector_the_edge_stores_is_unconverted() -> None:
@@ -1213,7 +1236,9 @@ async def test_a_cos_mapping_with_its_flag_off_matches_a_server_that_uses_it(
 
     assert comparison.findings == ()
     # The server has a value that equals the view's, so there is no entry at all.
-    assert not [e for e in comparison.entries if e.path == "segments[3].cosMapping"]
+    assert not [
+        e for e in comparison.entries if e.path == "segments[Voice].cos_mapping"
+    ]
 
 
 async def test_qos_rules_are_compared_edge_first() -> None:
@@ -1227,9 +1252,9 @@ async def test_qos_rules_are_compared_edge_first() -> None:
 
     composed_qos(client)["segments"][0]["rules"].reverse()
     comparison = await pipeline.compare_effective(state, modules=["QOS"])
-    found = {e.path: e for e in comparison.findings}
-    first = found["segments[0].rules[0].name"]
-    second = found["segments[0].rules[1].name"]
+    found: dict[str, EffectiveDifference] = {e.path: e for e in comparison.findings}
+    first = found[f"{GLOBAL}.rules[#0].name"]
+    second = found[f"{GLOBAL}.rules[#1].name"]
     assert (first.client, first.server) == ("e1", "p1")
     assert (second.client, second.server) == ("p1", "e1")
     assert (str(first.origin), str(second.origin)) == ("edge", "profile")
@@ -1242,7 +1267,7 @@ async def test_qos_web_proxy_is_unconverted() -> None:
     comparison = await pipeline.compare_effective(state, modules=["QOS"])
 
     assert comparison.findings == ()
-    entry = by_path(comparison)["segments[0].webProxy"]
+    entry = by_path(comparison)[f"{GLOBAL}.web_proxy"]
     assert entry.category is EffectiveCategory.UNCONVERTED
     assert entry.client is MISSING
     assert entry.server == proxy
@@ -1295,13 +1320,13 @@ async def test_qos_alone_can_be_compared() -> None:
     composed_modules(client)["stateful_firewall_enabled"] = True
     comparison = await pipeline.compare_effective(state, modules=["QOS"])
     assert comparison.findings == ()
-    assert {e.module for e in comparison.entries} == {"QOS"}
+    assert {e.module for e in comparison.entries} == {"business_policy"}
     (params,) = composed_calls(client)
     assert params["modules"] == ["QOS"]
 
     # The user-facing name is accepted, and asks for the wire name.
     comparison = await pipeline.compare_effective(state, modules=["business_policy"])
-    assert {e.module for e in comparison.entries} == {"QOS"}
+    assert {e.module for e in comparison.entries} == {"business_policy"}
     assert composed_calls(client)[-1]["modules"] == ["QOS"]
 
 
@@ -1355,7 +1380,7 @@ async def test_a_state_that_does_not_know_its_edge_raises_value_error() -> None:
 
 async def test_a_module_that_is_not_converted_raises_value_error() -> None:
     pipeline, state, _ = await loaded()
-    with pytest.raises(ValueError, match=r"deviceSettings.*firewall, QOS"):
+    with pytest.raises(ValueError, match=r"deviceSettings.*firewall, business_policy"):
         _ = await pipeline.compare_effective(state, modules=["deviceSettings"])
 
 
@@ -1384,6 +1409,54 @@ async def test_a_module_missing_from_the_answer_raises_composed_module_error() -
     with pytest.raises(ComposedModuleError, match="no firewall module") as raised:
         _ = await pipeline.compare_effective(state)
     assert raised.value.module == "firewall"
+
+
+async def test_a_composed_module_error_names_the_module_by_its_python_name() -> None:
+    pipeline, state, client = await loaded()
+    client.store.composed[EDGE_ID]["QOS"] = None
+    with pytest.raises(ComposedModuleError) as raised:
+        _ = await pipeline.compare_effective(state)
+    assert raised.value.module == "business_policy"
+    text = str(raised.value)
+    assert "answered null for the business_policy module of edge 42" in text
+    assert "modules=[...] (not 'business_policy')" in text
+    assert "QOS" not in text
+
+    del client.store.composed[EDGE_ID]["QOS"]
+    with pytest.raises(ComposedModuleError) as raised:
+        _ = await pipeline.compare_effective(state, modules=["QOS"])
+    assert raised.value.module == "business_policy"
+    assert "gave no business_policy module of edge 42" in str(raised.value)
+    assert "QOS" not in str(raised.value)
+
+
+async def test_a_composed_module_with_no_data_object_raises_composed_module_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline, state, client = await loaded()
+
+    async def no_data(_request: object) -> EdgeConfigurationModulesResult:
+        # A module that was not read from the VCO's answer holds no data as sent.
+        return EdgeConfigurationModulesResult.model_construct(
+            firewall=CompositeFirewallModule.model_construct(),
+            qos=CompositeQosModule.model_construct(),
+        )
+
+    monkeypatch.setattr(client, "get_edge_configuration_modules", no_data)
+
+    with pytest.raises(ComposedModuleError) as raised:
+        _ = await pipeline.compare_effective(state)
+    assert raised.value.module == "firewall"
+    assert "gave the firewall module of edge 42 no data object" in str(raised.value)
+    assert "get_edge_configuration_modules" in str(raised.value)
+
+    with pytest.raises(ComposedModuleError) as raised:
+        _ = await pipeline.compare_effective(state, modules=["QOS"])
+    assert raised.value.module == "business_policy"
+    text = str(raised.value)
+    assert "gave the business_policy module of edge 42 no data object" in text
+    assert "QOS" not in text
+    assert security_reads(client) == []
 
 
 async def test_an_edge_the_store_has_no_answer_for_is_an_error() -> None:
@@ -1454,6 +1527,246 @@ async def test_the_state_is_not_changed_by_a_comparison() -> None:
     assert (str(logging.origin), logging.value) == ("factory", False)
 
 
+# --- what a difference shows --------------------------------------------------
+
+
+def guest_qos() -> Json:
+    """A QoS profile whose second segment, Guest (ID 2), has one rule."""
+    return {
+        "segments": [
+            QOS_PROFILE["segments"][0],
+            qos_segment(2, "Guest", qos_rule("g1")),
+        ]
+    }
+
+
+OTHER_RULE = str(uuid.uuid5(uuid.NAMESPACE_DNS, "another rule"))
+
+
+def composed_segment(data: Json, segment_id: int) -> Json:
+    return next(s for s in data["segments"] if s["segment"]["segmentId"] == segment_id)
+
+
+async def test_a_difference_names_its_module_fields_and_segment() -> None:
+    pipeline, state, client = await loaded(qos_profile=guest_qos())
+    composed_segment(composed_qos(client), 2)["rules"][0]["ruleLogicalId"] = OTHER_RULE
+    comparison = await pipeline.compare_effective(state, modules=["QOS"])
+
+    (entry,) = comparison.findings
+    assert entry.module == "business_policy"
+    assert str(entry.path).startswith("segments[Guest].rules[")
+    # The rule is shown by its position in the view's list, not by its name.
+    assert entry.path == "segments[Guest].rules[#0].rule_logical_id"
+    assert entry.path.parts == ("segments", Key("Guest"), "rules", 0, "rule_logical_id")
+    round_trips(entry.path)
+    lines = comparison.render().splitlines()
+    assert lines[0] == "business_policy"
+    assert any(
+        ln.startswith("  differs segments[Guest].rules[#0].rule_logical_id: ")
+        for ln in lines
+    )
+
+
+async def test_a_source_counts_every_item_in_the_layer_the_value_came_from() -> None:
+    pipeline, state, client = await loaded(qos_profile=guest_qos())
+    composed_segment(composed_qos(client), 2)["rules"][0]["ruleLogicalId"] = OTHER_RULE
+    composed_qos(client)["segments"][0]["rules"][1]["ruleLogicalId"] = OTHER_RULE
+    comparison = await pipeline.compare_effective(state, modules=["QOS"])
+
+    found: dict[str, EffectiveDifference] = {e.path: e for e in comparison.findings}
+    # Guest is the profile's second segment: a position, though the path names it.
+    guest = found["segments[Guest].rules[#0].rule_logical_id"]
+    assert (guest.origin, guest.source) == (Origin.PROFILE, "segments[#1].rules[#0]")
+    # The profile's rule is second in the view, after the edge's, and first in
+    # the profile.
+    shared = found['segments["Global Segment"].rules[#1].rule_logical_id']
+    assert (shared.origin, shared.source) == (Origin.PROFILE, "segments[#0].rules[#0]")
+    for entry in comparison.entries:
+        assert entry.source is None or Path.parse(entry.source) == entry.source
+    assert "[profile segments[#1].rules[#0]]" in comparison.render()
+    # A display default's source is its field, by its attribute name.
+    voice = by_path(await loaded_comparison())["segments[Voice].cos_mapping"]
+    assert (voice.origin, voice.source) == (Origin.FACTORY, "segments[#1].cos_mapping")
+
+
+async def loaded_comparison() -> EffectiveComparison:
+    pipeline, state, _ = await loaded()
+    return await pipeline.compare_effective(state, modules=["QOS"])
+
+
+async def test_the_two_values_of_a_difference_have_their_keys_in_names() -> None:
+    pipeline, state, client = await loaded()
+    composed_modules(client)["segments"].append(segment(9, "Extra", rule("x")))
+    composed_modules(client)["syslog_forwarding"] = False
+    comparison = await pipeline.compare_effective(state, modules=["firewall"])
+
+    found = by_path(comparison)
+    # A segment the view lacks keeps the ID the VCO gives it.
+    extra = found["segments[9]"].server
+    assert isinstance(extra, dict)
+    assert extra["segment"]["segment_id"] == 9
+    assert "segmentId" not in extra["segment"]
+    # An object the view gives is in names too, at every depth.
+    services = found["services"].client
+    assert isinstance(services, dict)
+    assert "allow_selected_ip" in services["ssh"]
+    assert "allowSelectedIp" not in services["ssh"]
+    # A scalar stays as the VCO writes it.
+    flag = found["syslog_forwarding"]
+    assert (flag.client, flag.server) == (True, False)
+    assert (
+        '  factory services: client {"console": {"enabled": false}, '
+        '"local_ui": {"allow_selected_ip": []'
+    ) in comparison.render()
+
+
+async def test_a_key_the_models_do_not_hold_is_shown_as_the_vco_writes_it() -> None:
+    edge = {**EDGE, "services": {"ssh": {"enabled": False}, "icmp": ICMP}}
+    connector = {"enabled": True, "allowSelectedIp": []}
+    pipeline, state, client = await loaded(
+        edge, qos_edge={**QOS_EDGE, "qosClientConnector": connector}
+    )
+    composed_modules(client)["etm"] = {"allowSelectedIp": []}
+    comparison = await pipeline.compare_effective(state)
+
+    found = by_path(comparison)
+    for parts in (("services", "icmp"), ("etm",), ("qosClientConnector",)):
+        entry = found[".".join(parts)]
+        assert entry.category is EffectiveCategory.UNCONVERTED
+        # The path prints, and reads back to the key the VCO stores.
+        assert entry.path.parts == parts
+        round_trips(entry.path)
+    # No model names the keys of such a value, so they stay as stored.
+    assert found["services.icmp"].server == ICMP
+    assert found["etm"].server == {"allowSelectedIp": []}
+    assert found["qosClientConnector"].server == connector
+    assert (
+        'unconverted services.icmp: client (none), server {"allowSelectedIp": '
+        in comparison.render()
+    )
+
+
+async def test_a_key_that_holds_a_dot_or_a_bracket_is_one_part() -> None:
+    pipeline, state, client = await loaded()
+    server = composed_modules(client)
+    server["a.b"] = 1
+    server["syslog_forwarding.x"] = 5
+    server["services"] = {
+        **defaults(state)["services"],
+        "x.y": {"z": 1},
+        "we]ird": 2,
+        "br[0]": 3,
+    }
+    server["segments"][0]["outbound"][0]["k.v"] = 1
+    comparison = await pipeline.compare_effective(state, modules=["firewall"])
+
+    assert {e.path.parts for e in comparison.findings} == {
+        ("a.b",),
+        ("syslog_forwarding.x",),
+        ("services", "x.y"),
+        ("services", "we]ird"),
+        ("services", "br[0]"),
+        ("segments", Key("Global Segment"), "outbound", 0, "k.v"),
+    }
+    for entry in comparison.findings:
+        round_trips(entry.path)
+    text = comparison.render()
+    assert '  server_only "a.b": client (none), server 1' in text
+    assert '  server_only services."x.y": client (none), server {"z": 1}' in text
+
+
+async def test_a_path_the_data_reads_two_ways_is_kept_as_one_part_of_text() -> None:
+    pipeline, state, client = await loaded()
+    server = composed_modules(client)
+    services = copy.deepcopy(defaults(state)["services"])
+    services["ssh"]["enabled"] = True
+    server["services"] = services
+    # A key of the module, and a key of ``services``: both are written
+    # ``services.ssh``.
+    server["services.ssh"] = {"allowSelectedIp": []}
+    comparison = await pipeline.compare_effective(state, modules=["firewall"])
+
+    found = {e.path.parts: e for e in comparison.findings}
+    assert set(found) == {("services.ssh",), ("services", "ssh", "enabled")}
+    # What cannot be read is not named: the text is kept, and so is the value.
+    kept = found["services.ssh",]
+    assert kept.path == '"services.ssh"'
+    assert kept.server == {"allowSelectedIp": []}
+    round_trips(kept.path)
+
+
+def test_a_path_the_data_does_not_hold_is_kept_as_one_part_of_text() -> None:
+    profile = SecretData[Profile].model_validate({"login": {"user": "u"}})
+    view = effective_view(None, profile, SecretData[Effective])
+    client, _ = effective_dump(view)
+    for text in ("no.such[3].path", "login[0]", "a][", "[", ".", "login..user"):
+        shown = shown_effective_path(view, text, client, {})
+        assert shown.parts == (text,)
+        round_trips(shown)
+    assert shown_effective_path(view, "", client, {}).parts == ()
+    assert shown_effective_path(view, "login.user", client, {}) == "login.user"
+
+
+class MapEntry(VcoModel):
+    logical_id: str = ""
+
+
+class MapData(Layered[L]):
+    plain: dict[str, MapEntry] = Field(default_factory=dict)
+    hubs: Annotated[
+        Inheritable[dict[str, MapEntry]], ByPresence(), Default(factory=dict)
+    ] = Field(default=...)
+
+
+def test_an_entry_of_a_map_is_shown_by_its_key_as_stored() -> None:
+    profile = MapData[Profile].model_validate(
+        {
+            "plain": {"10.0.0.1": {"logicalId": "a"}, "k": {"logicalId": "q"}},
+            "hubs": {"h.1": {"logicalId": "b"}},
+        }
+    )
+    view = effective_view(None, profile, MapData[Effective])
+    server: Json = {
+        "plain": {"10.0.0.1": {"logicalId": "z"}, "k": {"logicalId": "q"}},
+        "hubs": {"h.1": {"logicalId": "c"}},
+    }
+    entries = compare_module("m", view, server, ignores=())
+
+    assert {e.path.parts: (e.client, e.server) for e in entries} == {
+        ("plain", "10.0.0.1", "logical_id"): ("a", "z"),
+        ("hubs", "h.1", "logical_id"): ("b", "c"),
+    }
+    assert sorted(e.path for e in entries) == [
+        'hubs."h.1".logical_id',
+        'plain."10.0.0.1".logical_id',
+    ]
+    for entry in entries:
+        round_trips(entry.path)
+    # A module pyvelo has no other name for keeps the one it was given.
+    assert {e.module for e in entries} == {"m"}
+
+
+async def test_an_ignore_is_written_in_the_vcos_keys_and_shown_in_names() -> None:
+    _, state, client = await loaded(qos_profile=guest_qos())
+    composed_segment(composed_qos(client), 2)["rules"][0]["ruleLogicalId"] = OTHER_RULE
+    ignores = [EffectiveIgnore("QOS", "segments[2].rules[0].ruleLogicalId", "known")]
+    entries = compare_module(
+        "QOS", state.effective.qos, composed_qos(client), ignores=ignores
+    )
+
+    (entry,) = (e for e in entries if e.category is EffectiveCategory.IGNORED)
+    assert (entry.module, entry.reason) == ("business_policy", "known")
+    assert entry.path == "segments[Guest].rules[#0].rule_logical_id"
+    # The same text in names is no ignore: it matches no path of the comparison.
+    named = [EffectiveIgnore("QOS", str(entry.path), "known")]
+    entries = compare_module(
+        "QOS", state.effective.qos, composed_qos(client), ignores=named
+    )
+    assert [e.category for e in entries if e.path == entry.path] == [
+        EffectiveCategory.DIFFERS
+    ]
+
+
 # --- the comparison's text --------------------------------------------------------
 
 
@@ -1461,7 +1774,7 @@ async def test_render_is_by_module_then_path_with_a_header_per_module() -> None:
     entries = (
         EffectiveDifference(
             "firewall",
-            "b",
+            Path(("b",)),
             1,
             2,
             None,
@@ -1470,11 +1783,11 @@ async def test_render_is_by_module_then_path_with_a_header_per_module() -> None:
             None,
         ),
         EffectiveDifference(
-            "firewall", "a", 1, 2, None, None, EffectiveCategory.DIFFERS, None
+            "firewall", Path(("a",)), 1, 2, None, None, EffectiveCategory.DIFFERS, None
         ),
         EffectiveDifference(
             "qos",
-            "z",
+            Path(("z",)),
             MISSING,
             "x" * 300,
             None,

@@ -1792,7 +1792,9 @@ class ConfigPipeline:
         not a finding; *state* is not changed, except that a resolver the plan
         needs is loaded into it, as ``save`` does. Every difference is an
         entry, and the ones that say the view and the VCO disagree are
-        ``EffectiveComparison.findings``.
+        ``EffectiveComparison.findings``. An entry names its module by its
+        python name and its path as every other output does
+        (``EffectiveDifference``).
 
         When a rule of the firewall view names a security service group, the
         security objects of the enterprise (the groups, and the URL category,
@@ -1863,27 +1865,40 @@ class ConfigPipeline:
     async def _composed_module(
         self, edge: _ComparedEdge, name: str, objects: SecurityObjects | None
     ) -> tuple[list[EffectiveDifference], SecurityObjects | None]:
-        """Compare one module with the VCO's, and pass on the security objects read."""
+        """Compare one module with the VCO's, and pass on the security objects read.
+
+        *name* is the VCO's name of the module. *objects* are the enterprise's
+        security objects where an earlier module's comparison read them. They
+        are read here only when none were passed in and a rule of the firewall
+        view names a security service group, and what was read is returned
+        for the next module: so one comparison of an edge reads them at most
+        once, and not at all where no rule names a group.
+
+        Raises ``ComposedModuleError``, which names the module by its python
+        name, for a module the VCO answered ``null`` for or left out, and for
+        one whose answer holds no data object.
+        """
         attribute = module_attribute(name)
+        shown = python_module_name(name)
         module: object = getattr(edge.composed, attribute, None)
         data: object = getattr(module, "raw_data", MISSING)
         if module is None or module is MISSING:
             said = (
-                f"answered null for the {name} module"
+                f"answered null for the {shown} module"
                 if module is None
-                else f"gave no {name} module"
+                else f"gave no {shown} module"
             )
             raise ComposedModuleError(
                 f"edge/getEdgeConfigurationModules {said} of edge {edge.edge_id}. "
                 "The VCO hides a composition error that way, so there is "
                 "nothing to compare the view with. Open the edge in the VCO "
                 "to see why its modules do not compose, or compare the other "
-                f"modules with modules=[...] (not {name!r})",
+                f"modules with modules=[...] (not {shown!r})",
                 module=name,
             )
         if not isinstance(data, dict):
             raise ComposedModuleError(
-                f"edge/getEdgeConfigurationModules gave the {name} module of "
+                f"edge/getEdgeConfigurationModules gave the {shown} module of "
                 f"edge {edge.edge_id} no data object, so there is nothing to "
                 "compare the view with. Read the module with "
                 "get_edge_configuration_modules to see what the VCO sent",
@@ -2065,7 +2080,9 @@ def build_default_pipeline(
 def _converted(modules: Sequence[str] | None) -> tuple[str, ...]:
     """The converted modules *modules* names (all of them for ``None``).
 
-    ``ValueError`` for another.
+    Each is given by either of its names, and returned by the VCO's.
+    ``ValueError`` for another: it names the module as it was given and lists
+    the converted modules by their python names.
     """
     if modules is None:
         return CONVERTED_MODULES
@@ -2073,10 +2090,11 @@ def _converted(modules: Sequence[str] | None) -> tuple[str, ...]:
     for module in modules:
         name = _resolve_module_name(module).value
         if name not in CONVERTED_MODULES:
+            converted = ", ".join(map(python_module_name, CONVERTED_MODULES))
             raise ValueError(
                 f"compare_effective: {module!r} has no effective view yet, so "
                 "every key the VCO composes for it would be reported as "
-                f"server_only. Converted modules: {', '.join(CONVERTED_MODULES)}"
+                f"server_only. Converted modules: {converted}"
             )
         names.append(name)
     return tuple(names)
