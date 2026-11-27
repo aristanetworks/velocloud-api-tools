@@ -1758,3 +1758,22 @@ async def test_an_edit_a_save_does_not_write_names_the_module_to_revert() -> Non
 
     assert str(exc.value).startswith("control_plane: this state has an edit to a")
     assert "Take the edit back with revert (module control_plane)" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_the_modules_a_save_writes_are_listed_by_their_python_names() -> None:
+    """In the refusal of a patch, and in that of a save of an edit made by hand."""
+    listed = "it writes the modules device_settings, business_policy, wan and firewall"
+    state = _control_plane_state()
+    with pytest.raises(PatchError) as patched:
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="control_plane", patch={"gateway_selection": {"mode": "x"}}
+        )
+    state.profile_config.control_plane.data.gateway_selection.mode = "static"
+    with pytest.raises(TypeError) as saved:
+        _ = await ConfigPipeline(MockVcoClient.for_state(state)).save(state)
+
+    for text in (patched.value.message, str(saved.value)):
+        assert listed in text
+        assert "QoS" not in text
+        assert "WAN" not in text

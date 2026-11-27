@@ -304,6 +304,16 @@ _WRITABLE_MODULES = (
     FirewallConfigurationModule,
 )
 
+
+def _written_modules() -> str:
+    """The modules a save writes, by their python names, as a sentence lists them."""
+    names = [
+        python_module_name(str(cls.model_fields["name"].default))
+        for cls in _WRITABLE_MODULES
+    ]
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
 _CHANGED_BY_DEVICE_SETTINGS = (
     ConfigurationModuleName.QOS,
     ConfigurationModuleName.FIREWALL,
@@ -2683,8 +2693,7 @@ def _patched_module(
             state.drop_module(mod)
         raise PatchError(
             f"{python_module_name(mod.name)}: a save does not write this module "
-            "(it writes "
-            "device settings, QoS, WAN and firewall modules), so a "
+            f"(it writes the modules {_written_modules()}), so a "
             "patch to it is not applied. Make the change in the VCO",
             Path(()),
             "address",
@@ -3034,8 +3043,8 @@ def _require_writable(mod: AnyStoredModule) -> _WritableModule:
         named = python_module_name(mod.name)
         raise TypeError(
             f"{named}: this state has an edit to a {type(mod).__name__}, which a "
-            "save does not write (it writes device settings, QoS, WAN and firewall "
-            f"modules). Take the edit back with revert (module {named}), or "
+            f"save does not write (it writes the modules {_written_modules()}). "
+            f"Take the edit back with revert (module {named}), or "
             "load the state again; nothing was sent"
         )
     return mod
