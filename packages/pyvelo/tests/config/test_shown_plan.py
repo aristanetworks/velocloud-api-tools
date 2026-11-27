@@ -8,8 +8,10 @@ the VCO's names: the save reads those.
 """
 
 import copy
+from collections.abc import Awaitable, Callable
 from typing import Any
 
+import pytest
 from hub_helpers import HUB_A, HUB_B
 from hub_state import (
     FROM_BOTH_LISTS,
@@ -19,12 +21,25 @@ from hub_state import (
     hub_backhaul_rule,
     rule_uses_hub,
 )
-from pyvelo.client.module_write import plan_module
+from profile_state import profile_state
+from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
+from pyvelo.client.module_write import ModulePlan, plan_module
 from pyvelo.client.schemas.configuration import DeviceSettingsConfigurationModule
 from pyvelo.config import ConfigPipeline, add
 from pyvelo.config.state import ConfigState
-from pyvelo.core.rebase import ItemMove, ItemPlace, Key, Path
+from pyvelo.core import delete
+from pyvelo.core.names import ChangeNames
+from pyvelo.core.rebase import (
+    ItemMove,
+    ItemPlace,
+    Key,
+    KeyedList,
+    Path,
+    node_child,
+    pair_items,
+)
 from pyvelo.testing import make_module_json
+from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
 from shown_paths import reached
 
 ROUTE_HUBS = "action.edge_to_edge_route_action.route_cfg.backhaul_edges"
@@ -324,3 +339,266 @@ async def test_an_order_entry_names_its_items_as_shown() -> None:
         ["Hub-B", "Hub-A"],
         (ItemMove(Key("Hub-B"), ItemPlace()),),
     )
+
+
+# ---------------------------------------------------------------------------
+# An item is paired between the data as read and as edited as the save pairs it
+# ---------------------------------------------------------------------------
+
+
+def net(vlan_id: int, name: str, host: int = 0) -> dict[str, Any]:
+    """A LAN network: keyed by its VLAN ID, shown by its name."""
+    return {
+        "vlanId": vlan_id,
+        "name": name,
+        "segmentId": 0,
+        "cidrIp": f"10.{vlan_id}.{host}.0",
+        "cidrPrefix": 24,
+    }
+
+
+async def lan_state(*networks: dict[str, Any]) -> ConfigState:
+    """A profile whose device settings have the LAN *networks*."""
+    return await profile_state(
+        [ds_entry(GLOBAL), ds_entry(GUEST)],
+        [qos_entry(GLOBAL), qos_entry(GUEST)],
+        [firewall_entry(GLOBAL), firewall_entry(GUEST)],
+        networks=list(networks),
+    )
+
+
+def lan_plan(state: ConfigState) -> ModulePlan:
+    (module,) = [m for m in state.plan().modules if m.name == "deviceSettings"]
+    return module
+
+
+def lan_lines(state: ConfigState) -> list[str]:
+    """The lines of the device settings plan about ``lan.networks``, each cut at ``:``.
+
+    An added item's line is cut before its value.
+    """
+    lines = lan_plan(state).render().splitlines()
+    return [
+        line.split(": {", maxsplit=1)[0] for line in lines if " lan.networks" in line
+    ]
+
+
+async def deleted_then_added() -> ConfigState:
+    """``Old``, VLAN 10, is deleted, and a network ``New`` is added as VLAN 10."""
+    state = await lan_state(net(1, "first"), net(10, "Old"))
+    await edit(state, "deviceSettings", {"lan": {"networks": {"Old": delete()}}})
+    new = add({"name": "New", "segment_id": 0})
+    await edit(state, "deviceSettings", {"lan": {"networks": {"10": new}}})
+    return state
+
+
+async def removed_before_two_of_one_key() -> ConfigState:
+    """``X`` is removed from before ``a`` and ``b``, both VLAN 1; ``D`` is added."""
+    state = await lan_state(net(9, "X"), net(1, "a", 1), net(1, "b", 2))
+    del state.profile.device_settings.lan.networks[0]
+    new = add({"name": "D", "segment_id": 0})
+    await edit(state, "deviceSettings", {"lan": {"networks": {"5": new}}})
+    return state
+
+
+async def reordered_with_one_key_twice() -> ConfigState:
+    """``A`` and ``B`` are both VLAN 1; ``A`` goes last."""
+    state = await lan_state(net(1, "A", 1), net(2, "C"), net(1, "B", 2))
+    networks = state.profile.device_settings.lan.networks
+    networks[:] = [networks[1], networks[2], networks[0]]
+    return state
+
+
+async def test_an_item_added_under_the_key_of_one_removed_is_not_that_item() -> None:
+    """The ``-`` line names the item removed and the ``+`` line the item added.
+
+    Both changes are at ``lan.networks[10]``: the key is all they share.
+    """
+    state = await deleted_then_added()
+    plan = lan_plan(state)
+    assert [str(change.path) for change in plan.changes] == [
+        "lan.networks[10]",
+        "lan.networks[10]",
+    ]
+    assert lan_lines(state) == [
+        "  - lan.networks[Old]",
+        "  + lan.networks[New] (after first)",
+    ]
+    removed, added = state.get_field_changes("device_settings")
+    assert (str(removed.path), str(added.path)) == (
+        "lan.networks[Old]",
+        "lan.networks[New]",
+    )
+    assert isinstance(removed.before, dict)
+    assert isinstance(added.after, dict)
+    assert (removed.before["name"], added.after["name"]) == ("Old", "New")
+    assert added.place == ItemPlace(Key("first"))
+
+
+async def test_a_place_after_an_item_named_by_position_names_that_item() -> None:
+    """``b`` is ``#2`` as read and ``#1`` as edited, where ``#2`` is the added item."""
+    state = await removed_before_two_of_one_key()
+    removal, addition = lan_plan(state).changes
+    assert (str(removal.path), str(addition.path)) == (
+        "lan.networks[9]",
+        "lan.networks[5]",
+    )
+    assert addition.place == ItemPlace(2)
+    assert lan_lines(state) == [
+        "  - lan.networks[X]",
+        "  + lan.networks[D] (after b)",
+    ]
+    assert state.get_field_changes("device_settings")[1].place == ItemPlace(Key("b"))
+
+
+async def test_a_move_of_an_item_named_by_position_names_that_item() -> None:
+    """``A`` is ``#0`` as read and ``B`` ``#2``; as edited they are ``#2``, ``#1``."""
+    state = await reordered_with_one_key_twice()
+    (order,) = lan_plan(state).changes
+    assert order.moves == (ItemMove(0, ItemPlace(2)),)
+    assert lan_lines(state) == ["  ~ lan.networks: order: A after B"]
+    (change,) = state.get_field_changes("device_settings")
+    assert change.moves == (ItemMove(Key("A"), ItemPlace(Key("B"))),)
+    assert (change.before, change.after) == (["A", "C", "B"], ["C", "B", "A"])
+
+
+async def test_an_item_only_a_position_names_is_shown_at_its_position_as_edited() -> (
+    None
+):
+    """Two networks of one VLAN and one name, the first as read moved last.
+
+    The move is ``#0 after #2`` in positions as read; the item is at ``#2`` as
+    edited, after the one at ``#1``.
+    """
+    state = await lan_state(net(1, "n", 1), net(2, "C"), net(1, "n", 2))
+    networks = state.profile.device_settings.lan.networks
+    networks[:] = [networks[1], networks[2], networks[0]]
+    (order,) = lan_plan(state).changes
+    assert order.moves == (ItemMove(0, ItemPlace(2)),)
+    assert lan_lines(state) == ["  ~ lan.networks: order: #2 after #1"]
+
+
+async def two_added_of_one_key(first: str, second: str) -> ConfigState:
+    """Two networks of VLAN 7 put before the three as read: no key names either."""
+    state = await lan_state(net(9, "X"), net(1, "a"), net(2, "b"))
+    lan = state.profile.device_settings.lan
+    rows = [net(7, first, 1), net(7, second, 2)]
+    lan.networks[:0] = [type(lan.networks[0]).model_validate(row) for row in rows]
+    return state
+
+
+async def test_an_added_item_named_by_position_is_the_item_there_as_edited() -> None:
+    """``#0`` and ``#1`` are the added items, not ``X`` and ``a``, there as read."""
+    state = await two_added_of_one_key("p", "q")
+    first, second = lan_plan(state).changes
+    assert (str(first.path), str(second.path)) == (
+        "lan.networks[#0]",
+        "lan.networks[#1]",
+    )
+    assert second.place == ItemPlace(0)
+    assert lan_lines(state) == [
+        "  + lan.networks[p] (first)",
+        "  + lan.networks[q] (after p)",
+    ]
+
+
+async def test_an_added_item_nothing_names_keeps_its_position_as_edited() -> None:
+    state = await two_added_of_one_key("p", "p")
+    assert lan_lines(state) == [
+        "  + lan.networks[#0] (first)",
+        "  + lan.networks[#1] (after #0)",
+    ]
+
+
+def rule_without_id(name: str, port: int) -> dict[str, Any]:
+    """A QoS rule as read without a ``ruleLogicalId``: each parse makes it one."""
+    rule = hub_backhaul_rule(name, HUB_A)
+    del rule["ruleLogicalId"]
+    rule["match"]["dport_low"] = port
+    return rule
+
+
+async def test_items_read_without_an_id_are_paired_as_the_documents_have_them() -> None:
+    """Two rules of one name and no ID as read, and a rule added at each end.
+
+    The ID each parse makes for them is in no document, so the save pairs
+    each with itself, and places the last rule after ``#2`` as read. That
+    rule is ``#3`` as edited, where ``#2`` is the rule ``Other``.
+    """
+    state = await guest_backhaul_state(
+        rule_without_id("Web", 80),
+        rule_without_id("Other", 81),
+        rule_without_id("Web", 82),
+    )
+    body = {k: v for k, v in rule_without_id("New", 83).items() if k != "name"}
+    for name, place in (("New1", {"first": True}), ("New2", {"last": True})):
+        patch = {"segments": {"Guest": {"rules": {name: add(body, **place)}}}}
+        await edit(state, "QOS", patch)
+    (module,) = [m for m in state.plan().modules if m.name == "QOS"]
+    _, last = module.changes
+    assert last.place == ItemPlace(2)
+    second_web = state.profile.qos.segments[1].rules[3]
+    assert (second_web.name, second_web.match.destination_port_low) == ("Web", 82)
+    # No name and no key is that rule's alone: it is shown by its alt key.
+    assert module.shown_change(last).place == ItemPlace(
+        Key(str(second_web.rule_logical_id))
+    )
+
+
+@pytest.mark.parametrize(
+    "made",
+    [
+        deleted_then_added,
+        removed_before_two_of_one_key,
+        reordered_with_one_key_twice,
+    ],
+)
+async def test_the_items_are_paired_as_the_changes_were_made(
+    made: Callable[[], Awaitable[ConfigState]],
+) -> None:
+    """The pairing a path is named by is the one of the documents the save compared."""
+    state = await made()
+    plan = lan_plan(state)
+    read, planned = plan.as_read, plan.planned
+    assert isinstance(read, DeviceSettingsData)
+    assert isinstance(planned, DeviceSettingsData)
+    node = node_child(type(read.lan), "networks")
+    assert isinstance(node, KeyedList)
+    profile = state.profile_config
+    assert profile is not None
+    as_read: Any = profile.device_settings.raw_data
+    pairing = pair_items(as_read["lan"]["networks"], plan.data["lan"]["networks"], node)
+    assert pairing is not None
+    named_by = ChangeNames(read, planned).pairing(read.lan, planned.lan, "networks")
+    assert named_by is not None
+    assert named_by.partner == dict(pairing.pairs)
+    assert pairing.pairs
+
+
+async def test_an_order_line_names_only_the_moves_it_prints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Five moves are named and the rest counted; a field change has them all."""
+    state = await lan_state(*(net(n, f"n{n}") for n in range(1, 9)))
+    state.profile.device_settings.lan.networks.reverse()
+    plan = lan_plan(state)
+    (order,) = plan.changes
+    assert order.moves is not None
+    assert len(order.moves) == 7
+    named = ModulePlan.named
+    calls: list[Path] = []
+
+    def counted(self: ModulePlan, path: Path, *, removed: bool = False) -> Path:
+        calls.append(path)
+        return named(self, path, removed=removed)
+
+    monkeypatch.setattr(ModulePlan, "named", counted)
+    assert plan.render().splitlines()[1] == (
+        "  ~ lan.networks: order: n8 first; n7 after n8; n6 after n7; "
+        "n5 after n6; n4 after n5; and 2 more"
+    )
+    # The list's own path, five items and the four they are placed after.
+    assert len(calls) == 10
+    (change,) = state.get_field_changes("device_settings")
+    assert change.moves is not None
+    assert [str(move) for move in change.moves][-2:] == ["n3 after n4", "n2 after n3"]

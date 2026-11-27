@@ -582,7 +582,7 @@ written left to right:
 | A field | Its Python attribute name. A dot joins it to the part before; the first part has none. | `vpn.backhaul_edges` |
 | An item of a list, by its name, its key or its alt key | The text in brackets after the list. It is bare when it is made of letters, digits, `_` and `-`, does not start with `-`, is not all digits, and does not read as a JSON number, `true` or `false`; else it is a JSON string. | `segments[Guest]`, `segments["Global Segment"]`, `rules["24"]`, `rules["a]b"]` |
 | An item whose key has several parts | The parts, each written by that rule, joined by commas in one pair of brackets. A number part is bare, and a text part that reads as a number is quoted. | `collectors["10.0.0.1",UDP,514]` (a syslog collector, by its `host`, `protocol` and `port`), `static["10.0.0.0","24","192.168.1.1",GE3]` (a static route, whose prefix is text) |
-| An item by its position | `[#n]`, counting from 0 in the list as it was read. This is for an item that no name or key names alone, and for an item of a list without a key. | `rules[#0]` |
+| An item by its position | `[#n]`, counting from 0 in the list as the state holds it, with your edits. This is for an item that no name or key names alone, and for an item of a list without a key. | `rules[#0]` |
 | An entry of a map, and a key the model does not declare | The key as stored, after a dot. It is bare when it is letters, digits and `_` and does not start with a digit; else it is a JSON string. | `refs."deviceSettings:backHaulEdge"` |
 
 Not every path that is shown is a place `apply` takes. A key the model does
@@ -660,10 +660,15 @@ await pipeline.apply(
 )
 ```
 
-`[#n]` in a path is a position: the item at place `n` of the list as it was
-read, which is what pyvelo prints it for. As a patch key it is the text
-`"#n"`, and a patch reads that text first as the key of an item (in a list of
-values, as an entry) and as a position only when no item has it. So in the
+`[#n]` in a path is a position: the item at place `n` of the list as the
+state holds it, with your edits. That is the list pyvelo counts in where it
+prints a position (in a plan line, a field change or the error of a patch),
+so the path is one `apply` takes. The one exception is a plan line or a
+field change that removes an item: the item is no longer in the state, and
+its position is the one it had in the list as it was read. As a patch key it
+is the text `"#n"`, and a patch reads that text first as the key of an item
+(in a list of values, as an entry) and as a position only when no item has
+it. So in the
 one case where another item of the list has the text `#n` as its key or its
 value, `apply` refuses the position (`PatchError`, kind `address`, at
 `rules[#1]`): the patch would change that other item without a word. The
@@ -797,10 +802,16 @@ firewall: update
   An item is named in the data as edited, so a change inside a rule you
   renamed is listed under the rule's new name, and the path is one `apply`
   takes as `path`. An item the save removes is named as it was read, below
-  the parts above it as they are now. In a list whose key is the name and
-  that has no other key (a LAN interface), a renamed item is a `-` line under
-  the old name and a `+` line under the new one. An object after `+` has its
-  keys by attribute name; a key the model does not declare stays as stored.
+  the parts above it as they are now. A position is counted in the list the
+  item is named in: the list as edited, and the list as read for an item the
+  save removes. The same holds for the item a `+` line is placed after and
+  for the items of an `order:` line, which are all in the data as edited. An
+  item added under the key of one the same edits delete is another item: the
+  `-` line names the one deleted and the `+` line the one added. In a list
+  whose key is the name and that has no other key (a LAN interface), a
+  renamed item is a `-` line under the old name and a `+` line under the new
+  one. An object after `+` has its keys by attribute name; a key the model
+  does not declare stays as stored.
   The plan's own data is in the names the VCO uses: `ModulePlan.name` is
   `QOS`, and the paths of `ModulePlan.changes` have the VCO's keys and each
   item's key as read. `ModulePlan.named(path)` shows one of those paths as

@@ -70,6 +70,7 @@ is reported (``legacy_keys``) and left, never written just to strip it.
 """
 
 import copy
+import functools
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -140,7 +141,7 @@ from pyvelo.core.base import (
 )
 from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.layers import Edge, Layered, Profile
-from pyvelo.core.names import named_change_path, named_path, named_value
+from pyvelo.core.names import ChangeNames, named_path, named_value
 from pyvelo.core.owned import UnflaggedInUse, unflagged_in_use_at
 from pyvelo.core.rebase import (
     ItemMove,
@@ -165,7 +166,7 @@ from pyvelo.core.response_check import (
     ServerChange,
     check_response,
 )
-from pyvelo.core.show import moves_text, shown, shown_together
+from pyvelo.core.show import MOVES_SHOWN, moves_text, shown, shown_together
 
 type _Operation = Literal["none", "update", "insert"]
 
@@ -366,18 +367,34 @@ class ModulePlan:
         name, and the path names the rule in the data the caller holds. With
         *removed* (the change removes what *path* names) an item the plan
         removes, and all below it, is shown as the data as read names it
-        (``named_change_path``).
+        (``named_change_path``). An item as read and its item as planned are
+        the two the plan's changes were made between, so a path never names
+        another item; a position still shown (nothing else names the item
+        alone) is its position in the data it is shown in.
 
         A plan that lacks one of the two (it was made from a mapping, or of a
         module that never carried data) shows the path in the one the state
         asks for, and by the class of the data where it lacks that: the fields
         are named, and each item keeps the key it is written with.
         """
-        read, edited = self.as_read, self.planned
-        if read is not None and edited is not None:
-            return named_change_path(path, read, edited, removed=removed)
-        data = read if removed else edited
+        names = self._change_names
+        if names is not None:
+            return names.path(path, removed=removed)
+        data = self.as_read if removed else self.planned
         return named_path(path, self.model if data is None else data)
+
+    @functools.cached_property
+    def _change_names(self) -> ChangeNames | None:
+        """What names the paths between the data as read and as planned.
+
+        None for a plan that lacks one of the two. It is made once for the
+        plan and keeps how the items of each list are paired, so the lines of
+        a plan do not each pair the lists again.
+        """
+        read, edited = self.as_read, self.planned
+        if read is None or edited is None:
+            return None
+        return ChangeNames(read, edited)
 
     def _named_item(self, items: Path, item: ItemPart) -> ItemPart:
         """*item*, an item of the list at *items* that is there as planned, as shown."""
@@ -408,6 +425,18 @@ class ModulePlan:
             )
         return shown_names
 
+    def _named_moves(
+        self, items: Path, moves: Sequence[ItemMove]
+    ) -> tuple[ItemMove, ...]:
+        """*moves*, of items of the list at *items*, with each item as shown."""
+        return tuple(
+            ItemMove(
+                self._named_item(items, move.item),
+                self._named_place(items, move.place),
+            )
+            for move in moves
+        )
+
     def shown_change(self, change: RawChange) -> RawChange:
         """*change*, one of ``changes``, as pyvelo shows it.
 
@@ -425,13 +454,7 @@ class ModulePlan:
                 path,
                 self._named_names(change.path, change.before),
                 self._named_names(change.path, change.after),
-                moves=tuple(
-                    ItemMove(
-                        self._named_item(change.path, move.item),
-                        self._named_place(change.path, move.place),
-                    )
-                    for move in change.moves
-                ),
+                moves=self._named_moves(change.path, change.moves),
             )
         place = change.place
         if place is not None:
@@ -447,11 +470,14 @@ class ModulePlan:
         """The line of ``render`` for *change*, as ``shown_change`` shows it.
 
         The secrets are found by the path as the change has it, in the VCO's
-        keys.
+        keys. Of an order entry only the moves the line prints are looked up:
+        the rest are counted.
         """
+        if change.moves is not None:
+            printed = self._named_moves(change.path, change.moves[:MOVES_SHOWN])
+            moves = (*printed, *change.moves[MOVES_SHOWN:])
+            return f"  ~ {self.named(change.path)}: order: {moves_text(moves)}"
         seen = self.shown_change(change)
-        if seen.moves is not None:
-            return f"  ~ {seen.path}: order: {moves_text(seen.moves)}"
         if seen.after is MISSING:
             return f"  - {seen.path}"
         if seen.before is MISSING:

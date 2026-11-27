@@ -21,7 +21,9 @@ from pyvelo.client.models.enterprise.service import SymantecWssLocationUsage
 from pyvelo.client.schemas.enterprise import DnsService
 from pyvelo.core import (
     Alias,
+    ConfigContext,
     Edge,
+    EdgeOnly,
     Effective,
     Key,
     KeyField,
@@ -35,7 +37,9 @@ from pyvelo.core import (
     ResolverNotLoadedError,
     SegmentIdentity,
     VcoModel,
+    add,
     at,
+    delete,
     effective_view,
     get_key_spec,
     item_part,
@@ -48,8 +52,14 @@ from pyvelo.core import (
 )
 from pyvelo.core.layers import L
 from pyvelo.core.merge import nest_patch, nested_under
-from pyvelo.core.names import named_change_path, named_error
-from pyvelo.core.rebase import item_key
+from pyvelo.core.names import ChangeNames, named_change_path, named_error
+from pyvelo.core.rebase import (
+    KeyedList,
+    item_key,
+    mark_added_items,
+    node_child,
+    pair_items,
+)
 
 
 class Hub(VcoModel):
@@ -809,6 +819,22 @@ def test_a_list_of_wrapped_items_keeps_its_positions() -> None:
     assert item_part(view.segments[0], "rules", 1) == 1
 
 
+def test_a_list_of_wrapped_items_is_not_paired() -> None:
+    """Its items are not plain models: a part that names one is kept."""
+    segment = {
+        "segment": {"segmentId": 1, "name": "Guest"},
+        "rules": [{"name": "Web"}, {"name": "Mail"}],
+    }
+    profile = Mod[Profile].model_validate(mod_json(segments=[segment]))
+    edge = Mod[Edge].model_validate(mod_json(segments=[segment]))
+    view = effective_view(edge, profile, Mod[Effective])
+    names = ChangeNames(view, view)
+    assert names.pairing(view.segments[0], view.segments[0], "rules") is None
+    assert names.path(Path.parse("segments[#0].rules[#1].action")) == (
+        "segments[Guest].rules[#1].action"
+    )
+
+
 class Whole(Layered[L]):
     defaults: Annotated[ProfileOnly[list[Rule]], KeyField("name")] = kind_default(
         factory=list
@@ -983,6 +1009,234 @@ def test_keys_that_differ_by_letter_case_are_one_where_the_list_folds_case() -> 
     edited = Macs.model_validate({"macs": [{"macAddress": "aa:bb"}]})
     path = Path(("macs", Key("AA:BB"), "note"))
     assert named_change_path(path, read, edited, removed=True) == 'macs["aa:bb"].note'
+
+
+def test_an_item_an_add_built_is_not_the_item_whose_key_it_has() -> None:
+    """A hub deleted and one added under its key: two items, one path."""
+    read = doc({"logicalId": "h1", "name": "Old"})
+    edited = read.model_copy(deep=True)
+    _ = edited.merge_patch({"rules": {"Web": {"hubs": {"Old": delete()}}}})
+    _ = edited.merge_patch({"rules": {"Web": {"hubs": {"h1": add({"name": "New"})}}}})
+    assert changed("rules[Web].hubs[h1]", read, edited, removed=True) == (
+        "rules[Web].hubs[Old]"
+    )
+    assert changed("rules[Web].hubs[h1]", read, edited) == "rules[Web].hubs[New]"
+
+
+class Net(VcoModel):
+    vlan_id: int | None = None
+    name: str | None = None
+    net_id: str | None = None
+    note: str = ""
+
+
+class Lan(VcoModel):
+    nets: Annotated[list[Net], KeyField("vlan_id", label="name")] = Field(
+        default_factory=list
+    )
+
+
+class LanWithIds(VcoModel):
+    nets: Annotated[list[Net], KeyField("vlan_id", alt="net_id", label="name")] = Field(
+        default_factory=list
+    )
+
+
+def net(vlan_id: int | None, name: str, net_id: str | None = None) -> dict[str, object]:
+    """A row as read: it has only the keys that are given."""
+    row: dict[str, object] = {"name": name}
+    if vlan_id is not None:
+        row["vlanId"] = vlan_id
+    if net_id is not None:
+        row["netId"] = net_id
+    return row
+
+
+def delete_then_add(holder: Lan | LanWithIds) -> None:
+    _ = holder.merge_patch({"nets": {"Old": delete()}})
+    _ = holder.merge_patch({"nets": {"10": add({"name": "New"})}})
+
+
+def drop_first(holder: Lan | LanWithIds) -> None:
+    del holder.nets[0]
+
+
+def reverse(holder: Lan | LanWithIds) -> None:
+    holder.nets.reverse()
+
+
+def reverse_and_note(holder: Lan | LanWithIds) -> None:
+    holder.nets.reverse()
+    holder.nets[1].note = "changed"
+
+
+def first_goes_last(holder: Lan | LanWithIds) -> None:
+    holder.nets.append(holder.nets.pop(0))
+
+
+def new_key(holder: Lan | LanWithIds) -> None:
+    holder.nets[0].vlan_id = 3
+
+
+def swap_keys(holder: Lan | LanWithIds) -> None:
+    one, two = holder.nets
+    one.vlan_id, two.vlan_id = two.vlan_id, one.vlan_id
+
+
+def note_on_last(holder: Lan | LanWithIds) -> None:
+    holder.nets[-1].note = "changed"
+
+
+type Edit = Callable[[Lan | LanWithIds], None]
+
+PAIRED: list[
+    tuple[str, type[Lan | LanWithIds], list[dict[str, object]], Edit, object]
+] = [
+    (
+        "an item added under the key of one removed is the partner of none",
+        Lan,
+        [net(1, "first"), net(10, "Old")],
+        delete_then_add,
+        {0: 0},
+    ),
+    (
+        "two items of one key that did not change are each themselves",
+        Lan,
+        [net(9, "X"), net(1, "a"), net(1, "b")],
+        drop_first,
+        {1: 0, 2: 1},
+    ),
+    (
+        "two items of one key are paired by their alt keys",
+        LanWithIds,
+        [net(1, "a", "i1"), net(1, "b", "i2")],
+        reverse_and_note,
+        {0: 1, 1: 0},
+    ),
+    (
+        "an item without a key that did not change is itself",
+        Lan,
+        [net(None, "a"), net(2, "b")],
+        reverse,
+        {0: 1, 1: 0},
+    ),
+    (
+        "items that change place",
+        Lan,
+        [net(1, "A"), net(2, "C"), net(1, "B")],
+        first_goes_last,
+        {0: 2, 1: 0, 2: 1},
+    ),
+    (
+        "an item given another key is paired by its alt key",
+        LanWithIds,
+        [net(1, "a", "i1"), net(2, "b", "i2")],
+        new_key,
+        {0: 0, 1: 1},
+    ),
+    (
+        "two items that swap keys are paired by their alt keys",
+        LanWithIds,
+        [net(1, "a", "i1"), net(2, "b", "i2")],
+        swap_keys,
+        {0: 0, 1: 1},
+    ),
+    (
+        "without an alt key each is paired with the item that now has its key",
+        Lan,
+        [net(1, "a"), net(2, "b")],
+        swap_keys,
+        {0: 1, 1: 0},
+    ),
+    (
+        "a changed item of a key two have cannot be paired, so the list is not",
+        Lan,
+        [net(1, "a"), net(1, "b")],
+        note_on_last,
+        None,
+    ),
+]
+
+
+def as_saved(holder: VcoModel) -> list[object]:
+    """The ``nets`` of *holder* as a save dumps them, an added item marked."""
+    dump = holder.model_dump(mode="json", by_alias=True)
+    mark_added_items(holder, dump)
+    return cast("list[object]", dump["nets"])
+
+
+@pytest.mark.parametrize(
+    ("holder", "rows", "edit", "partner"),
+    [case[1:] for case in PAIRED],
+    ids=[case[0] for case in PAIRED],
+)
+def test_a_path_is_named_by_the_pairing_a_save_makes_its_changes_by(
+    holder: type[Lan | LanWithIds],
+    rows: list[dict[str, object]],
+    edit: Edit,
+    partner: dict[int, int] | None,
+) -> None:
+    """``ChangeNames.pairing`` and ``pair_items`` pair the items of a list alike."""
+    read = holder.model_validate({"nets": rows})
+    edited = read.model_copy(deep=True)
+    edit(edited)
+    node = node_child(holder, "nets")
+    assert isinstance(node, KeyedList)
+    saved = pair_items(as_saved(read), as_saved(edited), node)
+    named_by = ChangeNames(read, edited).pairing(read, edited, "nets")
+    assert (None if saved is None else dict(saved.pairs)) == partner
+    assert (None if named_by is None else named_by.partner) == partner
+
+
+def test_the_pairing_of_a_list_is_made_once_for_two_documents() -> None:
+    read = Lan.model_validate({"nets": [net(1, "a"), net(2, "b")]})
+    edited = read.model_copy(deep=True)
+    names = ChangeNames(read, edited)
+    first = names.pairing(read, edited, "nets")
+    assert first is not None
+    assert names.pairing(read, edited, "nets") is first
+    assert names.path(Path.parse("nets[2].note")) == "nets[b].note"
+    # Another model in the place of one of the two is another list.
+    other = edited.model_copy(deep=True)
+    assert names.pairing(read, other, "nets") is not first
+
+
+def test_a_field_that_is_no_keyed_list_has_no_pairing() -> None:
+    read = Doc.model_validate({"plain": [A, B]})
+    assert ChangeNames(read, read).pairing(read, read, "plain") is None
+    assert ChangeNames(read, read).pairing(read, read, "nope") is None
+
+
+class Port(VcoModel):
+    number: int | None = None
+    name: str | None = None
+    speed: Annotated[str, EdgeOnly] = ""
+
+
+class Ports(VcoModel):
+    ports: Annotated[list[Port], KeyField("number", label="name")] = Field(
+        default_factory=list
+    )
+
+
+def test_the_two_lists_are_paired_at_one_config_level() -> None:
+    """The data as read has no level of its own, and a save dumps both at one.
+
+    ``speed`` is absent at the profile level, so it is in neither dump, and
+    two ports of one number that did not change are each themselves.
+    """
+    rows = [
+        {"number": 9, "name": "x"},
+        {"number": 1, "name": "a", "speed": "fast"},
+        {"number": 1, "name": "b", "speed": "slow"},
+    ]
+    read = Ports.model_validate({"ports": rows})
+    edited = Ports.model_validate({"ports": rows}).for_profile()
+    assert (read.config_context, edited.config_context) == (None, ConfigContext.PROFILE)
+    del edited.ports[0]
+    pairing = ChangeNames(read, edited).pairing(read, edited, "ports")
+    assert pairing is not None
+    assert pairing.partner == {1: 0, 2: 1}
 
 
 # ---------------------------------------------------------------------------
