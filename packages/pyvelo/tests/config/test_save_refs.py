@@ -861,7 +861,7 @@ async def test_a_provider_edit_on_the_profile_layer_of_an_edge_state_is_not_save
         _ = await ConfigPipeline(client).save(state)
 
     assert error.value.layer == "profile"
-    assert str(OWNER) in error.value.fields["deviceSettings"]
+    assert str(OWNER) in error.value.fields["device_settings"]
     assert client.store.requests == []
     assert state.plan().changed == ()  # reported once
 

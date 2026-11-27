@@ -82,11 +82,12 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 from pyvelo.core.layers import Edge, Effective, Profile
-from pyvelo.core.names import named_path, named_value
+from pyvelo.core.names import ChangeNames, named_path, named_value
 from pyvelo.core.rebase import (
     ItemMove,
     ItemPlace,
     Key,
+    PairedList,
     Path,
     raw_changes,
 )
@@ -531,6 +532,25 @@ class _Replaced:
 
 def _dump(model: BaseModel) -> object:
     return model.model_dump(mode="json", by_alias=True)
+
+
+def _shown_edits(before: VcoModel, data: VcoModel) -> list[str]:
+    """The paths at which *data* differs from *before*, as a plan shows them.
+
+    The changes between the two dumps, each at its path with the fields by
+    attribute name and the items as ``ChangeNames`` shows them (a removed
+    item as *before* names it), then the providers that differ (the
+    ``RefOnly`` fields, which a dump leaves out). Each path once.
+    """
+    paired: dict[Path, PairedList] = {}
+    changes = raw_changes(_dump(before), _dump(data), type(data), lists=paired)
+    names = ChangeNames(before, data, paired)
+    shown = [
+        str(names.path(change.path, removed=change.after is MISSING))
+        for change in changes
+    ]
+    providers = ref_only_changes(ref_only_values(before), ref_only_values(data))
+    return list(dict.fromkeys([*shown, *providers]))
 
 
 def ref_only_changes(
@@ -1013,13 +1033,10 @@ class ConfigState:
             before = snapshot.modules[index].data
             if not isinstance(before, VcoModel):
                 continue
-            changes = raw_changes(_dump(before), _dump(data), type(data))
-            providers = ref_only_changes(ref_only_values(before), ref_only_values(data))
-            if not changes and not providers:
+            edited = _shown_edits(before, data)
+            if not edited:
                 continue
-            fields[module.name] = list(
-                dict.fromkeys([*(str(c.path) for c in changes), *providers])
-            )
+            fields[python_module_name(module.name)] = edited
             snapshot.modules[index] = copy.deepcopy(module)
         if not fields:
             return

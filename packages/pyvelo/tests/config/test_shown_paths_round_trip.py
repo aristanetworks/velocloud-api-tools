@@ -2,7 +2,8 @@
 
 One test per surface that shows a path: the plan's lines and the field changes,
 a patch error, a dangling reference and its mending patches, the hints a message
-shows, a warning, a ref line, a write error, the effective comparison. Each
+shows, a warning, a ref line, a write error, an edit of the layer a save does
+not write, the effective comparison. Each
 takes a path from the surface, checks that its text parses back to the same
 parts, gives it to ``apply`` with the module the surface names, and checks that
 the place reached is the one shown.
@@ -64,6 +65,7 @@ from pyvelo.config import (
     ConfigPipeline,
     ConfigState,
     DanglingReferenceError,
+    LayerNotSavedError,
     PatchError,
 )
 from pyvelo.config.effective import EffectiveComparison
@@ -1017,6 +1019,98 @@ async def test_limit_a_quoted_position_text_is_a_name_before_it_is_a_position() 
 # --- the names: modules, and no key of the VCO's in any text --------------------------
 
 
+# --- an edit of the layer a save does not write ---------------------------------
+
+
+def take_hub_a_out(state: ConfigState) -> None:
+    """Edit the profile of *state* in place: Hub-A out, and the port of ``Web``.
+
+    Hub-A leaves Guest's two hub lists, the first of which is turned off, and
+    the rule ``Web``, whose low destination port becomes 443. The profile is
+    ``rule_uses_hub``'s.
+    """
+    vpn = state.profile.device_settings.segments[GUEST_AT].vpn
+    vpn.hub_edges.enabled = False
+    del vpn.hub_edges.vpn_hubs[0]
+    del vpn.backhaul_edges[0]
+    rule = state.profile.qos.segments[GUEST_AT].rules[0]
+    rule.match.destination_port_low = 443
+    hubs = rule.action.edge_to_edge_route_action.route_cfg.backhaul_edges
+    assert isinstance(hubs, list)
+    del hubs[0]
+
+
+async def profile_layer_edited() -> LayerNotSavedError:
+    """What ``plan()`` raises for an edge whose profile layer was edited.
+
+    The edge is ``make_state``'s, over the profile of ``rule_uses_hub``.
+    """
+    profile = await rule_uses_hub()
+    state = ConfigState(
+        edge_config=make_state().edge_config,
+        profile_config=profile.profile_config,
+        target_type="edge",
+        resolver_context=ResolverContext(enterprise_id=5),
+        resolvers=profile.resolvers,
+    )
+    state.take_snapshot()
+    take_hub_a_out(state)
+    with pytest.raises(LayerNotSavedError) as raised:
+        _ = state.plan()
+    return raised.value
+
+
+async def test_the_paths_of_an_unsaved_layer_make_its_edits_in_the_profile() -> None:
+    """Each path of the error, sent to the profile with its module, makes the edit.
+
+    The paths are the ones a plan of the profile shows for the same edits.
+    """
+    error = await profile_layer_edited()
+    assert error.fields == {
+        "device_settings": [
+            "segments[Guest].vpn.hub_edges.enabled",
+            "segments[Guest].vpn.hub_edges.vpn_hubs[Hub-A]",
+            "segments[Guest].vpn.backhaul_edges[Hub-A]",
+        ],
+        "business_policy": [
+            "segments[Guest].rules[Web].match.destination_port_low",
+            f"segments[Guest].rules[Web].{ROUTE_HUBS}[Hub-A]",
+        ],
+    }
+    assert (
+        "its profile layer was edited: device_settings "
+        "(segments[Guest].vpn.hub_edges.enabled, "
+        "segments[Guest].vpn.hub_edges.vpn_hubs[Hub-A], "
+        "segments[Guest].vpn.backhaul_edges[Hub-A]); business_policy "
+        "(segments[Guest].rules[Web].match.destination_port_low, "
+        f"segments[Guest].rules[Web].{ROUTE_HUBS}[Hub-A]). "
+    ) in str(error)
+
+    planned = await rule_uses_hub()
+    take_hub_a_out(planned)
+    changes = planned.get_field_changes()
+    assert {
+        module: {str(c.path) for c in changes if c.module == module}
+        for module in error.fields
+    } == {module: set(paths) for module, paths in error.fields.items()}
+
+    values = {
+        "segments[Guest].vpn.hub_edges.enabled": False,
+        "segments[Guest].rules[Web].match.destination_port_low": 443,
+    }
+    fresh = await rule_uses_hub()
+    for module, paths in error.fields.items():
+        for text in paths:
+            path = Path.parse(text)
+            round_trips(path)
+            if text not in values:
+                listed = reached(data_of(fresh, module), parent(path))
+                assert listed == [reached(data_of(fresh, module), path)]
+            patch = values.get(text, {"_op": "delete"})
+            _ = await apply(fresh, module=module, path=text, patch=patch)
+    assert fresh.get_field_changes() == changes
+
+
 PORT_SHOWN = Path.parse("segments[Guest].rules[Web].match.destination_port_low")
 
 
@@ -1162,6 +1256,7 @@ async def refusals() -> dict[str, Exception]:
         "fixed list": fixed_list.value,
         "composed module": composed.value,
         "module name": unknown_module.value,
+        "layer not saved": await profile_layer_edited(),
         **await write_errors(),
         **await one_module_refusals(),
         **await not_written_refusals(),
@@ -1172,18 +1267,20 @@ async def refusals() -> dict[str, Exception]:
 async def test_every_module_name_shown_is_one_apply_takes() -> None:
     """A module name of a field: it resolves, and it is the python name."""
     errors = await refusals()
-    reference, no_hub, segment_set, write, step = (
+    reference, no_hub, segment_set, write, step, layer = (
         errors["reference"],
         errors["backhaul without a hub"],
         errors["segment set"],
         errors["write not applied"],
         errors["save step"],
+        errors["layer not saved"],
     )
     assert isinstance(reference, DanglingReferenceError)
     assert isinstance(no_hub, BackhaulWithoutHubError)
     assert isinstance(segment_set, SegmentSetError)
     assert isinstance(write, ModuleWriteError)
     assert isinstance(step, SaveStepError)
+    assert isinstance(layer, LayerNotSavedError)
     names = [
         *(change.module for change in (await edited()).get_field_changes()),
         *(reference.module for reference in reference.references),
@@ -1192,6 +1289,7 @@ async def test_every_module_name_shown_is_one_apply_takes() -> None:
         *segment_set.modules,
         write.module_name,
         step.module_name,
+        *layer.fields,
         *(warning.module for _, warning in await warned()),
         *(entry.module for entry in (await compared()).entries),
     ]
@@ -1379,8 +1477,9 @@ async def test_no_text_holds_a_vco_module_name_or_a_wire_key() -> None:
 
     The texts: three plans, an error of each class ``refusals`` makes (the
     refusals of a patch, a reference, the hub lists, the segment set, a fixed
-    list, a composed module, a revert, a module a save does not write, and
-    every class of write error), each warning of ``warned`` with the plan
+    list, a composed module, a revert, a module a save does not write, an
+    edit of the layer a save does not write, and every class of write
+    error), each warning of ``warned`` with the plan
     of its state, and the comparison.
 
     What may hold a name of the VCO's: a ref name, which is data, the one

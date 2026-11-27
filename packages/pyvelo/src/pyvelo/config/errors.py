@@ -79,7 +79,9 @@ class LayerNotSavedError(IntentError):
     """The layer of a state that its saves do not write was edited.
 
     ``layer`` is the layer that was edited (``"profile"`` or ``"edge"``) and
-    ``fields`` maps each module's name to the paths edited in it, as text.
+    ``fields`` maps each module's python name to the paths edited in it, as
+    text: the paths a plan of that layer shows for those edits, so each one,
+    with its module, can be given to ``apply`` on a state that saves it.
     """
 
     def __init__(

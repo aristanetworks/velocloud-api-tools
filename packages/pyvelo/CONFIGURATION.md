@@ -1013,8 +1013,11 @@ firewall: update
 - A state loaded with `load` saves the edge's own layer. `state.profile` is
   there to read: an edit made through it is not saved, and the next `plan()`,
   `get_changed_modules()` or `save()` raises `LayerNotSavedError` (from
-  `pyvelo.config`) with the fields, once, before anything is sent. To change
-  the profile, load it with `load_profile`.
+  `pyvelo.config`) with the fields, once, before anything is sent. Its
+  `fields` maps each module's python name to the paths edited in it, as a
+  plan of the profile shows them (`segments[Guest].vpn.backhaul_edges[Hub-A]`).
+  To change the profile, load it with `load_profile`: each of those paths,
+  with its module, is one `apply` takes there.
 - When the profile has segments the edge module lacks, a write to that module
   adds them as entries that inherit everything, after the edge's own entries
   and in the profile's order. The plan lists them under "reconciled segments".
