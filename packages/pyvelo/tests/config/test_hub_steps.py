@@ -475,7 +475,11 @@ async def test_roles_that_disagree_with_the_lists_warn() -> None:
 
     assert HUB_A.name in warning.message
     assert "backhaul" in warning.message
-    assert warning.path == 'deviceSettings: segments["Global Segment"].vpn[Hub-A]'
+    assert (warning.module, warning.path, warning.segment) == (
+        "device_settings",
+        'segments["Global Segment"].vpn',
+        "Global Segment",
+    )
     assert warning in state.plan().warnings
     assert f"warning: {warning.message}" in state.plan().render()
 

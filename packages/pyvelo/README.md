@@ -172,8 +172,8 @@ read, so an added device settings entry adds its `deviceSettings:segment` row.
 plans the three modules together.
 
 The hubs of a profile segment are in the same case. A hub in the hub, bridge or
-backhaul list of a device settings segment (`vpn.edgeToEdgeHub.vpnHubs`,
-`vpn.edgeToEdgeDetail.vpnHubs`, `vpn.backHaulEdges`) works only when its
+backhaul list of a device settings segment (`vpn.hub_edges.vpn_hubs`,
+`vpn.edge_to_edge_detail.vpn_hubs`, `vpn.backhaul_edges`) works only when its
 service has that role, which the VCO's role calls set and a module write does
 not. `plan_module` and `update_module` raise `HubListError` for a profile
 device settings payload whose members of one of those lists differ from the
@@ -181,22 +181,25 @@ module as read, as `(type, logicalId)` pairs (a reorder is no change), and
 nothing is sent: the VCO would list a hub no Edge can use, or lose the roles of
 one taken out. The error names the segment, the lists and the hubs, and says how
 to do it instead: send the change as a patch (`{"segments": {"Global Segment":
-{"vpn": {"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name":
+{"vpn": {"hub_edges": {"vpn_hubs": {"+": {"_op": "add", "name":
 "Hub-A"}}}}}}}`) through `pipeline.apply`, and `pipeline.save`, which sets the
-roles as steps of the save. `via_pipeline=True` skips this refusal too.
+roles as steps of the save. The module and the lists are named as a patch
+names them: the text starts `device_settings:`, the call it gives is
+`pipeline.apply(state, module="device_settings", patch=...)`, and `error.lists`
+holds attribute paths (`vpn.backhaul_edges`). `via_pipeline=True` skips this refusal too.
 
 What a hub is, and what names it, is declared on the models, as the segment
 set is, so that the pipeline needs no list of paths of its own:
 
 - `HubRole("hub" | "bridge" | "backhaul")` marks a list of hubs by the role it
-  gives (`vpn.edgeToEdgeHub.vpnHubs`, `vpn.edgeToEdgeDetail.vpnHubs`,
-  `vpn.backHaulEdges`). Each is keyed by the entry's `logicalId`, with its name
+  gives (`vpn.hub_edges.vpn_hubs`, `vpn.edge_to_edge_detail.vpn_hubs`,
+  `vpn.backhaul_edges`). Each is keyed by the entry's `logicalId`, with its name
   as the label, so a patch or a plan names a hub by logical ID, and by name as
   well where the name is unique. `get_hub_role(field_info)` reads the marker
   of a field.
 - `Provides(name, key=...)` marks a list whose items are the things a set of
   names stands for: the device settings `segments` (`segment`), and a segment's
-  `vpn.backHaulEdges` (`backhaul_hub`, per segment). `RefersTo(name)` marks a
+  `vpn.backhaul_edges` (`backhaul_hub`, per segment). `RefersTo(name)` marks a
   field that holds one of them: a LAN network's or an interface's `segmentId`,
   and a QoS rule's backhaul entry. A value that names nothing is a dangling
   reference, which the pipeline's `plan()` refuses (`DanglingReferenceError`,

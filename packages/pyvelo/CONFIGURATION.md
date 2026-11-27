@@ -229,8 +229,8 @@ A patch is strict and all or nothing:
 - A key that names no field raises, at every depth, and so do two keys that
   name one field (`rule_id` and `ruleId`). Keys that start with `_` are
   directives: `_op` and `_position`, on a list item only.
-- A hub is added to a `vpn` list (`edgeToEdgeHub.vpnHubs`,
-  `edgeToEdgeDetail.vpnHubs`, `backHaulEdges`) or to a QoS rule's
+- A hub is added to a `vpn` list (`hub_edges.vpn_hubs`,
+  `edge_to_edge_detail.vpn_hubs`, `backhaul_edges`) or to a QoS rule's
   `backhaulEdges` by its name, `{"+": add({"name": "Hub-A"})}`, or by its
   logical ID, `{"+": add({"logicalId": "<logical ID>"})}` (in a rule,
   `edgeLogicalId`): the other fields of the entry come from the Edge or the hub
@@ -856,7 +856,7 @@ firewall: update
 - A value that names a segment (a LAN network's or an interface's `segmentId`)
   or a backhaul hub (a QoS rule's backhaul entry) must name one the
   configuration has: a segment of the device settings `segments`, a hub in the
-  `vpn.backHaulEdges` of the rule's segment. `plan()` checks every module of
+  `vpn.backhaul_edges` of the rule's segment. `plan()` checks every module of
   the target, on every save and with `validate=False` too, and raises
   `DanglingReferenceError` (from `pyvelo.config`), naming each value, its
   module and its path, for a value the edit adds, or one whose segment or hub
@@ -1351,11 +1351,11 @@ edit needs, then writes the module.
               "Global Segment": {
                   "vpn": {
                       "enabled": True,
-                      "edgeToEdgeHub": {
+                      "hub_edges": {
                           "enabled": True,
-                          "vpnHubs": {"+": add({"name": "Hub-A"})},
+                          "vpn_hubs": {"+": add({"name": "Hub-A"})},
                       },
-                      "backHaulEdges": {"+": add({"logicalId": "<logical ID>"})},
+                      "backhaul_edges": {"+": add({"logicalId": "<logical ID>"})},
                   }
               }
           }
@@ -1365,7 +1365,7 @@ edit needs, then writes the module.
   ```
 
   The same edit as JSON is `{"segments": {"Global Segment": {"vpn":
-  {"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name": "Hub-A"}}}}}}}`.
+  {"hub_edges": {"vpn_hubs": {"+": {"_op": "add", "name": "Hub-A"}}}}}}}`.
   The resolver reads the enterprise's Edges and clusters on first use
   (`HubIdentity`, once per state: the Edge list is paged at 200, so a VCO with
   15,000 Edges takes about 75 requests, plus one for the clusters and one for
@@ -1410,12 +1410,17 @@ edit needs, then writes the module.
 - **The checks.** `plan()` checks a segment whose `vpn` an edit changes against
   the UI's rules for its lists, before any call. A save that breaks one raises
   `HubListError` (from `pyvelo.config`), which names the segment, the lists and
-  the hubs, and gives the patch that mends it. The rules: the Branch-to-Hub
-  list is non-empty if and only if `edgeToEdgeHub.enabled` (so the patch that
+  the hubs, and gives the patch that mends it. Its text starts with the module's
+  python name (`device_settings: segment 'Global Segment': ...`), `error.lists`
+  holds each list's path from the segment in attribute names
+  (`vpn.hub_edges.vpn_hubs`, `vpn.edge_to_edge_detail.vpn_hubs`,
+  `vpn.backhaul_edges`), and the patch is written in attribute names, to send
+  as it is with `module="device_settings"`. The rules: the Branch-to-Hub
+  list is non-empty if and only if `hub_edges.enabled` (so the patch that
   adds the first hub to a segment must also set it, and `vpn.enabled`, as
   above: the library sets neither; and turning either off needs the hubs
   removed first); no hub is listed twice in one list;
-  with `edgeToEdge` on and `useCloudGateway` off the bridge list is not empty;
+  with `edge_to_edge` on and `use_cloud_gateway` off the bridge list is not empty;
   a hub in the backhaul or bridge list is in the Branch-to-Hub list too (so a
   hub that leaves that list leaves the others); a segment with hubs has
   `vpn.enabled` on; and an added hub is an Edge or cluster of the enterprise,
@@ -1427,9 +1432,13 @@ edit needs, then writes the module.
   as read do not match the lists it is in, `reference_kept` for a value that
   names nothing as read and still does not, `backhaul_without_hub_kept` for a
   rule that backhauls to hubs and named none as read, and `hub_in_use`
-  (below). One module
-  alone cannot change these lists: `client.update_module` and `plan_module`
-  raise `HubListError` for a payload that does.
+  (below). Each of the five names its `module` by its python name
+  (`device_settings`, or `business_policy` for a rule), its `segment` by name,
+  and in `path` the place within that module's data, with no module before it
+  (`segments["Global Segment"].vpn` for the three about the hub lists). One
+  module alone cannot change these lists: `client.update_module` and
+  `plan_module` raise `HubListError` for a payload that does, which names the
+  module, the lists and the patch in the same names.
 - **The save.** A save with steps does this, in order. It reads the version of
   the profile's device settings module (another writer's change stops the save
   here with `ConfigConflictError`, and nothing is sent; the state then holds
@@ -1511,10 +1520,10 @@ edit needs, then writes the module.
   and the rule after, in two saves, and `apply` raises `HubServiceNotFoundError`
   for a hub added to the lists in the same unsaved edit, with the patch that
   adds it to both lists. An entry built by assignment without its `logicalId` raises the same
-  error at `plan()`. The rule's hub must be in the segment's `backHaulEdges`,
+  error at `plan()`. The rule's hub must be in the segment's `backhaul_edges`,
   and a value that names a segment or a hub the configuration does not have is a
   `DanglingReferenceError` (see "What a save writes"). Taking a hub that a rule
-  of the profile still names out of `backHaulEdges`, and out of the rule, are
+  of the profile still names out of `backhaul_edges`, and out of the rule, are
   two edits that go in either order: `plan()` refuses the state until both
   are made, and the error's `mending` holds the patch for each way to mend it
   (no patch takes the last hub out of a rule that backhauls through hubs:

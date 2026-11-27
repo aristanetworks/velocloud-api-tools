@@ -46,6 +46,7 @@ from pyvelo.client.schemas.enterprise import (
     GetEnterpriseServices,
 )
 from pyvelo.config.hub_steps import (
+    HUB_LISTS_MODULE,
     Action,
     HubRef,
     HubStep,
@@ -53,11 +54,11 @@ from pyvelo.config.hub_steps import (
     hub_in_use_message,
     hub_lists_of,
     list_path,
+    vpn_path,
 )
 from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core.base import is_dict
 from pyvelo.core.identity import HubServiceNotFoundError
-from pyvelo.core.rebase import Key, Path
 
 _ROLE_FIELDS: Final[dict[Role, str]] = {
     "hub": "edge_hub",
@@ -358,7 +359,7 @@ def _no_service(step: HubStep, what: str) -> HubServiceNotFoundError:
     return HubServiceNotFoundError(
         hub=step.hub.name,
         segment=step.segment,
-        path=Path(("segments", Key(step.segment), "vpn")),
+        path=vpn_path(step.segment),
         message=(
             f"The VCO has no {what} for {step.hub.name!r} in segment "
             f"{step.segment!r} to call for the step '{step.render()}'. The save "
@@ -469,9 +470,11 @@ def report_hubs_in_use(
         )
     return [
         ValidationWarning(
-            path=f'deviceSettings: segments["{step.segment}"].vpn',
+            path=vpn_path(step.segment),
             message=message,
             code="hub_in_use",
+            module=HUB_LISTS_MODULE,
+            segment=step.segment,
         )
         for step, _, message in found
     ]

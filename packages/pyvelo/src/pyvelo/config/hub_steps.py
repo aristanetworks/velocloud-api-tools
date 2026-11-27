@@ -19,6 +19,10 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from pyvelo.client.enums.configuration import (
+    ConfigurationModuleName,
+    python_module_name,
+)
 from pyvelo.client.exceptions import HubListError
 from pyvelo.client.hub_services import (
     CLUSTER_HUB_REF,
@@ -51,11 +55,14 @@ from pyvelo.core.identity import (
     ResolverNotLoadedError,
     SegmentIdentity,
 )
+from pyvelo.core.rebase import Key, Path
 from pyvelo.core.walk import walk_fields
 
 type Role = Literal["hub", "bridge", "backhaul"]
 type Action = Literal["enable", "disable"]
 
+HUB_LISTS_MODULE: Final = python_module_name(ConfigurationModuleName.DEVICE_SETTINGS)
+"""The module that holds the hub lists, as a message and a warning name it."""
 _ROLES: Final[tuple[Role, ...]] = ("hub", "bridge", "backhaul")
 _ROLE_FLAGS: Final[dict[Role, str]] = {
     "hub": "edgeHub",
@@ -433,10 +440,7 @@ def role_disagreements(
             if problems:
                 warnings.append(
                     ValidationWarning(
-                        path=(
-                            f'deviceSettings: segments["{descriptor.name}"]'
-                            f".vpn[{hub.name}]"
-                        ),
+                        path=vpn_path(descriptor.name),
                         message=(
                             f"hub {hub.name!r} in segment {descriptor.name!r}: "
                             + "; ".join(problems)
@@ -444,6 +448,8 @@ def role_disagreements(
                             "the hubs the edit adds or removes)"
                         ),
                         code="hub_roles_disagree",
+                        module=HUB_LISTS_MODULE,
+                        segment=descriptor.name,
                     )
                 )
     return tuple(warnings)
@@ -452,21 +458,30 @@ def role_disagreements(
 # --- the UI's rules for the lists ------------------------------------------------
 
 _LIST_PATHS: Final[dict[Role, tuple[str, ...]]] = {
-    field.role: field.path for field in hub_list_fields()
+    field.role: field.python_path for field in hub_list_fields()
 }
-"""The wire path of each role's list, from a segment: the fields marked ``HubRole``."""
+"""The path of each role's list, from a segment, in attribute names.
+
+They are the fields marked ``HubRole``, named as a patch names them.
+"""
 _LIST_LABELS: Final[dict[Role, str]] = {
     "hub": "Branch-to-Hub list",
     "bridge": "bridge list",
     "backhaul": "backhaul list",
 }
-_APPLY: Final = '(`pipeline.apply(state, module="deviceSettings", patch=...)`)'
+_APPLY: Final = f'(`pipeline.apply(state, module="{HUB_LISTS_MODULE}", patch=...)`)'
+
+
+def vpn_path(segment: str) -> Path:
+    """The path of the ``vpn`` of the segment named *segment*, as a warning shows it."""
+    return Path(("segments", Key(segment), "vpn"))
 
 
 def _patch(segment: str, path: tuple[str, ...], change: object) -> str:
-    """The patch text of a ``deviceSettings`` edit.
+    """The patch text of a device settings edit.
 
-    The edit sets *change* at *path* of *segment*.
+    The edit sets *change* at *path* of *segment*; *path* is in attribute
+    names, as every key of a patch pyvelo writes is.
     """
     node: object = change
     for key in reversed(path):
@@ -475,15 +490,15 @@ def _patch(segment: str, path: tuple[str, ...], change: object) -> str:
 
 
 def list_path(role: Role) -> str:
-    """The dotted wire path of the list of *role*, from a segment.
+    """The path of the list of *role*, from a segment, in attribute names.
 
-    For the Branch-to-Hub list it is ``vpn.edgeToEdgeHub.vpnHubs``.
+    For the Branch-to-Hub list it is ``vpn.hub_edges.vpn_hubs``.
     """
     return ".".join(_LIST_PATHS[role])
 
 
 def _list_text(role: Role) -> str:
-    """How a message names the list of *role*: its label and its wire path."""
+    """How a message names the list of *role*: its label and its path."""
     return f"the {_LIST_LABELS[role]} (`{list_path(role)}`)"
 
 
@@ -549,7 +564,7 @@ def hub_in_use_message(
         "them"
     )
     return (
-        f"deviceSettings: segment {segment!r}: the hub {hub!r} is used by the "
+        f"{HUB_LISTS_MODULE}: segment {segment!r}: the hub {hub!r} is used by the "
         f"backhaul rules of {edge_word} {who}. Taking it out of the "
         "Branch-to-Hub list sends the call that disables its hub role, which "
         "deletes the hub's service for this profile and segment and with it "
@@ -628,7 +643,7 @@ def _broken_rules(
     hub_list = lists.get("hub", [])
     bridges = lists.get("bridge", [])
     problems: list[_Problem] = []
-    prefix = f"deviceSettings: segment {name!r}: "
+    prefix = f"{HUB_LISTS_MODULE}: segment {name!r}: "
 
     # Rule 2: no logical ID twice in one list.
     for role in _ROLES:
@@ -652,7 +667,7 @@ def _broken_rules(
 
     # Rule 1: the Branch-to-Hub list is non-empty if and only if it is enabled.
     enabled = vpn.hub_edges.enabled
-    flag_path = ("vpn", "edgeToEdgeHub", "enabled")
+    flag_path = ("vpn", "hub_edges", "enabled")
     if hub_list and not enabled:
         if read is not None and read.hub_edges.enabled:
             how = (
@@ -698,15 +713,17 @@ def _broken_rules(
         problems.append(
             _problem(
                 (3,),
-                f"{prefix}`vpn.edgeToEdge` is on and "
-                "`vpn.edgeToEdgeDetail.useCloudGateway` is off, so its Edges "
+                f"{prefix}`vpn.edge_to_edge` is on and "
+                "`vpn.edge_to_edge_detail.use_cloud_gateway` is off, so its Edges "
                 f"reach one another through the hubs of {_list_text('bridge')}"
                 ", which is empty: they could not reach one another. Add a "
                 f"hub with {_addition(name, 'bridge', '<hub name>')}"
-                " or turn `useCloudGateway` on with "
+                " or turn `use_cloud_gateway` on with "
                 f"{
                     _flag(
-                        name, ('vpn', 'edgeToEdgeDetail', 'useCloudGateway'), value=True
+                        name,
+                        ('vpn', 'edge_to_edge_detail', 'use_cloud_gateway'),
+                        value=True,
                     )
                 }.",
                 ["bridge"],
@@ -778,7 +795,7 @@ def _hub_problems(
     They are found against the loaded *hubs*.
     """
     name = segment.segment.name
-    prefix = f"deviceSettings: segment {name!r}: "
+    prefix = f"{HUB_LISTS_MODULE}: segment {name!r}: "
     problems: list[_Problem] = []
     identities = {i.logical_id: i for i in hubs.identities()}
     for hub in added:
@@ -918,10 +935,12 @@ def check_hub_lists(
             ):
                 warnings.append(
                     ValidationWarning(
-                        path=f'deviceSettings: segments["{name}"].vpn',
+                        path=vpn_path(name),
                         message=problem.message
                         + " (It was so as read, and the save leaves it.)",
                         code="hub_list_as_read",
+                        module=HUB_LISTS_MODULE,
+                        segment=name,
                     )
                 )
             else:

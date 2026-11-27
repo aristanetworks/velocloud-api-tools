@@ -7,6 +7,8 @@ refuses with no request sent: no version read, no services read.
 """
 
 import json
+import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -41,9 +43,9 @@ from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
 
 DS = "deviceSettings"
 SERVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-HUB_LIST = "vpn.edgeToEdgeHub.vpnHubs"
-BRIDGE_LIST = "vpn.edgeToEdgeDetail.vpnHubs"
-BACKHAUL_LIST = "vpn.backHaulEdges"
+HUB_LIST = "vpn.hub_edges.vpn_hubs"
+BRIDGE_LIST = "vpn.edge_to_edge_detail.vpn_hubs"
+BACKHAUL_LIST = "vpn.backhaul_edges"
 
 
 def service_row(hub: Hub, n: int) -> dict[str, Any]:
@@ -133,7 +135,7 @@ async def test_a_hub_listed_with_the_hub_list_off_raises() -> None:
 
     error = await refused(state)
 
-    assert_names(error, "Hub-A", "edgeToEdgeHub.enabled", lists=(HUB_LIST,))
+    assert_names(error, "Hub-A", "hub_edges.enabled", lists=(HUB_LIST,))
     assert error.hubs == ("Hub-A",)
 
 
@@ -143,7 +145,7 @@ async def test_the_hub_list_on_with_no_hub_raises() -> None:
 
     error = await refused(state)
 
-    assert_names(error, "edgeToEdgeHub.enabled", "empty", lists=(HUB_LIST,))
+    assert_names(error, "hub_edges.enabled", "empty", lists=(HUB_LIST,))
 
 
 async def test_turning_the_hub_list_off_while_it_lists_hubs_says_to_remove_them_first() -> (  # noqa: E501 (a test's name)
@@ -247,7 +249,7 @@ async def test_edge_to_edge_through_hubs_with_no_bridge_hub_raises() -> None:
         state, {"edgeToEdge": True, "edgeToEdgeDetail": {"useCloudGateway": False}}
     )
 
-    assert_names(await refused(state), "useCloudGateway", lists=(BRIDGE_LIST,))
+    assert_names(await refused(state), "use_cloud_gateway", lists=(BRIDGE_LIST,))
 
 
 async def test_edge_to_edge_through_the_cloud_gateway_needs_no_bridge_hub() -> None:
@@ -460,7 +462,7 @@ async def test_another_hub_broken_the_same_way_is_an_error() -> None:
     [
         (
             ds_with_vpn(GLOBAL, hubs=(HUB_A,), hub_list_enabled=False),
-            "edgeToEdgeHub.enabled",
+            "hub_edges.enabled",
         ),
         (ds_with_vpn(GLOBAL, enabled=False, hubs=(HUB_A,)), "vpn.enabled"),
     ],
@@ -481,7 +483,7 @@ async def test_a_segment_with_its_hub_list_or_vpn_off_as_read_warns_for_an_unrel
 @pytest.mark.parametrize(
     ("ds", "text"),
     [
-        (ds_with_vpn(GLOBAL, hubs=(HUB_A,), hub_list_enabled=False), "edgeToEdgeHub"),
+        (ds_with_vpn(GLOBAL, hubs=(HUB_A,), hub_list_enabled=False), "hub_edges"),
         (ds_with_vpn(GLOBAL, enabled=False, hubs=(HUB_A,)), "vpn.enabled"),
     ],
     ids=["hub-list-off", "vpn-off"],
@@ -530,7 +532,7 @@ async def test_adding_a_listed_hub_to_another_list_of_a_segment_with_the_hub_lis
 
     error = await refused(state)
 
-    assert_names(error, "edgeToEdgeHub.enabled", "Hub-A", lists=(HUB_LIST,))
+    assert_names(error, "hub_edges.enabled", "Hub-A", lists=(HUB_LIST,))
 
 
 @pytest.mark.parametrize(
@@ -596,3 +598,188 @@ async def test_an_added_hub_needs_a_loaded_hub_resolver_to_be_checked() -> None:
 
     with pytest.raises(ResolverNotLoadedError):
         _ = state.plan()
+
+
+# --- what a refusal and a warning print is in python names ---------------------------
+
+
+def shown_patches(text: str) -> list[str]:
+    """Every patch a message shows, as JSON text, in the message's order."""
+    decoder = json.JSONDecoder()
+    found: list[str] = []
+    at = text.find('{"segments"')
+    while at != -1:
+        _, end = decoder.raw_decode(text, at)
+        found.append(text[at:end])
+        at = text.find('{"segments"', end)
+    return found
+
+
+def shown_modules(text: str) -> set[str]:
+    """The modules a message says to send its patches to."""
+    return set(re.findall(r'module="([^"]*)"', text))
+
+
+PLACEHOLDERS = {
+    "<hub name>": HUB_B.name,
+    "<cluster name>": CLUSTER.name,
+    "<Edge or cluster name>": HUB_B.name,
+}
+"""A hub of the enterprise for each name a message leaves its reader to fill."""
+
+PYTHON_KEYS = {
+    "hub_edges",
+    "edge_to_edge_detail",
+    "backhaul_edges",
+    "vpn_hubs",
+    "enabled",
+    "use_cloud_gateway",
+}
+"""The fields of a segment's ``vpn`` that the patches of these messages name."""
+ITEM_KEYS = {"+", "#1", "_op", "name", HUB_A.name, HUB_B.name}
+"""The selectors of the items those patches name, and the keys of an item's body."""
+
+
+def keys_of(node: object) -> set[str]:
+    """Every key of the patch *node*, at any depth."""
+    if not isinstance(node, dict):
+        return set()
+    return set(node) | {key for value in node.values() for key in keys_of(value)}
+
+
+async def hub_added_with_the_list_off() -> ConfigState:
+    state = await profile_of(ds_with_vpn(GLOBAL))
+    await edit(state, {"edgeToEdgeHub": {"vpnHubs": add(HUB_A.name)}})
+    return state
+
+
+async def hub_list_turned_off() -> ConfigState:
+    state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
+    await edit(state, {"edgeToEdgeHub": {"enabled": False}})
+    return state
+
+
+async def hub_list_on_and_empty() -> ConfigState:
+    state = await profile_of(ds_with_vpn(GLOBAL))
+    await edit(state, {"edgeToEdgeHub": {"enabled": True}})
+    return state
+
+
+async def hub_listed_twice() -> ConfigState:
+    state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
+    vpn = state.profile.device_settings.segments[0].vpn
+    vpn.hub_edges.vpn_hubs.append(VpnHub.model_validate(hub_entry(HUB_A)))
+    return state
+
+
+async def no_bridge_hub() -> ConfigState:
+    state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
+    await edit(
+        state, {"edgeToEdge": True, "edgeToEdgeDetail": {"useCloudGateway": False}}
+    )
+    return state
+
+
+async def backhaul_hub_that_is_no_hub() -> ConfigState:
+    state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
+    await edit(state, {"backHaulEdges": add(HUB_B.name)})
+    return state
+
+
+async def vpn_turned_off() -> ConfigState:
+    state = await profile_of(ds_with_vpn(GLOBAL, hubs=(HUB_A,)), HUB_A)
+    await edit(state, {"enabled": False})
+    return state
+
+
+async def hub_added_with_the_vpn_off() -> ConfigState:
+    state = await profile_of(ds_with_vpn(GLOBAL, enabled=False))
+    await edit(state, {"edgeToEdgeHub": {"enabled": True, "vpnHubs": add(HUB_A.name)}})
+    return state
+
+
+async def cluster_member_added() -> ConfigState:
+    state = await profile_of(ds_with_vpn(GLOBAL))
+    await with_entry_added(state, hub_entry(MEMBER))
+    return state
+
+
+async def edge_that_is_no_hub_added() -> ConfigState:
+    state = await profile_of(ds_with_vpn(GLOBAL), loaded=(HUB_A, HUB_B, CLUSTER))
+    await with_entry_added(state, hub_entry(NOT_A_HUB))
+    return state
+
+
+BROKEN = [
+    hub_added_with_the_list_off,
+    hub_list_turned_off,
+    hub_list_on_and_empty,
+    hub_listed_twice,
+    no_bridge_hub,
+    backhaul_hub_that_is_no_hub,
+    vpn_turned_off,
+    hub_added_with_the_vpn_off,
+    cluster_member_added,
+    edge_that_is_no_hub_added,
+]
+
+
+@pytest.mark.parametrize("broken", BROKEN, ids=lambda make: make.__name__)
+async def test_a_refusal_names_the_module_and_its_fields_as_a_patch_is_written(
+    broken: Callable[[], Awaitable[ConfigState]],
+) -> None:
+    error = await refused(await broken())
+    text = str(error)
+
+    assert text.startswith("device_settings: segment 'Global Segment': ")
+    assert shown_modules(text) == {"device_settings"}
+    assert set(error.lists) <= {
+        "vpn.hub_edges.vpn_hubs",
+        "vpn.edge_to_edge_detail.vpn_hubs",
+        "vpn.backhaul_edges",
+    }
+    for shown in shown_patches(text):
+        vpn = json.loads(shown)["segments"][GLOBAL[1]]["vpn"]
+        assert keys_of(vpn) <= PYTHON_KEYS | ITEM_KEYS
+
+
+@pytest.mark.parametrize("broken", BROKEN, ids=lambda make: make.__name__)
+async def test_each_patch_a_refusal_shows_is_accepted_by_the_module_it_names(
+    broken: Callable[[], Awaitable[ConfigState]],
+) -> None:
+    text = str(await refused(await broken()))
+    (module,) = shown_modules(text)
+    patches = shown_patches(text)
+    assert patches
+
+    for shown in patches:
+        for placeholder, name in PLACEHOLDERS.items():
+            shown = shown.replace(placeholder, name)  # noqa: PLW2901 (the patch as its reader would send it)
+        state = await broken()  # the state the refusal was raised on, for each patch
+        before = state.profile.device_settings.segments[0].vpn.model_dump()
+
+        _ = await ConfigPipeline(client=None).apply(
+            state, module=module, patch=json.loads(shown)
+        )
+
+        assert state.profile.device_settings.segments[0].vpn.model_dump() != before
+
+
+async def test_a_rule_broken_as_read_names_its_module_its_segment_and_its_place() -> (
+    None
+):
+    state = await profile_of(broken_as_read(), HUB_A, HUB_B)
+    await edit(state, {"conditionalBackhaul": True})
+
+    (warning,) = as_read_warnings(state)
+
+    assert (warning.module, warning.path, warning.segment) == (
+        "device_settings",
+        'segments["Global Segment"].vpn',
+        "Global Segment",
+    )
+    assert warning.message.startswith(
+        "device_settings: segment 'Global Segment': the backhaul list "
+        "(`vpn.backhaul_edges`) holds 'Hub-A', which the Branch-to-Hub list "
+        "(`vpn.hub_edges.vpn_hubs`) does not."
+    )

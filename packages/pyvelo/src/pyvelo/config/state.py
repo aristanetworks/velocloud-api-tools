@@ -235,10 +235,17 @@ class ConfigPlan:
             disagree about as read, which the edit does not settle: code
             ``segments_disagree``, at ``segments["<name>"]``. Empty for an edge.
         check_warnings: What the cross-module checks warn of and the save
-            leaves as it is, at ``"<module>: <path>"``: the references that
-            name nothing in the module as read and still name nothing (code
-            ``reference_kept``), and the hubs whose roles as read do not match
-            the lists they are in (``hub_roles_disagree``).
+            leaves as it is: the references that name nothing in the module
+            as read and still name nothing (code ``reference_kept``), the
+            rules that backhaul to hubs and named none as read
+            (``backhaul_without_hub_kept``), the rules for a segment's hub
+            lists that were broken as read (``hub_list_as_read``), and the
+            hubs whose roles as read do not match the lists they are in
+            (``hub_roles_disagree``). Each holds its module's python name in
+            ``module``, its segment's name in ``segment``, and in ``path``
+            the place within that module's data as every path is shown, with
+            no module before it (``segments[Guest].vpn`` for the two about the
+            hub lists).
         steps: The role calls a hub added to or removed from a segment's hub
             lists needs, in the order they are made (``derive_steps``); empty
             for an edge, and for an edit that leaves the lists' members. A list

@@ -10,6 +10,8 @@ hub in their data). The save finds the edges from the services read
 ``"refuse"`` raises ``HubListError`` before any step.
 """
 
+import json
+import re
 import uuid
 from typing import Any, Literal
 
@@ -179,7 +181,11 @@ async def test_removing_a_hub_that_an_edge_uses_warns_and_names_the_edge_and_goe
     result = await pipeline.save(state)
 
     (warning,) = in_use_warnings(result.warnings)
-    assert warning.path == 'deviceSettings: segments["Global Segment"].vpn'
+    assert (warning.module, warning.path, warning.segment) == (
+        "device_settings",
+        'segments["Global Segment"].vpn',
+        "Global Segment",
+    )
     assert "Hub-A" in warning.message
     assert "Branch-1" in warning.message
     assert "Hub-B" not in warning.message
@@ -200,11 +206,31 @@ async def test_the_advice_to_keep_the_hub_names_the_lists_the_patch_restores() -
     (warning,) = in_use_warnings(result.warnings)
     # The patch restores the Branch-to-Hub list only, and the text says so.
     assert "put it back in the Branch-to-Hub list" in warning.message
-    assert '"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name": "Hub-A"}}}' in (
+    assert '"hub_edges": {"vpn_hubs": {"+": {"_op": "add", "name": "Hub-A"}}}' in (
         warning.message
     )
-    assert "`vpn.edgeToEdgeDetail.vpnHubs`" in warning.message
-    assert "`vpn.backHaulEdges`" in warning.message
+    assert "`vpn.edge_to_edge_detail.vpn_hubs`" in warning.message
+    assert "`vpn.backhaul_edges`" in warning.message
+
+
+async def test_the_patch_that_keeps_the_hub_is_accepted_by_the_module_the_message_names() -> (  # noqa: E501 (a test's name)
+    None
+):
+    pipeline, _, state = await used_hub_save()
+    result = await pipeline.save(state)
+    (warning,) = in_use_warnings(result.warnings)
+    text = warning.message
+    assert text.startswith("device_settings: segment 'Global Segment': the hub 'Hub-A'")
+    (module,) = set(re.findall(r'module="([^"]*)"', text))
+    assert module == "device_settings"
+    patch, _ = json.JSONDecoder().raw_decode(text[text.index('{"segments"') :])
+    # The state as the save found it: Hub-A is out of the lists.
+    _, _, removed = await used_hub_save()
+
+    _ = await ConfigPipeline(client=None).apply(removed, module=module, patch=patch)
+
+    hubs = removed.profile.device_settings.segments[0].vpn.hub_edges.vpn_hubs
+    assert [hub.name for hub in hubs] == ["Hub-B", "Hub-A"]
 
 
 async def test_with_refuse_a_hub_an_edge_uses_raises_before_any_step() -> None:

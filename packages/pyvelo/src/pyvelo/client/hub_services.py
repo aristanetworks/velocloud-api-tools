@@ -71,14 +71,18 @@ class HubListField:
     role: Literal["hub", "bridge", "backhaul"]
     path: tuple[str, ...]
     """The wire keys from the segment entry to the list:
-    ``("vpn", "backHaulEdges")``."""
+    ``("vpn", "backHaulEdges")``. The raw JSON is read at them."""
+    python_path: tuple[str, ...]
+    """The attribute names from the segment entry to the list:
+    ``("vpn", "backhaul_edges")``. A message and a patch name the list by them."""
 
 
 @functools.cache
 def hub_list_fields() -> tuple[HubListField, ...]:
     """The fields of a device settings segment entry marked ``HubRole``.
 
-    Each with its role and wire path, in field order.
+    Each with its role, its wire path and its path in attribute names, in
+    field order.
 
     This is the one declaration of which lists hold hubs; the planner of the
     role steps walks the models for the same marker, and the one-module
@@ -87,17 +91,20 @@ def hub_list_fields() -> tuple[HubListField, ...]:
     """
     found: list[HubListField] = []
 
-    def visit(model_cls: type[VcoModel], prefix: tuple[str, ...]) -> None:
+    def visit(
+        model_cls: type[VcoModel], prefix: tuple[str, ...], names: tuple[str, ...]
+    ) -> None:
         for name, field_info in model_cls.model_fields.items():
             here = (*prefix, wire_name(model_cls, name))
+            named = (*names, name)
             role = get_hub_role(field_info)
             if role is not None:
-                found.append(HubListField(role.role, here))
+                found.append(HubListField(role.role, here, named))
             elif list_kind(field_info) is None:
                 for below in field_models(field_info):
-                    visit(below, here)
+                    visit(below, here, named)
 
-    visit(DeviceSegment, ())
+    visit(DeviceSegment, (), ())
     return tuple(found)
 
 

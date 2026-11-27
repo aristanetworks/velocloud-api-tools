@@ -1040,7 +1040,10 @@ def _hub_list(entry: object, path: tuple[str, ...]) -> dict[tuple[str, str], str
 
 
 def _hub_patch(segment: str, path: tuple[str, ...], change: dict[str, Any]) -> str:
-    """The patch text that makes *change* to the list at *path* of *segment*."""
+    """The patch text that makes *change* to the list at *path* of *segment*.
+
+    *path* is in attribute names, as every key of a patch pyvelo writes is.
+    """
     node: dict[str, Any] = change
     for key in reversed(path):
         node = {key: node}
@@ -1052,8 +1055,11 @@ def _hub_list_error(
 ) -> HubListError:
     """The refusal of a one-module plan that adds or removes the hubs of *changes*.
 
-    Each change is ``(segment, list path, hub, added)``.
+    Each change is ``(segment, list path, hub, added)``, the list's path in
+    attribute names. The module is named by its python name, which the call
+    the message gives takes.
     """
+    module = python_module_name(module_name)
     segments = list(dict.fromkeys(segment for segment, _, _, _ in changes))
     lists = list(dict.fromkeys(".".join(path) for _, path, _, _ in changes))
     hubs = list(dict.fromkeys(hub for _, _, hub, _ in changes))
@@ -1069,13 +1075,13 @@ def _hub_list_error(
         {"+": {"_op": "add", "name": hub}} if added else {hub: {"_op": "delete"}},
     )
     message = (
-        f"{module_name}: the edit {did}. A hub added to or removed from these "
+        f"{module}: the edit {did}. A hub added to or removed from these "
         "lists needs its role set or cleared on the hub's service, which one "
         "module write cannot do, so the VCO would list a hub no Edge can use "
         "(or a hub whose roles are lost). The pipeline sets the roles as steps "
         "of the save, in the order the UI does: send the change as a patch, for "
         f"example {example} "
-        f'(pipeline.apply(state, module="{module_name}", patch=...)), then '
+        f'(pipeline.apply(state, module="{module}", patch=...)), then '
         "pipeline.save(state)."
     )
     return HubListError(
@@ -1109,15 +1115,16 @@ def _check_hub_lists(module_name: str, as_read: object, payload: object) -> None
             continue
         name = _segment_name(cast("Mapping[str, Any]", entry))
         for field in hub_list_fields():
-            path = field.path
-            read, written = _hub_list(before, path), _hub_list(entry, path)
+            # Read at the wire keys, named in the refusal by the attributes.
+            read = _hub_list(before, field.path)
+            written = _hub_list(entry, field.path)
             changes.extend(
-                (name, path, hub_name, True)
+                (name, field.python_path, hub_name, True)
                 for key, hub_name in written.items()
                 if key not in read
             )
             changes.extend(
-                (name, path, hub_name, False)
+                (name, field.python_path, hub_name, False)
                 for key, hub_name in read.items()
                 if key not in written
             )

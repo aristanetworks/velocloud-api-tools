@@ -373,9 +373,10 @@ class HubListError(VcoError):
     service, and a hub taken out needs it cleared. The pipeline does that as a
     step of the save; one module write cannot, so the VCO would list a hub no
     edge can use, or lose one's roles. ``segment`` is the segment's name (None
-    when the error is about several), ``lists`` the wire paths of the lists
-    whose members differ from the module as read (``vpn.backHaulEdges``),
-    ``hubs`` the names of the hubs added or removed, and ``edges`` the
+    when the error is about several), ``lists`` the paths of the lists whose
+    members differ from the module as read, from the segment, in attribute
+    names (``vpn.backhaul_edges``), as a patch names them, ``hubs`` the
+    names of the hubs added or removed, and ``edges`` the
     Edges (their IDs and names) that the change would leave with a hub they
     cannot use. The message says what happened and how to do it instead.
     """
