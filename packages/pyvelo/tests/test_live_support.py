@@ -45,6 +45,7 @@ from pyvelo.client.schemas.configuration import (
     DeleteConfigurationModule,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
+    InsertConfigurationModuleBase,
     InsertQosConfigurationModule,
     UpdateConfigurationModule,
 )
@@ -1576,6 +1577,29 @@ async def test_a_restore_that_fails_alone_reports_as_it_did_and_no_text_of_its_e
     )
 
 
+async def test_a_restore_whose_write_back_is_refused_reports_the_operation_and_codes(
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal's text names the lab (``REFUSAL``); its operation and codes do not.
+
+    The report holds the second and nothing of the first.
+    """
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012 (restoring raises as it exits, so the block holds the run it restores)
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            fake.refused.add(2)  # the Orchestrator refuses the restore's write
+    (backup,) = backups.iterdir()
+    report = as_pytest_reports(caught)
+    assert report == (
+        "DataRefusedError in configuration/updateConfigurationModule: "
+        f"DS00000001 lan.networks; the original QOS module is saved at {backup}"
+    )
+    assert "secret-lab-name" not in report
+
+
 async def test_a_restore_with_no_backup_that_fails_alone_ends_with_its_own_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2292,6 +2316,43 @@ async def test_a_delete_of_a_module_the_suite_cannot_insert_again_is_refused(
     assert str(helper.value) == refusal
     assert deletes_of(fake) == []
     assert fake.data(4) == WAN
+
+
+class InsertWanModule(InsertConfigurationModuleBase):
+    """An insert of a WAN module: the client's own requests insert no such module."""
+
+    name: Literal["WAN"] = "WAN"
+    data: dict[str, Any]
+
+
+async def test_an_insert_of_a_module_the_suite_could_not_delete_again_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A WAN insert built by hand, on an edge marked for deleting and inserting.
+
+    The suite deletes only a firewall or a QoS module, so it could not take
+    this one away again: the insert is refused before anything is sent.
+    """
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.WAN)
+    run = live.run_of(lab.client)
+    async with live.restoring(site) as original:
+        assert original is None
+        sent = run.sent
+        with pytest.raises(live.WritesRefusedError) as refused:
+            _ = await lab.client.insert_configuration_module(
+                InsertWanModule(configuration_id=12, data=copy.deepcopy(WAN))  # pyright: ignore[reportArgumentType] (a module name the typed requests do not cover: the guard is what refuses it)
+            )
+        assert run.sent == sent
+    assert str(refused.value) == (
+        "an insert of a WAN module, which the suite could not delete again, as "
+        "it deletes only a firewall or a QoS module; nothing was sent; insert "
+        "only a firewall or a QoS module, and change any other module with an "
+        "update inside its restoring block"
+    )
+    assert "insertConfigurationModule" not in fake.methods()
+    assert set(fake.store.rows) == {1, 2, 3}
 
 
 async def test_an_insert_whose_answer_is_lost_is_sent_and_is_the_runs_own(

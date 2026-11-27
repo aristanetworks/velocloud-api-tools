@@ -11,8 +11,8 @@ A failed test reports what ``failure_text`` makes of its exception and where
 it was raised, never the exception's own text: that quotes names and values
 of the lab. ``check`` and ``pytest.fail`` word a failure for the report as it
 is; a ``LiveSuiteError`` carries a message that is safe to show. A restore
-that fails after its test failed is one worded failure that says both, the
-test's error as ``failure_text`` gives it, with no exception chained to it
+that fails after its test failed is one worded failure that says both, each
+error as ``failure_text`` gives it, with no exception chained to it
 (``restoring``): a chained exception would be reported with its own text.
 
 Running the live suite
@@ -78,7 +78,9 @@ A test that writes is marked ``live_write``. The client the suite connects
   suite can only write what it will put back. A delete names its module by ID
   alone, so the block that found or inserted that ID must itself be on an edge
   marked ``pyvelo-it-replace-modules``, and on a firewall or a QoS module: the
-  suite inserts no other, so it could not put another back. ``delete_again``
+  suite inserts no other, so it could not put another back. An insert of a
+  module of any other name is refused for the same reason from the other
+  side: the suite could not delete it again. ``delete_again``
   sends one more delete, inside the block a module was deleted in, for a
   module an answer to this run said was deleted: a test records with it what
   the Orchestrator answers for a module that is gone;
@@ -865,6 +867,11 @@ NOT_INSERTABLE = (
     "QoS module; nothing was sent; delete only a firewall or a QoS module, and "
     "change any other module with an update inside its restoring block"
 )
+NOT_DELETABLE = (
+    "which the suite could not delete again, as it deletes only a firewall or a "
+    "QoS module; nothing was sent; insert only a firewall or a QoS module, and "
+    "change any other module with an update inside its restoring block"
+)
 INSERTABLE = (ConfigurationModuleName.FIREWALL, ConfigurationModuleName.QOS)
 """The modules ``insert_module`` inserts: the only ones the suite deletes."""
 
@@ -1267,6 +1274,18 @@ class LiveRun:
         if (kind, target_id) != (self.hub.kind, self.hub.id_):
             raise WritesRefusedError(ROLE_CALL_NOT_THE_HUB)
 
+    def check_insert(self, configuration_id: int, name: str) -> None:
+        """Raise ``WritesRefusedError`` unless a *name* module may be inserted there.
+
+        A block must be open on that configuration's *name* module, on a site
+        marked for deleting and inserting modules (``check_replace``), and the
+        module must be a firewall or a QoS module: the two the suite deletes
+        (``check_own_delete``), so the two it can take away again.
+        """
+        self.check_replace(configuration_id, name, "an insert")
+        if name not in {insertable.value for insertable in INSERTABLE}:
+            raise WritesRefusedError(f"an insert of a {name} module, {NOT_DELETABLE}")
+
     def check_delete(self, configuration_id: int, name: str, module_id: int) -> None:
         """Raise ``WritesRefusedError`` unless a block is on that module.
 
@@ -1537,7 +1556,7 @@ def _guarded_insert(
 ) -> Callable[..., Awaitable[InsertConfigurationModuleResult | AnyStoredModule]]:
     """*insert*, the client's module insert, checked before it is sent.
 
-    ``LiveRun.check_replace`` checks it.
+    ``LiveRun.check_insert`` checks it.
 
     An insert that passes may send its method (``_sends``); the module it made
     is then one the run inserted (``run.inserted``, for the block open on its
@@ -1557,7 +1576,7 @@ def _guarded_insert(
     async def guarded_insert(
         request: InsertConfigurationModule, *, level: ConfigContext | None = None
     ) -> InsertConfigurationModuleResult | AnyStoredModule:
-        run.check_replace(request.configuration_id, request.name, "an insert")
+        run.check_insert(request.configuration_id, request.name)
         sent = run.sent
         try:
             with _sends("configuration/insertConfigurationModule"):
@@ -1681,7 +1700,8 @@ def run_of(client: VcoClient) -> LiveRun:
     ``portal_paginated_list``): a read passes, and a write passes only from
     ``update_configuration_module``, ``insert_configuration_module`` or
     ``delete_configuration_module`` (inside a ``restoring`` block, to a module
-    that block covers; a delete only of a firewall or a QoS module, where
+    that block covers; an insert and a delete only of a firewall or a QoS
+    module, where
     that block's edge is marked for deleting and inserting modules, or from
     ``delete_again`` for a module deleted in a block that is still open), or
     from a role call of the hub ``admit_hub`` admitted
@@ -2343,8 +2363,10 @@ async def restoring(site: Site) -> AsyncGenerator[Original | None]:
 
     A restore that fails is one worded failure with no exception chained to
     it: a chained exception is reported with its own text, which can quote the
-    lab. It names the restore's error by its class, where the suite did not
-    word it, then says how the test's own writes had ended, where they ended
+    lab. It gives the restore's error as ``failure_text`` does, where the suite
+    did not word it (a refused write as its class, operation and codes; by
+    its class alone where ``failure_text`` gives nothing), then says how the
+    test's own writes had ended, where they ended
     with an error (``_ended_with``), then where the original is saved. Only
     this block knows which exception is the test's own: the chain a report is
     made from holds the restore's errors and the causes of the test's as well.
@@ -2375,7 +2397,7 @@ async def restoring(site: Site) -> AsyncGenerator[Original | None]:
                     said = [
                         str(exc)
                         if isinstance(exc, (pytest.fail.Exception, LiveSuiteError))
-                        else type(exc).__name__
+                        else failure_text(exc) or type(exc).__name__
                     ]
                     if ended is not None:
                         said.append(_ended_with(ended))
