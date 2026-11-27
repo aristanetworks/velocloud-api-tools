@@ -433,6 +433,41 @@ async def test_get_field_changes_lists_an_added_segment() -> None:
     assert guest.after == named_value(entry, FirewallData, guest.path)
 
 
+async def test_the_field_change_of_an_added_segment_shows_no_secret() -> None:
+    """The added segment's BGP neighbour has a password: it is ``"***"``."""
+    secret = "md5-made-up-for-guest"
+    state = await state_of(["Global"], ["Global"], ["Global"])
+    neighbor = {"neighbor_ip": "192.0.2.7", "neighbor_as": "65001"}
+    patch = {
+        "segments": {
+            "Guest": {
+                "_op": "add",
+                "bgp": {
+                    "enabled": True,
+                    "asn": "65000",
+                    "neighbors": [
+                        {**neighbor, "enable_md5": True, "md5_password": secret}
+                    ],
+                },
+            }
+        }
+    }
+    state = await ConfigPipeline(client=None).apply(
+        state, module="device_settings", patch=patch
+    )
+
+    changes = state.get_field_changes(DS)
+    # The segment as written, then the plan's change of it.
+    assert [str(c.path) for c in changes] == ["segments[Guest]", "segments[Guest].bgp"]
+    assert secret not in repr(state.get_field_changes())
+    added = changes[0].after
+    assert isinstance(added, dict)
+    (shown,) = added["bgp"]["neighbors"]
+    assert shown["md5_password"] == "***"
+    (planned,) = [m for m in state.plan().modules if m.name == DS]
+    assert secret in json.dumps(planned.data)
+
+
 async def test_plan_warnings_reach_the_save_result() -> None:
     # Guest is in device settings and QoS but not in firewall (a disagreement
     # as read), and its QoS segment lacks two defaults, which the QoS edit repairs.

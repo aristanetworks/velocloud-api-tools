@@ -2032,7 +2032,7 @@ is any difference in the rows of the refs the VCO's own processors manage.
 | `sent` | on `ConfigConflictError`: False when nothing was sent, because the version read before a write found the module changed (or gone): a write that carries refs, or one after a profile's device settings, where a path you edited was also changed |
 | `completed` | the writes of the same save before this one, which are stored |
 | `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)`: every field by its attribute name, every stored item by the name the stored list shows it by, the values complete |
-| `not_redone(include_clashes=False)` | the lost edits that patch leaves out, each as the message shows it, a secret as `"***"` |
+| `not_redone(include_clashes=False)` | the lost edits that patch leaves out, each as the message shows it, a secret and each value of a ref row as `"***"` |
 
 A planned change counts as stored when the VCO holds the value you meant,
 whoever put it there: an edit that another writer made identically is under
@@ -2163,8 +2163,9 @@ at a key the VCO does not know, which a write drops, is neither redone nor
 listed. Each entry is a copy of its lost edit as the message shows it, in the
 order of `lost_edits`: its path is the one of its line, which `apply` takes,
 and an object among its values has its keys by attribute name. For the values
-as stored, and for `clash`, read the entry of `lost_edits`. A ref row is the
-entry of `lost_edits` itself. Check the list before you save. In a rule list the first match decides, so check the order with
+as stored, and for `clash`, read the entry of `lost_edits`. A ref row keeps
+the path of its entry in `lost_edits`, and each value it has is `"***"` (one
+it lacks stays `MISSING`), as its line shows it. Check the list before you save. In a rule list the first match decides, so check the order with
 `state.plan().render()` too. `apply` can still refuse the patch, changing
 nothing, where the stored data no longer takes it (a rename to a name another
 writer gave an item, for example), and where the lost edit was made by assigning

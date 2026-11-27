@@ -784,6 +784,34 @@ async def test_the_redo_of_a_lost_css_provider_clear_applies() -> None:
     assert not stored_refs(client.store).get(CSS_PROVIDER)
 
 
+async def test_a_lost_css_row_the_redo_leaves_out_shows_no_secret_of_its_data() -> None:
+    """The row as read holds a password in its ``data``: shown, it is ``"***"``."""
+    secret = "css-password-made-up"
+    pipeline, client, state = await loaded_with_css()
+    state = await set_css(pipeline, state, "css-west")
+    _ = await pipeline.save(state)
+    one_row(stored_refs(client.store), CSS_PROVIDER)["data"] = {"password": secret}
+    state = await pipeline.load_profile(CONFIG)
+    state = await set_css(pipeline, state, "")
+    client.store.other_writer(DS_ID, other_writer_edit)
+
+    with pytest.raises(ConfigConflictError) as lost:
+        _ = await pipeline.save(state)
+
+    error = lost.value
+    (row,) = [edit for edit in error.lost_edits if edit.part == "refs"]
+    assert isinstance(row.as_read, dict)
+    assert row.as_read["data"] == {"password": secret}
+    (listed,) = error.not_redone()
+    assert (listed.path, listed.part) == (row.path, "refs")
+    assert (listed.as_read, listed.intended, listed.stored) == ("***", MISSING, "***")
+    assert secret not in repr(error.not_redone())
+    assert secret not in str(error)
+    assert error.redo_patch() == {
+        "segments": {"Global Segment": {"css": {"provider": {"logical_id": ""}}}}
+    }
+
+
 async def test_an_unknown_css_name_lists_the_services_the_field_takes() -> None:
     pipeline, client, state = await loaded_with_css()
     client.add_service(

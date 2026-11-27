@@ -1203,7 +1203,8 @@ class ModuleWriteError(VcoError):
         A refs entry is returned as it is: its keys are data, and its line
         names a row the plan adds or removes as the plan's line does
         (``_where``). So is every change of an error that has no plan, which
-        has nothing to name an item by.
+        has nothing to name an item by. ``not_redone`` hides the values of a
+        refs entry (``_hidden_ref_row``).
         """
         plan = self.plan
         if plan is None or change.part == "refs":
@@ -1481,9 +1482,10 @@ class ModuleWriteError(VcoError):
         hidden. Read the values, and ``clash``, from ``lost_edits``, which
         keeps each entry as the check made it: the ``clash`` of a copy compares
         its values as shown, and two secrets that differ are shown alike. A
-        refs entry has its path as the lost edit has it, and each of its
-        values is ``"***"``, as its line shows a row. Every entry of an error
-        that has no plan is the lost edit itself.
+        refs entry has its path as the lost edit has it, and each value it has
+        is ``"***"`` (one it lacks stays ``MISSING``), as its line shows a row,
+        also in an error that has no plan. Every other entry of such an error
+        is the lost edit itself.
         """
         left_out = self._redo(include_clashes=include_clashes)[1]
         return tuple(
