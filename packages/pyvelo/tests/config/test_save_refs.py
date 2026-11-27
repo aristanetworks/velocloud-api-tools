@@ -13,7 +13,12 @@ from typing import Any, ClassVar, cast, override
 import pytest
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
-from pyvelo.client.exceptions import ConfigConflictError, DetachedObjectError
+from pyvelo.client.exceptions import (
+    ConfigConflictError,
+    DetachedObjectError,
+    WriteNotAppliedError,
+    WriteOutcomeUnknownError,
+)
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
     CssProviderRef,
@@ -875,6 +880,147 @@ async def test_a_profile_save_rebases_qos_after_device_settings() -> None:
     )
 
 
+async def test_a_later_qos_save_is_rebased_onto_what_the_device_settings_write_left() -> (  # noqa: E501 (a test's name)
+    None
+):
+    state = profile_with_qos()
+    client = served(state)
+    propagating(client, QOS_ID)
+    pipeline = ConfigPipeline(client)
+    state = await pipeline.load_profile(CONFIG)
+    device_settings(state).lan.networks[0].name = "renamed"
+    first = await pipeline.save(state)
+    assert [str(n) for n in first.modules_updated] == ["deviceSettings"]
+    assert "QOS" in state.rebase_on_write
+    assert "deviceSettings" not in state.rebase_on_write
+    _ = await pipeline.revert(state, module="qos")
+    assert "QOS" in state.rebase_on_write
+    client.store.requests.clear()
+    rate_limit(state.profile.qos).value = 5
+
+    second = await pipeline.save(state)
+
+    assert methods(client.store) == [VERSION_READ, CONFIGURATION_READ, UPDATE]
+    assert [str(n) for n in second.modules_updated] == ["QOS"]
+    held = client.store.rows[QOS_ID]["data"]["serviceRateLimit"]
+    assert held == {**RATE, "enabled": True, "value": 5}
+    rate = rate_limit(state.profile.qos)
+    assert (rate.enabled, rate.value) == (True, 5)
+    assert state.rebase_on_write == set()
+    assert state.plan().changed == ()
+
+
+async def test_a_later_qos_conflict_names_the_device_settings_write_not_this_save() -> (
+    None
+):
+    state = profile_with_qos()
+    client = served(state)
+    pipeline = ConfigPipeline(client)
+
+    def raise_rate(row: dict[str, Any]) -> None:
+        row["data"]["serviceRateLimit"]["value"] = 7
+
+    def hook(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+        del old
+        if new["name"] == "deviceSettings":
+            client.store.other_writer(QOS_ID, raise_rate)
+
+    client.store.on_store.append(hook)
+    state = await pipeline.load_profile(CONFIG)
+    device_settings(state).lan.networks[0].name = "renamed"
+    _ = await pipeline.save(state)
+    client.store.requests.clear()
+    rate_limit(state.profile.qos).value = 5
+
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = await pipeline.save(state)
+
+    error = caught.value
+    assert methods(client.store) == [VERSION_READ, CONFIGURATION_READ]
+    assert (error.stated, error.sent) == (False, False)
+    assert [str(c.path) for c in error.lost_edits] == ["serviceRateLimit.value"]
+    assert client.store.rows[QOS_ID]["data"]["serviceRateLimit"]["value"] == 7
+    assert "this save wrote device settings" not in str(error)
+    assert error.detail == (
+        "the module changed on the VCO after a device settings write of this "
+        "profile, at a path this save also changes; nothing was sent"
+    )
+
+
+async def test_a_device_settings_write_stored_otherwise_than_sent_marks_qos() -> None:
+    """The write raised, but the VCO stored it: the later QoS save is rebased."""
+    state = profile_with_qos()
+    client = served(state)
+    propagating(client, QOS_ID)
+
+    def otherwise(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+        del old
+        if new["name"] == "deviceSettings":
+            new["data"]["lan"]["networks"][0]["name"] = "stored-otherwise"
+
+    client.store.on_store.append(otherwise)
+    pipeline = ConfigPipeline(client)
+    state = await pipeline.load_profile(CONFIG)
+    device_settings(state).lan.networks[0].name = "renamed"
+    with pytest.raises(WriteNotAppliedError):
+        _ = await pipeline.save(state)
+    assert client.store.rows[QOS_ID]["data"]["serviceRateLimit"]["enabled"] is True
+    assert "QOS" in state.rebase_on_write
+    client.store.requests.clear()
+    rate_limit(state.profile.qos).value = 5
+
+    result = await pipeline.save(state)
+
+    assert methods(client.store) == [VERSION_READ, CONFIGURATION_READ, UPDATE]
+    assert [str(n) for n in result.modules_updated] == ["QOS"]
+    held = client.store.rows[QOS_ID]["data"]["serviceRateLimit"]
+    assert held == {**RATE, "enabled": True, "value": 5}
+    assert state.rebase_on_write == set()
+
+
+async def test_a_device_settings_write_whose_outcome_is_unknown_marks_qos() -> None:
+    """An answer that cannot be read leaves the write possibly stored."""
+    state = profile_with_qos()
+    client = served(state)
+
+    def unreadable(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+        del old
+        if new["name"] == "deviceSettings":
+            new["data"]["lan"] = "not an object"
+
+    client.store.on_store.append(unreadable)
+    pipeline = ConfigPipeline(client)
+    state = await pipeline.load_profile(CONFIG)
+    device_settings(state).lan.networks[0].name = "renamed"
+
+    with pytest.raises(WriteOutcomeUnknownError) as caught:
+        _ = await pipeline.save(state)
+
+    assert caught.value.answer == "row"
+    assert "QOS" in state.rebase_on_write
+
+
+async def test_a_device_settings_write_refused_as_a_conflict_marks_nothing() -> None:
+    """Nothing of a refused write is stored, so nothing it could change is marked."""
+    state = profile_with_qos()
+    client = served(state)
+    propagating(client, QOS_ID)
+    pipeline = ConfigPipeline(client)
+    state = await pipeline.load_profile(CONFIG)
+
+    def theirs(row: dict[str, Any]) -> None:
+        row["data"]["lan"]["networks"][0]["name"] = "theirs"
+
+    client.store.other_writer(DS_ID, theirs)
+    device_settings(state).lan.networks[0].name = "renamed"
+
+    with pytest.raises(ConfigConflictError):
+        _ = await pipeline.save(state)
+
+    assert client.store.rows[QOS_ID]["data"]["serviceRateLimit"]["enabled"] is False
+    assert state.rebase_on_write == set()
+
+
 async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an_edit() -> (  # noqa: E501 (a test's name)
     None
 ):
@@ -900,13 +1046,14 @@ async def test_a_profile_save_raises_a_conflict_where_the_propagation_reached_an
 
     error = caught.value
     assert (error.stated, error.sent) == (False, False)
-    assert "after this save wrote device settings" in error.detail
+    assert "after a device settings write of this profile" in error.detail
     assert error.module is not None
     assert [str(c.path) for c in error.lost_edits] == ["serviceRateLimit.value"]
     assert client.store.rows[QOS_ID]["data"]["serviceRateLimit"]["value"] == 7
     assert len(client.update_requests) == 1  # device settings; QoS was not sent
     # The state holds the module as it is now, with the clash to redo on it.
     assert rate_limit(state.profile.qos).value == 7
+    assert "QOS" not in state.rebase_on_write
 
 
 async def test_a_module_listed_before_device_settings_is_written_after_it_and_rebased() -> (  # noqa: E501 (a test's name)
@@ -959,4 +1106,4 @@ async def test_an_edge_save_does_not_rebase() -> None:
         CONFIGURATION_READ,
     ]
     assert (caught.value.stated, caught.value.sent) == (False, False)
-    assert "after this save wrote device settings" not in caught.value.detail
+    assert "after a device settings write of this profile" not in caught.value.detail

@@ -101,7 +101,7 @@ def _firewall_row(
         "configurationId": config_id,
         "enterpriseLogicalId": None,
         "schemaVersion": None,
-        "version": None,
+        "version": "0",
         "metadata": None,
     }
 

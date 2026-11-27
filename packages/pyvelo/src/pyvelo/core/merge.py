@@ -88,6 +88,7 @@ from .rebase import (
     KeyValue,
     Path,
     PathPart,
+    _folded,  # pyright: ignore[reportPrivateUsage]  # one fold for every key compare
     item_key,
     key_form,
     key_part,
@@ -1551,6 +1552,8 @@ class _ListSpec:
     """What the one-part key of a keyed list is the ``NameOf``, if it is one."""
     fixed: FixedList | None
     """The ``FixedList`` of a keyed list of models whose entries are fixed."""
+    fold_case: bool
+    """Whether the keys of a keyed list are compared ignoring letter case."""
 
 
 @functools.cache
@@ -1589,6 +1592,7 @@ def _list_spec(field_info: FieldInfo) -> _ListSpec | None:
         map_key,
         _key_name_of(item_type, key_paths[0]) if len(key_paths) == 1 else None,
         get_fixed_list(field_info) if kind == "keyed" and item_type else None,
+        key_spec is not None and key_spec.fold_case,
     )
 
 
@@ -1864,11 +1868,25 @@ def _select(  # noqa: PLR0911 (existing: split it when it next changes)
     return _Selection([], key, None)
 
 
+def _compared_key(spec: _ListSpec, form: KeyForm | None) -> KeyForm | None:
+    """A key in string form as the keyed list of *spec* compares it.
+
+    Case-folded when its ``KeyField`` has *fold_case* (``_folded``), else as
+    it is.
+    """
+    return _folded(form) if spec.fold_case else form
+
+
 def _with_key(items: Sequence[object], spec: _ListSpec, key: KeyValue) -> list[int]:
-    """The positions of the items of a keyed list whose key is *key*, in string form."""
-    form = key_form(key)
+    """The positions of the items of a keyed list whose key is *key*, in string form.
+
+    Ignoring letter case when the list's ``KeyField`` has *fold_case*.
+    """
+    form = _compared_key(spec, key_form(key))
     return [
-        i for i, item in enumerate(items) if _item_key(item, spec.key_paths) == form
+        i
+        for i, item in enumerate(items)
+        if _compared_key(spec, _item_key(item, spec.key_paths)) == form
     ]
 
 
@@ -2165,7 +2183,8 @@ def _check_list_value(
     such an item that has a name and lacks the IDs of it raises
     ``LookupError``, as an add under that name does
     (``_require_ids_for_name``). A keyed list whose items repeat a key or an
-    alt key raises ``PatchError`` at *path*.
+    alt key raises ``PatchError`` at *path*; keys are compared as the list
+    compares them (``_compared_key``).
     """
     if len(data) == len(built):
         for index, (item_data, item) in enumerate(zip(data, built, strict=True)):
@@ -2187,7 +2206,7 @@ def _check_list_value(
     seen_alt: dict[KeyForm, int] = {}
     for index, item in enumerate(built):
         key = item_key(item, spec.key_paths)
-        form = key_form(key)
+        form = _compared_key(spec, key_form(key))
         if key is not None and form is not None:
             if form in seen:
                 raise PatchError(
@@ -2673,12 +2692,13 @@ def _selector_part(selector: object, selection: _Selection) -> PathPart:
 def _added_form(spec: _ListSpec, new: object) -> KeyForm | None:
     """The key or value, in string form, of what an add adds; or None.
 
-    The key in a keyed list, the value in a value list.
+    The key in a keyed list, as the list compares keys (``_compared_key``);
+    the value in a value list.
     """
     if spec.kind == "value":
         return str(new)
     if spec.kind == "keyed":
-        return _item_key(new, spec.key_paths)
+        return _compared_key(spec, _item_key(new, spec.key_paths))
     return None
 
 
@@ -3024,7 +3044,7 @@ def _new_list_item(
         if spec.kind == "value":
             taken = any(str(s.value) == form for s in slots)
         else:
-            taken = any(_item_key(s.value, spec.key_paths) == form for s in slots)
+            taken = bool(_with_key([s.value for s in slots], spec, form))
         if taken:
             shown = item_key(new, spec.key_paths) if spec.kind == "keyed" else None
             raise PatchError(

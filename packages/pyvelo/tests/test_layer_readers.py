@@ -30,6 +30,10 @@ from pydantic.fields import FieldInfo
 from pyvelo.client.exceptions import DetachedObjectError
 from pyvelo.client.models.configuration.ref_owners import ref_owners
 from pyvelo.client.module_write import wire_dump
+from pyvelo.client.operations.edge import (
+    GetEdgeConfigurationStackResultModel,
+    stack_with_levels,
+)
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.core import (
     Additive,
@@ -96,6 +100,7 @@ from pyvelo.core.rebase import (
 from pyvelo.core.references import references
 from pyvelo.core.secrets import hide_secrets
 from pyvelo.core.walk import walk_fields
+from pyvelo.testing import make_module_json
 
 from ._type_support import SegmentResolverFactory
 
@@ -886,3 +891,41 @@ def test_an_inheritable_patched_through_a_sub_model_check_keeps_its_owner() -> N
     _ = edge.mark_detached()
     with pytest.raises(DetachedObjectError, match="take it again"):
         segment.mapping.set_local(Flagged(value=3))
+
+
+def test_every_module_of_an_edge_stack_has_its_config_level() -> None:
+    def config(config_id: int, first: int) -> dict[str, object]:
+        return {
+            "id": config_id,
+            "name": f"c{config_id}",
+            "modules": [
+                make_module_json(
+                    "firewall",
+                    {"segments": []},
+                    module_id=first,
+                    configuration_id=config_id,
+                ),
+                make_module_json(
+                    "WAN",
+                    {"links": []},
+                    module_id=first + 1,
+                    configuration_id=config_id,
+                ),
+            ],
+        }
+
+    read = GetEdgeConfigurationStackResultModel.model_validate(
+        [config(10, 1), config(20, 3)]
+    )
+    edge, profile = stack_with_levels(read.root)
+    assert edge.modules is not MISSING
+    assert profile.modules is not MISSING
+
+    assert [(str(m.name), m.config_context) for m in edge.modules] == [
+        ("firewall", ConfigContext.EDGE),
+        ("WAN", ConfigContext.EDGE),
+    ]
+    assert [(str(m.name), m.config_context) for m in profile.modules] == [
+        ("firewall", ConfigContext.PROFILE),
+        ("WAN", ConfigContext.PROFILE),
+    ]

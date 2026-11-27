@@ -9,8 +9,8 @@ made on its own.
 At each place the first of these rules that fits is used. ``MISSING`` stands
 for a side that has no value there.
 
-1. ``R`` equals ``P``: nothing is planned here. Every difference between ``P``
-   and ``D`` (``raw_changes``) is a server change.
+1. ``R`` equals ``P`` (``same_json``): nothing is planned here. Every
+   difference between ``P`` and ``D`` (``raw_changes``) is a server change.
 2. All three are objects: each key is walked, those of ``R`` first, then those
    only ``P`` has, then those only ``D`` has.
 3. A keyed list whose items ``pair_items`` pairs between ``R`` and ``P``, and
@@ -32,6 +32,9 @@ for a side that has no value there.
    list ``pair_items`` cannot pair), a key or an item that was removed. It is
    applied when ``D`` holds the payload's value (``_beyond``): ``D`` may hold
    more keys than the payload, but not a key ``R`` had and the payload lacks.
+   Two values are equal, here and in rule 1, when ``same_json`` says so: a
+   boolean is never a number, so a sent ``true`` stored as ``1`` is not
+   applied, and ``1`` is ``1.0``.
 
 A path names an item of a keyed list as ``raw_changes`` does: by its key, or by its
 position ``#n`` where the key repeats or there is none. An item that was read is named
@@ -58,10 +61,11 @@ fields marked ``ServerOwned``. With ``model=None`` every list is unkeyed, so
 a changed list is one change.
 """
 
+import itertools
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from ipaddress import IPv6Interface
-from typing import Final, Literal
+from typing import Final, Literal, cast
 
 from pydantic import MISSING
 
@@ -70,6 +74,7 @@ from .base import (
     is_dict,
     is_list,
     list_item_type,
+    same_json,
 )
 from .fields import is_server_owned
 from .rebase import (
@@ -92,6 +97,7 @@ from .rebase import (
     node_child,
     node_field,
     pair_items,
+    pair_same,
     pair_unique,
     place_of,
     python_path,
@@ -192,7 +198,7 @@ class PlannedChange:
         if self.part == "refs":
             return False
         if not self.is_order:
-            return self.stored != self.as_read
+            return not same_json(self.stored, self.as_read)
         if not isinstance(self.as_read, list) or not isinstance(self.stored, list):
             return True
         read, stored = set(self.as_read), set(self.stored)
@@ -291,7 +297,7 @@ def check_response(
     stored otherwise than sent is a server change.
     """
     found = _Found(rewrites)
-    _walk(found, Path(()), as_read, payload, stored, model)
+    _walk(found, _Here(Path(()), as_read, payload, stored, model))
     return ResponseCheck(
         applied=tuple(found.applied),
         not_applied=tuple(found.not_applied),
@@ -299,7 +305,9 @@ def check_response(
         # A server change is a difference: one that stores the value as read
         # shows none (the planned change at its path says what was sent).
         server_changes=tuple(
-            change for change in found.server_changes if change.as_read != change.stored
+            change
+            for change in found.server_changes
+            if not same_json(change.as_read, change.stored)
         ),
         stored_parts=found.stored_parts,
     )
@@ -419,59 +427,70 @@ def _differences(
     return out
 
 
-def _walk(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
-    found: _Found, path: Path, r: object, p: object, d: object, node: _CheckNode
-) -> None:
-    if r == p:
+@dataclass(frozen=True, slots=True)
+class _Here:
+    """One place of the walk: its path, the three values there and the model's shape."""
+
+    path: Path
+    r: object
+    p: object
+    d: object
+    node: _CheckNode
+
+    def at(
+        self, part: PathPart, r: object, p: object, d: object, node: _CheckNode
+    ) -> "_Here":
+        """The place one *part* below this one, with its three values and its node."""
+        return _Here(self.path.child(part), r, p, d, node)
+
+
+def _walk(found: _Found, here: _Here) -> None:
+    if same_json(here.r, here.p):
         # Rule 1: nothing planned here.
         found.server_changes.extend(
             ServerChange(change.path, change.before, change.after)
-            for change in _differences(path, p, d, node)
+            for change in _differences(here.path, here.p, here.d, here.node)
         )
-    elif is_dict(r) and is_dict(p):
-        if is_dict(d):
-            _walk_object(found, path, r, p, d, node)
+    elif is_dict(here.r) and is_dict(here.p):
+        if is_dict(here.d):
+            _walk_object(found, here)
         else:
-            _walk_replaced(found, path, r, p, d, node)
+            _walk_replaced(found, here)
     elif (
-        isinstance(node, KeyedList)
-        and is_list(r)
-        and is_list(p)
-        and (pairing := pair_items(r, p, node)) is not None
-        and (names := item_names(r, p, node, pairing)) is not None
+        isinstance(here.node, KeyedList)
+        and is_list(here.r)
+        and is_list(here.p)
+        and (pairing := pair_items(here.r, here.p, here.node)) is not None
+        and (names := item_names(here.r, here.p, here.node, pairing)) is not None
     ):
-        if is_list(d):
-            _walk_keyed_list(found, path, r, p, d, node, pairing, names)
+        if is_list(here.d):
+            _walk_keyed_list(found, here, pairing, names)
         else:
-            _walk_replaced(found, path, r, p, d, node)
+            _walk_replaced(found, here)
     else:
-        _planned(found, path, r, p, d, node)
+        _planned(found, here)
 
 
-def _walk_object(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
-    found: _Found,
-    path: Path,
-    r: dict[object, object],
-    p: dict[object, object],
-    d: dict[object, object],
-    node: _CheckNode,
-) -> None:
+def _walk_object(found: _Found, here: _Here) -> None:
     """Rule 2: walk each key of *r*, then those only *p* has, then those only *d* has.
 
     A key the VCO owns is not walked (``_owned``).
     """
+    r = cast("dict[object, object]", here.r)
+    p = cast("dict[object, object]", here.p)
+    d = cast("dict[object, object]", here.d)
     keys = [
         *r,
         *(key for key in p if key not in r),
         *(key for key in d if key not in r and key not in p),
     ]
     for key in keys:
-        key_path = path.child(str(key))
+        key_path = here.path.child(str(key))
         values = r.get(key, MISSING), p.get(key, MISSING), d.get(key, MISSING)
-        if _is_owned(found.rewrites, node, key, key_path):
+        if _is_owned(found.rewrites, here.node, key, key_path):
             _owned(found, key_path, *values)
         else:
-            _walk(found, key_path, *values, _child_node(node, key))
+            _walk(found, here.at(str(key), *values, _child_node(here.node, key)))
 
 
 def _owned(found: _Found, path: Path, r: object, p: object, d: object) -> None:
@@ -480,23 +499,21 @@ def _owned(found: _Found, path: Path, r: object, p: object, d: object) -> None:
     A change the plan made there is left out, and a value stored there
     otherwise than sent is a server change.
     """
-    if r != p:
+    if not same_json(r, p):
         found.left_out.append(PlannedChange(path, r, p, d))
-    if p != d:
+    if not same_json(p, d):
         found.server_changes.append(ServerChange(path, r, d))
 
 
-def _walk_replaced(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
-    found: _Found, path: Path, r: object, p: object, d: object, node: _CheckNode
-) -> None:
+def _walk_replaced(found: _Found, here: _Here) -> None:
     """Rule 4: *d* is not the container *r* and *p* are, so it stores nothing inside it.
 
     Each difference between *r* and *p* is a planned change that meets nothing
     stored. By rule 5's test that applies a removal, and nothing else. One at
     a key the VCO owns is left out.
     """
-    for change in _differences(path, r, p, node):
-        if _is_owned_below(found.rewrites, path, node, change.path):
+    for change in _differences(here.path, here.r, here.p, here.node):
+        if _is_owned_below(found.rewrites, here.path, here.node, change.path):
             found.left_out.append(
                 PlannedChange(
                     change.path,
@@ -510,33 +527,26 @@ def _walk_replaced(  # noqa: PLR0913, PLR0917 (existing: split it when it next c
         else:
             _planned(
                 found,
-                change.path,
-                change.before,
-                change.after,
-                MISSING,
-                None,
+                _Here(change.path, change.before, change.after, MISSING, None),
                 place=change.place,
                 moves=change.moves,
             )
-    found.server_changes.append(ServerChange(path, r, d))
+    found.server_changes.append(ServerChange(here.path, here.r, here.d))
 
 
-def _walk_keyed_list(  # noqa: C901, PLR0913, PLR0917 (existing: split it when it next changes)
-    found: _Found,
-    path: Path,
-    r: list[object],
-    p: list[object],
-    d: list[object],
-    node: KeyedList,
-    pairing: Pairing,
-    names: dict[int, ItemPart],
+def _walk_keyed_list(
+    found: _Found, here: _Here, pairing: Pairing, names: dict[int, ItemPart]
 ) -> None:
     """Rule 3: the items of a keyed list, each with its partners, and then the order.
 
     *names* is the name of each item of *p* (``item_names``).
     """
+    r = cast("list[object]", here.r)
+    p = cast("list[object]", here.p)
+    d = cast("list[object]", here.d)
+    node = cast("KeyedList", here.node)
     r_of = {in_p: in_r for in_r, in_p in pairing.pairs}
-    d_of, d_of_removed = _pair_stored(r, p, d, node, pairing.removed, found.rewrites)
+    d_of, d_of_removed = _pair_stored(here, pairing.removed, found.rewrites)
     r_parts, d_parts = (item_parts(items, node) for items in (r, d))
     d_keys = set(key_forms(d, node))
 
@@ -550,31 +560,45 @@ def _walk_keyed_list(  # noqa: C901, PLR0913, PLR0917 (existing: split it when i
     for j, item in enumerate(p):
         stored = d[d_of[j]] if j in d_of else MISSING
         if j in d_of:
-            record(path.child(names[j]), d_of[j])
+            record(here.path.child(names[j]), d_of[j])
         if j in r_of:
-            _walk(found, path.child(names[j]), r[r_of[j]], item, stored, node.item)
+            _walk(found, here.at(names[j], r[r_of[j]], item, stored, node.item))
         else:
             _planned(
                 found,
-                path.child(names[j]),
-                MISSING,
-                item,
-                stored,
-                node.item,
+                here.at(names[j], MISSING, item, stored, node.item),
                 place=place_of(names, j),
             )
     for i in pairing.removed:
         still_there = d[d_of_removed[i]] if i in d_of_removed else MISSING
         if i in d_of_removed:
-            record(path.child(r_parts[i]), d_of_removed[i])
-        _planned(found, path.child(r_parts[i]), r[i], MISSING, still_there, node.item)
+            record(here.path.child(r_parts[i]), d_of_removed[i])
+        _planned(found, here.at(r_parts[i], r[i], MISSING, still_there, node.item))
     partnered = {*d_of.values(), *d_of_removed.values()}
     found.server_changes.extend(
-        ServerChange(path.child(d_parts[k]), MISSING, item)
+        ServerChange(here.path.child(d_parts[k]), MISSING, item)
         for k, item in enumerate(d)
         if k not in partnered
     )
+    _order_change(found, here, pairing, names, d_of)
 
+
+def _order_change(
+    found: _Found,
+    here: _Here,
+    pairing: Pairing,
+    names: dict[int, ItemPart],
+    d_of: dict[int, int],
+) -> None:
+    """The order of a keyed list, as rule 3 says: planned, left out or a server change.
+
+    *names* is the name of each item of *p* (``item_names``), and *d_of* the
+    index in *d* of each item of *p* that *d* holds (``_pair_stored``).
+    """
+    r = cast("list[object]", here.r)
+    p = cast("list[object]", here.p)
+    node = cast("KeyedList", here.node)
+    r_parts = item_parts(r, node)
     order_in_r = [in_r for in_r, _ in pairing.pairs]
     held = sorted(d_of)  # the items of p that d has, in the order of p
     order_in_d = [d_of[j] for j in held]
@@ -592,16 +616,18 @@ def _walk_keyed_list(  # noqa: C901, PLR0913, PLR0917 (existing: split it when i
             for n, j in enumerate(held)
             if n not in keep
         )
-    order = PlannedChange(path, read_names, meant_names, stored_names, moves=moves)
-    if any(matches(path, pattern) for pattern in found.rewrites.own_order):
+    order = PlannedChange(here.path, read_names, meant_names, stored_names, moves=moves)
+    if any(matches(here.path, pattern) for pattern in found.rewrites.own_order):
         if reordered:
             found.left_out.append(order)
         if not in_payload_order:
-            found.server_changes.append(ServerChange(path, sent_names, stored_names))
+            found.server_changes.append(
+                ServerChange(here.path, sent_names, stored_names)
+            )
     elif reordered or (not in_payload_order and any(j in d_of for j in pairing.added)):
         (found.applied if in_payload_order else found.not_applied).append(order)
     elif not in_payload_order:
-        found.server_changes.append(ServerChange(path, sent_names, stored_names))
+        found.server_changes.append(ServerChange(here.path, sent_names, stored_names))
 
 
 def _alt_forms(items: list[object], node: KeyedList) -> list[KeyForm | None]:
@@ -653,18 +679,13 @@ def _first_with(
     return next((index for index in left if values[index] == value), None)
 
 
-def _pair_stored(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
-    r: list[object],
-    p: list[object],
-    d: list[object],
-    node: KeyedList,
-    removed: tuple[int, ...],
-    rewrites: Rewrites,
+def _pair_stored(
+    here: _Here, removed: tuple[int, ...], rewrites: Rewrites
 ) -> tuple[dict[int, int], dict[int, int]]:
     """Pair the items of *p*, and the items of *r* the plan removed, with those of *d*.
 
     Returns index in *p* to index in *d*, and index in *r* to index in *d*,
-    for the indexes *removed*. Four passes, each over the items still left:
+    for the indexes *removed*. Five passes, each over the items still left:
 
     1. by alt key, and
     2. by key, each for a value that occurs once on each side, as
@@ -673,13 +694,18 @@ def _pair_stored(  # noqa: PLR0913, PLR0917 (existing: split it when it next cha
        key. Failing that, it takes the first item of *d* that has its key, but
        only while *d* has more items left with that key than *p* has: the
        others are the partners of items the plan added under that key, which
-       pass 4 pairs. An item so taken says the removal was not applied; it is
+       pass 5 pairs. An item so taken says the removal was not applied; it is
        not another writer's item;
-    4. the items of *p* and *d* pair in order, first with first, while the two
-       keys are equal or the item of *p* has no key. This pairs items whose
-       key repeats and whose alt key the VCO revised, and an item sent without
-       a key that the VCO issued one for. The first pair that fails ends the
-       pass.
+    4. an item of *p* takes the item of *d* left that is the same JSON value,
+       when neither side has another item left that is the same
+       (``pair_same``): it was stored as sent, whatever comes before it, also
+       when it has no key;
+    5. the items of *p* and *d* pair by their place (``_pair_in_order``):
+       equal keys along a longest common subsequence, then, between those
+       pairs, each item of *p* without a key with the next item of *d*, up to
+       the first item of *p* with a key. This pairs items whose key repeats
+       and whose alt key the VCO revised, and an item sent without a key that
+       the VCO issued one for.
 
     Keys and alt keys are compared in string form, part by part, and with
     ``rewrites.ipv6`` a part that parses as an IPv6 interface in canonical
@@ -687,6 +713,10 @@ def _pair_stored(  # noqa: PLR0913, PLR0917 (existing: split it when it next cha
     otherwise than sent. The item so paired is then walked as any other, so
     the key text it stores otherwise is a server change.
     """
+    r = cast("list[object]", here.r)
+    p = cast("list[object]", here.p)
+    d = cast("list[object]", here.d)
+    node = cast("KeyedList", here.node)
     r_keys, p_keys, d_keys = (
         _compared_forms(key_forms(items, node), rewrites) for items in (r, p, d)
     )
@@ -715,20 +745,88 @@ def _pair_stored(  # noqa: PLR0913, PLR0917 (existing: split it when it next cha
             d_of_removed[i] = taken
             d_left.remove(taken)
 
-    for j, k in zip(p_left, d_left, strict=False):
-        if p_keys[j] is not None and p_keys[j] != d_keys[k]:
-            break
-        d_of[j] = k
+    pair_same(d, p, d_left, p_left, d_of)
+    paired = set(d_of.values())
+    p_left = [j for j in p_left if j not in d_of]
+    d_left = [k for k in d_left if k not in paired]
+    _pair_in_order(p_keys, d_keys, p_left, d_left, d_of)
     return d_of, d_of_removed
 
 
-def _planned(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
+def _pair_in_order(
+    sent_keys: list[KeyForm | None],
+    stored_keys: list[KeyForm | None],
+    sent_left: list[int],
+    stored_left: list[int],
+    pairs: dict[int, int],
+) -> None:
+    """Pass 5 of ``_pair_stored``: pair the items still left by their place.
+
+    *sent_left* and *stored_left* are the indexes no earlier pass paired, in
+    list order. Each pair is written into *pairs*, sent index to stored index.
+
+    1. Items with equal keys pair, as many as keep both lists in order (a
+       longest common subsequence of their keys). Items of a repeated key pair
+       first with first.
+    2. Between two such pairs, and before the first or after the last, a sent
+       item without a key takes the next stored item there: the VCO may have
+       given it a key. The first sent item with a key ends that stretch: the
+       VCO dropped it, so the items after it cannot be matched by place.
+    """
+    sent_keyed = [j for j in sent_left if sent_keys[j] is not None]
+    stored_keyed = [k for k in stored_left if stored_keys[k] is not None]
+    matched = [
+        (sent_keyed[a], stored_keyed[b])
+        for a, b in _common_subsequence(
+            [sent_keys[j] for j in sent_keyed], [stored_keys[k] for k in stored_keyed]
+        )
+    ]
+    pairs.update(matched)
+    # Each stretch lies strictly between two matched pairs; the first starts
+    # before index 0 and the last ends past the end of both lists.
+    bounds = [(-1, -1), *matched, (len(sent_keys), len(stored_keys))]
+    for (sent_from, stored_from), (sent_to, stored_to) in itertools.pairwise(bounds):
+        sent_here = [j for j in sent_left if sent_from < j < sent_to]
+        stored_here = [k for k in stored_left if stored_from < k < stored_to]
+        keyless = itertools.takewhile(lambda j: sent_keys[j] is None, sent_here)
+        pairs.update(zip(keyless, stored_here, strict=False))
+
+
+def _common_subsequence(
+    first: list[KeyForm | None], second: list[KeyForm | None]
+) -> list[tuple[int, int]]:
+    """The positions of a longest common subsequence of *first* and *second*.
+
+    Each pair is (index in *first*, index in *second*), in order. Of several
+    longest ones it takes each match as early as it can.
+    """
+    # longest[i][j] is the length of a longest common subsequence of
+    # first[i:] and second[j:].
+    longest = [[0] * (len(second) + 1) for _ in range(len(first) + 1)]
+    for i in reversed(range(len(first))):
+        for j in reversed(range(len(second))):
+            longest[i][j] = (
+                longest[i + 1][j + 1] + 1
+                if first[i] == second[j]
+                else max(longest[i + 1][j], longest[i][j + 1])
+            )
+    found: list[tuple[int, int]] = []
+    i = j = 0
+    while i < len(first) and j < len(second):
+        if first[i] == second[j]:
+            found.append((i, j))
+            i += 1
+            j += 1
+        elif longest[i + 1][j] >= longest[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    return found
+
+
+def _planned(
     found: _Found,
-    path: Path,
-    r: object,
-    p: object,
-    d: object,
-    node: _CheckNode,
+    here: _Here,
     *,
     place: ItemPlace | None = None,
     moves: tuple[ItemMove, ...] | None = None,
@@ -740,16 +838,16 @@ def _planned(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes
     The removal of a key the VCO adds a default back at (``Rewrites.readded``)
     is left out when *d* has a value there, and that value is a server change.
     """
-    change = PlannedChange(path, r, p, d, place=place, moves=moves)
+    change = PlannedChange(here.path, here.r, here.p, here.d, place=place, moves=moves)
     if (
-        p is MISSING
-        and d is not MISSING
-        and any(matches(path, pattern) for pattern in found.rewrites.readded)
+        here.p is MISSING
+        and here.d is not MISSING
+        and any(matches(here.path, pattern) for pattern in found.rewrites.readded)
     ):
         found.left_out.append(change)
-        found.server_changes.append(ServerChange(path, r, d))
+        found.server_changes.append(ServerChange(here.path, here.r, here.d))
         return
-    beyond = _beyond(found.rewrites, path, r, p, d, node)
+    beyond = _beyond(found.rewrites, here)
     if beyond is None:
         found.not_applied.append(change)
     else:
@@ -757,15 +855,8 @@ def _planned(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes
         found.server_changes.extend(beyond)
 
 
-def _beyond(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0917 (existing: split it when it next changes)
-    rewrites: Rewrites,
-    path: Path,
-    r: object,
-    p: object,
-    d: object,
-    node: _CheckNode,
-    *,
-    top: bool = True,
+def _beyond(
+    rewrites: Rewrites, here: _Here, *, top: bool = True
 ) -> list[ServerChange] | None:
     """What *d* has beyond *p*, or None when *d* does not hold *p*.
 
@@ -791,61 +882,79 @@ def _beyond(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0917 (existing: split 
     Below the path of the planned change nothing as read is paired with what
     *d* has, so a server change there has ``as_read`` ``MISSING``.
     """
-    if is_dict(p):
-        if not is_dict(d):
-            return None
-        out: list[ServerChange] = []
-        for key, value in p.items():
-            key_path = path.child(str(key))
-            stored = d.get(key, MISSING)
-            if _is_owned(rewrites, node, key, key_path):
-                if value != stored:
-                    out.append(ServerChange(key_path, MISSING, stored))
-                continue
-            below = _beyond(
-                rewrites,
-                key_path,
+    if is_dict(here.p):
+        return _beyond_object(rewrites, here)
+    if is_list(here.p):
+        return _beyond_list(rewrites, here)
+    if same_json(here.d, here.p):
+        return []
+    if rewrites.ipv6 and _same_ipv6(here.p, here.d):
+        return [ServerChange(here.path, here.r if top else MISSING, here.d)]
+    return None
+
+
+def _beyond_object(rewrites: Rewrites, here: _Here) -> list[ServerChange] | None:
+    """``_beyond`` where *p* is an object."""
+    r = here.r
+    p = cast("dict[object, object]", here.p)
+    d = here.d
+    if not is_dict(d):
+        return None
+    out: list[ServerChange] = []
+    for key, value in p.items():
+        key_path = here.path.child(str(key))
+        stored = d.get(key, MISSING)
+        if _is_owned(rewrites, here.node, key, key_path):
+            if not same_json(value, stored):
+                out.append(ServerChange(key_path, MISSING, stored))
+            continue
+        below = _beyond(
+            rewrites,
+            here.at(
+                str(key),
                 r.get(key, MISSING) if is_dict(r) else MISSING,
                 value,
                 stored,
-                _child_node(node, key),
-                top=False,
-            )
-            if below is None:
-                return None
-            out.extend(below)
-        for key, value in d.items():
-            if key in p:
-                continue
-            key_path = path.child(str(key))
-            if (
-                is_dict(r)
-                and key in r
-                and not _is_owned(rewrites, node, key, key_path)
-                and not any(matches(key_path, pattern) for pattern in rewrites.readded)
-            ):
-                return None
-            out.append(ServerChange(key_path, MISSING, value))
-        return out
-    if is_list(p):
-        if not is_list(d) or len(d) != len(p):
+                _child_node(here.node, key),
+            ),
+            top=False,
+        )
+        if below is None:
             return None
-        item_node = _item_node(node)
-        out = []
-        for n, (p_item, d_item) in enumerate(zip(p, d, strict=True)):
-            r_item = r[n] if is_list(r) and n < len(r) else MISSING
-            below = _beyond(
-                rewrites, path.child(n), r_item, p_item, d_item, item_node, top=False
-            )
-            if below is None:
-                return None
-            out.extend(below)
-        return out
-    if d == p:
-        return []
-    if rewrites.ipv6 and _same_ipv6(p, d):
-        return [ServerChange(path, r if top else MISSING, d)]
-    return None
+        out.extend(below)
+    for key, value in d.items():
+        if key in p:
+            continue
+        key_path = here.path.child(str(key))
+        if (
+            is_dict(r)
+            and key in r
+            and not _is_owned(rewrites, here.node, key, key_path)
+            and not any(matches(key_path, pattern) for pattern in rewrites.readded)
+        ):
+            return None
+        out.append(ServerChange(key_path, MISSING, value))
+    return out
+
+
+def _beyond_list(rewrites: Rewrites, here: _Here) -> list[ServerChange] | None:
+    """``_beyond`` where *p* is a list."""
+    r = here.r
+    p = cast("list[object]", here.p)
+    d = here.d
+    if not is_list(d) or len(d) != len(p):
+        return None
+    item_node = _item_node(here.node)
+    out: list[ServerChange] = []
+    for n, (p_item, d_item) in enumerate(zip(p, d, strict=True)):
+        r_item = r[n] if is_list(r) and n < len(r) else MISSING
+        below = _beyond(
+            rewrites, here.at(n, r_item, p_item, d_item, item_node), top=False
+        )
+        if below is None:
+            return None
+        out.extend(below)
+    return out
 
 
 def _same_ipv6(a: object, b: object) -> bool:

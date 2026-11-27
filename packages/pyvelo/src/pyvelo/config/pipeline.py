@@ -6,7 +6,7 @@ The workflow is load → apply → save, and revert.
 import contextlib
 import json
 from collections.abc import Collection, Generator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Final, Literal, Protocol, TypeIs, cast, runtime_checkable
 
 from pydantic import MISSING
@@ -16,6 +16,7 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ComposedModuleError,
+    ConfigConflictError,
     DetachedObjectError,
     FixedListError,
     LossyFieldError,
@@ -23,6 +24,7 @@ from pyvelo.client.exceptions import (
     RefsNotLoadedError,
     UnboundError,
     VcoOperationError,
+    VersionRequiredError,
     WriteOutcomeUnknownError,
 )
 from pyvelo.client.hub_services import missing_services
@@ -30,11 +32,12 @@ from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.ref_owners import ref_only_values
 from pyvelo.client.module_check import ModuleWrite, is_vco_assigned
-from pyvelo.client.module_write import ModulePlan, with_hub_rows
+from pyvelo.client.module_write import ModulePlan, has_version, with_hub_rows
 from pyvelo.client.operations.configuration import (
     check_found_insert,
     find_named_module,
 )
+from pyvelo.client.operations.edge import stack_with_levels
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
@@ -281,6 +284,12 @@ _WRITABLE_MODULES = (
     FirewallConfigurationModule,
 )
 
+_CHANGED_BY_DEVICE_SETTINGS = (
+    ConfigurationModuleName.QOS,
+    ConfigurationModuleName.FIREWALL,
+)
+"""The modules of a profile that the VCO can change as it stores its device settings."""
+
 
 @dataclass
 class _Sending:
@@ -359,6 +368,7 @@ class _Sending:
         self.failed = None
         if self.is_device_settings(mod):
             self.device_settings_stored = True
+            self.mark_changed_by_device_settings()
         paths = list(
             dict.fromkeys(
                 change.path
@@ -378,6 +388,7 @@ class _Sending:
             if insert:
                 self.state.unconfirmed_inserts.add(mod.name)
             raise
+        self.state.rebase_on_write.discard(mod.name)
         name = ConfigurationModuleName(write.name)
         self.result.server_changes[name] = write.server_changes
         self.result.left_out[name] = write.left_out
@@ -404,6 +415,16 @@ class _Sending:
             error.add_note(note)
             raise error
 
+    def mark_changed_by_device_settings(self) -> None:
+        """Name the modules a stored device settings write can change on the VCO.
+
+        The next write of each, in this save or a later one, is rebased
+        (``state.rebase_on_write``).
+        """
+        for name in _CHANGED_BY_DEVICE_SETTINGS:
+            if (other := self.state.find_module(name)) is not None:
+                self.state.rebase_on_write.add(other.name)
+
     def put_stored(self, mod: _WritableModule, error: ModuleWriteError) -> bool:
         """Put the module *error* carries in the state in place of *mod*.
 
@@ -417,6 +438,7 @@ class _Sending:
         stored = error.module
         if isinstance(stored, type(mod)) and self.state.find_module(mod.name) is mod:
             self.state.replace_module(mod, cast("AnyStoredModule", stored))
+            self.state.rebase_on_write.discard(mod.name)
             return True
         return False
 
@@ -515,7 +537,9 @@ class ConfigPipeline:
         """Fetch edge config + profile config (template).
 
         If edge is a string, resolves by name via EdgeResolver.
-        Takes a snapshot of the loaded state for diff-on-save.
+        Takes a snapshot of the loaded state for diff-on-save. Every module has the
+        config level of its layer, as one read with ``get_configuration`` has, also
+        from a client that answers the stack itself.
         """
         edge_id: int
         resolvers = self._resolvers.unloaded()
@@ -544,7 +568,9 @@ class ConfigPipeline:
         if enterprise_id is not None:
             request.enterprise_id = enterprise_id
 
-        stack = await self.client.get_edge_configuration_stack(request)
+        stack = stack_with_levels(
+            await self.client.get_edge_configuration_stack(request)
+        )
         edge_config: EdgeConfiguration = stack[0]
         profile_config: EnterpriseConfigurationProfile = stack[1]
 
@@ -1096,7 +1122,7 @@ class ConfigPipeline:
             except ResolverNotLoadedError as error:
                 await self.load_resolvers(state, _to_load(error, loaded))
 
-    async def save(
+    async def save(  # noqa: PLR0913 (each option of a save is a keyword its caller names)
         self,
         state: ConfigState,
         *,
@@ -1104,6 +1130,7 @@ class ConfigPipeline:
         validate: bool = True,
         repair_defaults: bool = True,
         on_hub_in_use: Literal["warn", "refuse"] = "warn",
+        unconditional: bool = False,
     ) -> SaveResult:
         """Persist changes to VCO.
 
@@ -1121,7 +1148,11 @@ class ConfigPipeline:
            warning for a profile whose modules disagree as read.
            *repair_defaults* is false to leave the template ``defaults`` a
            profile QoS segment lacks out of the write; the plan warns of them
-           either way (``defaults_repaired``).
+           either way (``defaults_repaired``). The save raises
+           ``VersionRequiredError`` if the plan updates a module that has no
+           version, also for ``dry_run``, unless *unconditional* is true: then
+           that update is sent with no ``version``, and the VCO writes it
+           whatever it holds.
         2. Run write-time validators on the changed modules. An error blocks
            the save: it raises ``SaveValidationError`` and sends nothing. A
            validator reports on the whole state, so an error in a module the
@@ -1135,7 +1166,10 @@ class ConfigPipeline:
            (``write_module(..., rebase=True)``): the device settings write can change it
            too, so its version is read first, and a changed one makes the save read the
            module and apply your edits to it; one written before them (QoS and
-           firewall, in a save that removes a hub) is not. Only a path you
+           firewall, in a save that removes a hub) is not, unless a device
+           settings write of an earlier save marked it. A profile's QoS or
+           firewall that a device settings write of an earlier save may have
+           changed (``state.rebase_on_write``) is rebased too. Only a path you
            edited that the other change also reached raises
            ``ConfigConflictError``; what changed beside your edits is in
            ``SaveResult.server_changes``, each with ``merged`` true. Per
@@ -1269,6 +1303,11 @@ class ConfigPipeline:
                 return result
 
             _list_writes(state, plan, result)
+            plan = replace(
+                plan,
+                modules=_versioned(state, plan.modules, unconditional=unconditional),
+            )
+            result.plan = plan
             if validate and not self._validate_writes(
                 state, plan, result, dry_run=dry_run
             ):
@@ -1596,7 +1635,10 @@ class ConfigPipeline:
         again.
 
         A ``ModuleWriteError`` puts the module as stored in the state, when it
-        carries one, and gets the writes before it as ``completed``. An insert
+        carries one, and gets the writes before it as ``completed``. When it is
+        of a profile's device settings write that may be stored (any but a
+        version conflict or a refusal), the modules that write can change are
+        named in ``state.rebase_on_write``, as for a stored one. An insert
         that fails in any way but with the module as stored is recorded in
         ``state.unconfirmed_inserts``. Every error gets the save's
         ``SaveProgress``; once a step was sent, an ``Exception`` is raised as
@@ -1616,6 +1658,10 @@ class ConfigPipeline:
                 module_plan = sending.changed[position]
                 sending.failed = mod.name
                 insert = module_plan.operation == "insert"
+                # After a device settings write of this save or an earlier one.
+                rebase = sending.device_settings_stored or (
+                    state.target_type == "profile" and mod.name in state.rebase_on_write
+                )
                 try:
                     write = await _write_module(
                         self.client,
@@ -1623,7 +1669,7 @@ class ConfigPipeline:
                         module_plan,
                         enterprise_id=state.resolver_context.enterprise_id,
                         if_absent=insert and mod.name in state.unconfirmed_inserts,
-                        rebase=sending.device_settings_stored,
+                        rebase=rebase,
                         # The steps' read of the version holds for this write.
                         version_checked=(
                             run is not None and sending.is_device_settings(mod)
@@ -1632,12 +1678,12 @@ class ConfigPipeline:
                         # The module the state holds now: after the device
                         # settings write, the one stored.
                         profile_device_settings=(
-                            _profile_device_settings(state)
-                            if sending.device_settings_stored
-                            else None
+                            _profile_device_settings(state) if rebase else None
                         ),
                     )
                 except ModuleWriteError as error:
+                    if sending.is_device_settings(mod) and _may_be_stored(error):
+                        sending.mark_changed_by_device_settings()
                     if not sending.put_stored(mod, error) and insert:
                         state.unconfirmed_inserts.add(mod.name)
                     error.completed = tuple(sending.done)
@@ -2668,6 +2714,19 @@ def _qos_rules_json(
     return dumped
 
 
+def _may_be_stored(error: ModuleWriteError) -> bool:
+    """Whether the write that raised *error* may be stored, in part or otherwise.
+
+    Nothing is stored of a write refused as a version conflict, nor of one
+    whose module could not be read after the VCO said it refused the version.
+    """
+    if isinstance(error, ConfigConflictError):
+        return False
+    return not (
+        isinstance(error, WriteOutcomeUnknownError) and error.answer == "refused"
+    )
+
+
 def _written_note(done: Sequence[ModuleWrite[Any]]) -> str:
     """The note of an error that stops a save: the modules it wrote before."""
     return "written before this failure: " + ", ".join(
@@ -2729,6 +2788,30 @@ def _list_writes(state: ConfigState, plan: ConfigPlan, result: SaveResult) -> No
             result.modules_inserted.append(name)
         else:
             result.modules_updated.append(name)
+
+
+def _versioned(
+    state: ConfigState, modules: Sequence[ModulePlan], *, unconditional: bool
+) -> tuple[ModulePlan, ...]:
+    """Each plan of *modules*, in order, marked when it may update with no version.
+
+    An update of a module that has no version (``has_version``) is marked
+    ``unconditional`` when *unconditional* is true, and raises
+    ``VersionRequiredError`` otherwise, before anything is sent. Any other
+    plan (an insert, a ``none`` plan, an update of a module with a version) is
+    returned as it is.
+    """
+    versioned: list[ModulePlan] = []
+    for module_plan in modules:
+        if module_plan.operation != "update" or has_version(
+            state.module(module_plan.name)
+        ):
+            versioned.append(module_plan)
+        elif unconditional:
+            versioned.append(replace(module_plan, unconditional=True))
+        else:
+            raise VersionRequiredError(module_plan.name)
+    return tuple(versioned)
 
 
 def _validation_error_to_warning(err: ValidatorError) -> ValidationWarning:

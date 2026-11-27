@@ -29,9 +29,9 @@ import json
 import re
 from bisect import bisect_left
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import ClassVar, Self, get_args, get_origin, override
+from typing import ClassVar, Self, cast, get_args, get_origin, override
 
 import yaml
 from pydantic import MISSING
@@ -53,6 +53,7 @@ from .base import (
     list_item_type,
     python_name,
     ref_only_fields,
+    same_json,
 )
 from .fields import ConfigContext, KeySpec, get_key_spec, has_override_flag
 from .layers import Kind, field_kind
@@ -622,8 +623,29 @@ def _keys(items: list[object], node: KeyedList) -> list[KeyValue | None]:
 
 
 def key_forms(items: list[object], node: KeyedList) -> list[KeyForm | None]:
-    """The key of each item in string form, None for an item without one."""
-    return [key_form(key) for key in _keys(items, node)]
+    """The key of each item in string form, None for an item without one.
+
+    Each part is case-folded when the list's ``KeyField`` has *fold_case*
+    (``_folded``): two keys that differ only by letter case are one.
+    """
+    forms = [key_form(key) for key in _keys(items, node)]
+    if not node.spec.fold_case:
+        return forms
+    return [_folded(form) for form in forms]
+
+
+def _folded(form: KeyForm | None) -> KeyForm | None:
+    """*form* with each part case-folded (``str.casefold``); None for no key.
+
+    How the keys of a ``KeyField`` list with *fold_case* are compared. It is
+    only compared: the key an item is named by, and the text stored, keep
+    their case.
+    """
+    if form is None:
+        return None
+    if isinstance(form, tuple):
+        return tuple(part.casefold() for part in form)
+    return form.casefold()
 
 
 def _unique(keys: list[KeyForm | None]) -> set[KeyForm]:
@@ -644,6 +666,33 @@ class AddedItem(dict[str, object]):
 # A dumper refuses (safe) or tags (full) a dict subclass it does not know.
 yaml.SafeDumper.add_representer(AddedItem, yaml.SafeDumper.represent_dict)
 yaml.Dumper.add_representer(AddedItem, yaml.Dumper.represent_dict)
+
+
+class UnreadDefault(str):
+    """A default the parse made for a key the document lacks (a generated ID)."""
+
+    __slots__: ClassVar[tuple[str, ...]] = ()
+
+
+def without_unread_defaults(document: object) -> object:
+    """*document* without each key whose value is an ``UnreadDefault``, at any depth.
+
+    A new document: objects and lists are rebuilt, other values shared. An
+    ``AddedItem`` is rebuilt as an ``AddedItem``, so the change list still
+    reads it as new.
+    """
+    if is_dict(document):
+        kept = {
+            key: without_unread_defaults(value)
+            for key, value in document.items()
+            if not isinstance(value, UnreadDefault)
+        }
+        if isinstance(document, AddedItem):
+            return AddedItem({str(key): value for key, value in kept.items()})
+        return kept
+    if is_list(document):
+        return [without_unread_defaults(item) for item in document]
+    return document
 
 
 def _holds_added(value: object) -> bool:
@@ -731,6 +780,93 @@ def pair_unique(
             pairs[j] = old_at[value]
 
 
+def pair_same(
+    old: list[object],
+    new: list[object],
+    old_left: list[int],
+    new_left: list[int],
+    pairs: dict[int, int],
+) -> None:
+    """Pair the items left that are the same JSON value (``same_json``).
+
+    Each item of *new_left* is paired with the one item of *old_left* that is
+    the same as it, when no other item of *new_left* is the same as that item
+    of *old*. The pairs go into *pairs*, as index in new to index in old.
+
+    Only items of one bucket (``_json_bucket``) are compared, so items that
+    differ from one another cost about one comparison each. When an item holds
+    a value whose bucket cannot be told, every item is compared with every
+    other.
+    """
+    if not old_left or not new_left:
+        return
+    old_buckets = [_json_bucket(old[i]) for i in old_left]
+    new_buckets = [_json_bucket(new[j]) for j in new_left]
+    if None in old_buckets or None in new_buckets:
+        _pair_same_among(old, new, old_left, new_left, pairs)
+        return
+    groups: dict[Hashable, tuple[list[int], list[int]]] = {}
+    for i, bucket in zip(old_left, old_buckets, strict=True):
+        groups.setdefault(bucket, ([], []))[0].append(i)
+    for j, bucket in zip(new_left, new_buckets, strict=True):
+        groups.setdefault(bucket, ([], []))[1].append(j)
+    for old_group, new_group in groups.values():
+        _pair_same_among(old, new, old_group, new_group, pairs)
+
+
+def _pair_same_among(
+    old: list[object],
+    new: list[object],
+    old_left: list[int],
+    new_left: list[int],
+    pairs: dict[int, int],
+) -> None:
+    """``pair_same``, comparing each item of *old_left* with each of *new_left*."""
+    for j in new_left:
+        same = [i for i in old_left if same_json(old[i], new[j])]
+        if len(same) == 1 and (
+            sum(same_json(old[same[0]], new[k]) for k in new_left) == 1
+        ):
+            pairs[j] = same[0]
+
+
+def _json_bucket(value: object) -> Hashable | None:
+    """A summary of *value* such that ``same_json(a, b)`` implies one bucket.
+
+    Two values of one bucket may still differ: a bucket only rules a pair out.
+    The bucket of a boolean or null is the value; a number's is Python's hash
+    of it, which is one for equal numbers of either type (``1`` and ``1.0``,
+    any size) and, for a nan, that of the object, which is the same only as
+    itself; a string's is its hash. A list's is its items' buckets in order, an object's
+    its keys with the bucket of each value, in any order (any ``dict`` is an
+    object). None is a bucket that cannot be told: a value that is not JSON,
+    or a subclass of a string or number with its own equality, which
+    ``same_json`` compares by ``==``, whatever that may hold equal to.
+    """
+    if is_list(value):
+        items = [_json_bucket(item) for item in value]
+        return None if None in items else ("list", tuple(items))
+    if is_dict(value):
+        entries = [(key, _json_bucket(value[key])) for key in value]
+        unknown = any(bucket is None for _, bucket in entries)
+        return None if unknown else ("object", frozenset(entries))
+    return _scalar_bucket(value)
+
+
+def _scalar_bucket(value: object) -> Hashable | None:
+    """The bucket of a value that is not a list or a dict (``_json_bucket``)."""
+    if value is None or isinstance(value, bool):
+        return ("value", value)
+    equal = type(value).__eq__
+    if isinstance(value, str) and equal is str.__eq__:
+        return ("str", str.__hash__(value))
+    if isinstance(value, float) and equal is float.__eq__:
+        return ("number", float.__hash__(value))
+    if isinstance(value, int) and equal is int.__eq__:
+        return ("number", int.__hash__(value))
+    return None
+
+
 def pair_items(
     old: list[object],
     new: list[object],
@@ -744,12 +880,15 @@ def pair_items(
 
     First by alt key, for each alt-key value that occurs once on each side;
     then the items left by key, for each key that occurs once on each side
-    among them. Keys and alt keys are compared in string form, part by part
-    for a composite key, so ``24`` as dumped and ``"24"`` as read are one.
+    among them; then each item left whose JSON is the same as exactly one item
+    left on the other side, when no other item left is the same as either
+    (``same_json``): an item that did not change is itself, whatever its key.
+    Keys and alt keys are compared in string form, part by part for a
+    composite key, so ``24`` as dumped and ``"24"`` as read are one.
     Items of *new* left over are added, and items of *old* left over removed.
     An item of *new* that an ``add`` built (an ``AddedItem``) is new whatever
-    its key: it is in neither pass and is added, so the item of *old* with
-    that key, if any, is removed.
+    its key and its JSON: it is in no pass and is added, so the item of *old*
+    with that key, if any, is removed.
     An item of *old* left over is removed when it can be identified: by a key
     no other item of *old* has, or by an alt key that was read and that no
     other item of *old* has. When one cannot, what became of it cannot be
@@ -785,6 +924,10 @@ def pair_items(
         new_left = [j for j in new_left if j not in pairs]
     pair_unique(old_keys, new_keys, old_left, new_left, pairs)
     paired = set(pairs.values())
+    old_left = [i for i in old_left if i not in paired]
+    new_left = [j for j in new_left if j not in pairs]
+    pair_same(old, new, old_left, new_left, pairs)
+    paired = set(pairs.values())
     removed = tuple(i for i in old_left if i not in paired)
     unique_keys, unique_alts = _unique(old_keys), _unique(old_alts)
     if any(
@@ -812,19 +955,21 @@ def rebase(
 ) -> object:
     """Apply the change ``before -> after`` to *raw*.
 
-    - Where *before* and *after* agree, *raw* is kept, even where *raw* and
-      *before* differ because parsing was lossy.
+    - Where *before* and *after* agree (``same_json``), *raw* is kept, even
+      where *raw* and *before* differ because parsing was lossy.
     - Where they differ at a leaf, or a key exists in only one, the *after* side
       is written to (or removed from) *raw*.
     - When a change needs a container that *raw* does not have, the whole
       container is taken from *after*.
     - The items of a keyed list in *before* and *after* are paired by alt key,
-      then by key (``pair_items``), so a renamed item stays one item; item
-      order comes from *after*, paired items recurse, each as the kind of item
-      it now is, and the others are taken from *after*. A list without a key
-      is replaced whole. So is a keyed list that ``pair_items`` cannot pair,
-      or whose length in *raw* differs from *before* (raw items cannot be
-      paired up with *before*'s).
+      then by key, then the items left by their JSON when each is the only
+      one of its kind (``pair_items``), so a renamed item stays one item, and
+      an item with no key, or of a repeated key, that did not change stays the
+      item as read; item order comes from *after*, paired items recurse, each
+      as the kind of item it now is, and the others are taken from *after*.
+      A list without a key is replaced whole. So is a keyed list that
+      ``pair_items`` cannot pair, or whose length in *raw* differs from
+      *before* (raw items cannot be paired up with *before*'s).
     - The values of a map of models (a ``dict[K, Model]`` field) are rebased
       entry by entry, each as its model, so a change lands on the key as read
       and a keyed list below the map is paired.
@@ -842,7 +987,7 @@ def rebase(
 def _rebase(raw: object, before: object, after: object, node: Node) -> object:
     # An AddedItem is equal to its dict: an item an add built with the fields of
     # the one it replaced is still written, and the item as read is not kept.
-    if before == after and not _holds_added(after):
+    if same_json(before, after) and not _holds_added(after):
         return raw
     if is_dict(raw) and is_dict(before) and is_dict(after):
         return _rebase_object(raw, before, after, node)
@@ -885,7 +1030,8 @@ def _rebase_object(
         {
             key: value
             for key, value in after.items()
-            if key not in handled and (key not in before or before[key] != value)
+            if key not in handled
+            and (key not in before or not same_json(before[key], value))
         }
     )
     return out
@@ -985,7 +1131,7 @@ def collect_changes(
 
     *node* is the model's shape at *path*; ``raw_changes`` describes the walk.
     """
-    if old == new:
+    if same_json(old, new):
         return
     if is_dict(old) and is_dict(new):
         for key, old_value in old.items():
@@ -1016,11 +1162,16 @@ def collect_changes(
 
 
 def item_parts(items: list[object], node: KeyedList) -> list[ItemPart]:
-    """The name of each item: its key, or its position where that is not unique."""
+    """The name of each item: its key, or its position where that is not unique.
+
+    Keys are compared as ``key_forms`` compares them; an item is named by its
+    key as it is stored.
+    """
     keys = _keys(items, node)
-    unique = _unique([key_form(key) for key in keys])
+    forms = key_forms(items, node)
+    unique = _unique(forms)
     return [
-        Key(key) if key is not None and key_form(key) in unique else i
+        Key(key) if key is not None and forms[i] in unique else i
         for i, key in enumerate(keys)
     ]
 
@@ -1174,7 +1325,12 @@ def find_lossy_assignments(
     and paired items whose key in *before* is not unique, are ``rules[#0]``.
     """
     out: list[Path] = []
-    _lossy_in_value(out, Path(()), baseline, current, before, after, None, level)
+    _lossy_in_value(
+        _LossyWalk(out, level),
+        Path(()),
+        _Held(baseline, current, before, after),
+        None,
+    )
     return out
 
 
@@ -1229,39 +1385,45 @@ def _dump_get(dump: object, key: str) -> object:
     return dump[key] if _is_mapping(dump) and key in dump else MISSING
 
 
-def _lossy_in_value(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
-    out: list[Path],
-    path: Path,
-    baseline: object,
-    current: object,
-    before: object,
-    after: object,
-    node: Node,
-    level: ConfigContext | None,
-) -> None:
+@dataclass(frozen=True, slots=True)
+class _LossyWalk:
+    """One walk for lossy assignments: where the paths found go, and the level."""
+
+    out: list[Path]
+    level: ConfigContext | None
+
+
+@dataclass(frozen=True, slots=True)
+class _Held:
+    """One place of that walk: the value as read and now, and the dump of each."""
+
+    baseline: object
+    current: object
+    before: object
+    after: object
+
+
+def _lossy_in_value(walk: _LossyWalk, path: Path, held: _Held, node: Node) -> None:
+    baseline, current = held.baseline, held.current
     if isinstance(baseline, VcoModel):
         if isinstance(current, VcoModel) and type(current) is type(baseline):
-            _lossy_in_model(out, path, baseline, current, before, after, level)
+            _lossy_in_model(walk, path, held)
     elif is_list(baseline) and is_list(current):
-        _lossy_in_list(out, path, baseline, current, before, after, node, level)
+        _lossy_in_list(walk, path, held, node)
     elif is_dict(baseline) and is_dict(current):
         for key, value in current.items():
             if key not in baseline:
                 continue  # an entry only *current* has is written whole
             # A JSON-mode dump writes every map key as a string.
-            before_value = _dump_get(before, str(key))
-            after_value = _dump_get(after, str(key))
+            before_value = _dump_get(held.before, str(key))
+            after_value = _dump_get(held.after, str(key))
             if before_value is MISSING or after_value is MISSING:
                 continue
             _lossy_in_value(
-                out,
+                walk,
                 path.child(str(key)),
-                baseline[key],
-                value,
-                before_value,
-                after_value,
+                _Held(baseline[key], value, before_value, after_value),
                 None,
-                level,
             )
 
 
@@ -1306,67 +1468,54 @@ def _same_value(a: object, b: object) -> bool:
         )
     if is_dict(a) and is_dict(b):
         return a.keys() == b.keys() and all(_same_value(a[k], b[k]) for k in a)
-    return a == b
+    return same_json(a, b)
 
 
-def _lossy_in_model(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
-    out: list[Path],
-    path: Path,
-    baseline: VcoModel,
-    current: VcoModel,
-    before: object,
-    after: object,
-    level: ConfigContext | None,
-) -> None:
-    field_level = level if level is not None else current.config_context
+def _lossy_in_model(walk: _LossyWalk, path: Path, held: _Held) -> None:
+    baseline, current = held.baseline, held.current
+    if not (isinstance(baseline, VcoModel) and isinstance(current, VcoModel)):
+        return
+    field_level = walk.level if walk.level is not None else current.config_context
     ref_only = ref_only_fields(type(current))
     for name, field_info in type(current).model_fields.items():
         if name in ref_only:
             continue  # an edit of it is planned in the refs, not in the data
         dump_key = _field_alias(field_info, name)
-        before_value = _dump_get(before, dump_key)
-        after_value = _dump_get(after, dump_key)
+        before_value = _dump_get(held.before, dump_key)
+        after_value = _dump_get(held.after, dump_key)
         value = unwrap(_field_value(current, name))
-        held = unwrap(_field_value(baseline, name))
+        held_value = unwrap(_field_value(baseline, name))
         field_path = path.child(name)
         if _context_default_entry(field_info, field_level) is MISSING:
-            if not has_override_flag(field_info) and not _same_value(held, value):
-                out.append(field_path)  # the dump omits it, so the change is lost
+            if not has_override_flag(field_info) and not _same_value(held_value, value):
+                walk.out.append(field_path)  # the dump omits it, so the change is lost
             continue
         if field_kind(field_info).kind is Kind.INHERITABLE:
             # It can always express "not stored" (the edge stores nothing, the
             # profile leaves out a display default), so assigning it is never a
             # loss; what it holds is walked as any value is.
             _lossy_in_value(
-                out,
+                walk,
                 field_path,
-                held,
-                value,
-                before_value,
-                after_value,
+                _Held(held_value, value, before_value, after_value),
                 node_child(type(current), dump_key),
-                level,
             )
             continue
         if name not in baseline.model_fields_set:
-            if before_value != after_value:
+            if not same_json(before_value, after_value):
                 continue  # rebase writes the field whole
             if (
                 name in current.model_fields_set
                 and value is not MISSING
                 and value is not None
             ):
-                out.append(field_path)
+                walk.out.append(field_path)
                 continue
         _lossy_in_value(
-            out,
+            walk,
             field_path,
-            held,
-            value,
-            before_value,
-            after_value,
+            _Held(held_value, value, before_value, after_value),
             node_child(type(current), dump_key),
-            level,
         )
 
 
@@ -1403,16 +1552,10 @@ def _keyed_pairs(
     return [(parts[i], i, j) for i, j in pairing.pairs]
 
 
-def _lossy_in_list(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
-    out: list[Path],
-    path: Path,
-    baseline: list[object],
-    current: list[object],
-    before: object,
-    after: object,
-    node: Node,
-    level: ConfigContext | None,
-) -> None:
+def _lossy_in_list(walk: _LossyWalk, path: Path, held: _Held, node: Node) -> None:
+    baseline = cast("list[object]", held.baseline)
+    current = cast("list[object]", held.current)
+    before, after = held.before, held.after
     if not (is_list(before) and is_list(after)):
         return
     if len(before) != len(baseline) or len(after) != len(current):
@@ -1424,19 +1567,20 @@ def _lossy_in_list(  # noqa: PLR0913, PLR0917 (existing: split it when it next c
         pairs = [(path.child(part), base, cur) for part, base, cur in keyed]
     else:
         # Items cannot be paired by key. A changed list is written whole.
-        if before != after or len(baseline) != len(current):
+        if not same_json(before, after) or len(baseline) != len(current):
             return
         pairs = [(path.child(i), i, i) for i in range(len(baseline))]
     for item_path, base_index, cur_index in pairs:
         _lossy_in_value(
-            out,
+            walk,
             item_path,
-            baseline[base_index],
-            current[cur_index],
-            before[base_index],
-            after[cur_index],
+            _Held(
+                baseline[base_index],
+                current[cur_index],
+                before[base_index],
+                after[cur_index],
+            ),
             None,
-            level,
         )
 
 
@@ -1448,7 +1592,7 @@ def _lossy_in_list(  # noqa: PLR0913, PLR0917 (existing: split it when it next c
 def carry_unset_defaults(
     baseline: VcoModel,
     current: VcoModel,
-    before: Mapping[str, object],
+    before: dict[str, object],
     after: dict[str, object],
 ) -> None:
     """Make *after* agree with *before* on every scalar that neither model has set.
@@ -1456,12 +1600,23 @@ def carry_unset_defaults(
     Some defaults are made anew on each parse (``default_factory=uuid.uuid4``),
     so *baseline* and *current* differ in them although nobody assigned them.
     In the dumps that reads as a change by the caller, and ``rebase`` would write
-    it. Here *after* is edited, in place, so it does not: such a field takes the
-    value it has in *before*. The models are left as they are.
+    it. Here both dumps are edited, in place, so it does not: such a field takes
+    the value it has in *before*. When the two dumps differ in such a text, the
+    parse made it up for a key the document does not have: both dumps get it as
+    an ``UnreadDefault``, so they agree and items pair by it as before, and
+    ``plan_module`` leaves every key that holds one out of what is sent
+    (``without_unread_defaults``). The models are left as they are.
 
     The walk pairs *baseline* and *current* as ``find_lossy_assignments`` does,
-    except that a list that cannot be paired by key is paired by position
-    whether or not its dump changed. Only a pair has a *before* value to carry.
+    except that a list that cannot be paired by key is paired by position,
+    whether or not its dump changed: the n-th item of *baseline* with the n-th
+    item of *current* that an ``add`` did not build, over the shorter of the
+    two. Only a pair has a *before* value to carry; an item with no partner (an
+    item an ``add`` built among them) keeps the value its model made. When
+    that carry makes the list pair by key (the dumps of an item of a repeated
+    key now agree), the walk carries again over those pairs, which are the
+    ones ``rebase`` uses: an item moved onto the position of an item read with
+    its ID still takes the value its own partner has.
     An alt key made anew on each parse (``QosRule.rule_logical_id`` read from a
     rule without one) differs between the dumps, so such items pair by key;
     once carried, the dumps agree on it and ``rebase`` pairs them by it. The
@@ -1504,7 +1659,11 @@ def _carry_in_model(
         if dump_key not in before or dump_key not in after:
             continue
         if _is_unset_scalar(baseline, current, name):
-            after[dump_key] = before[dump_key]
+            carried = before[dump_key]
+            if isinstance(carried, str) and not same_json(carried, after[dump_key]):
+                carried = UnreadDefault(carried)
+                before[dump_key] = carried
+            after[dump_key] = carried
             continue
         _carry_in_value(
             unwrap(_field_value(baseline, name)),
@@ -1527,12 +1686,26 @@ def _carry_in_list(
     if len(before) != len(baseline) or len(after) != len(current):
         return  # the dump's positions are not the model's
     keyed = _keyed_pairs(baseline, before, after, node)
-    if keyed is not None:
-        pairs = [(base, cur) for _, base, cur in keyed]
-    elif len(baseline) == len(current):
-        pairs = [(i, i) for i in range(len(baseline))]
-    else:
-        return
+    if keyed is None:
+        # By position, passing over the items an add built: they are new.
+        kept = [j for j, item in enumerate(current) if not _is_added_model(item)]
+        _carry_pairs(baseline, current, before, after, enumerate(kept[: len(baseline)]))
+        # That can make the two dumps of an item of a repeated key agree, so the
+        # list now pairs by key, as ``rebase`` will pair it, and not always by
+        # position: carry again over those pairs.
+        keyed = _keyed_pairs(baseline, before, after, node)
+    pairs = [(base, cur) for _, base, cur in keyed or ()]
+    _carry_pairs(baseline, current, before, after, pairs)
+
+
+def _carry_pairs(
+    baseline: list[object],
+    current: list[object],
+    before: list[object],
+    after: list[object],
+    pairs: Iterable[tuple[int, int]],
+) -> None:
+    """Carry each pair (index in *baseline*, index in *current*) of a list."""
     for base_index, cur_index in pairs:
         _carry_in_value(
             baseline[base_index],
@@ -1541,3 +1714,8 @@ def _carry_in_list(
             after[cur_index],
             None,
         )
+
+
+def _is_added_model(item: object) -> bool:
+    """Whether *item* is a model an ``add`` built (``VcoModel.is_added``)."""
+    return isinstance(item, VcoModel) and item.is_added

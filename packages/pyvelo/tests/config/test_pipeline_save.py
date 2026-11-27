@@ -4,17 +4,21 @@ from typing import cast
 
 import httpx
 import pytest
+from pydantic import MISSING
 from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.exceptions import VersionRequiredError
+from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
+    QosConfigurationModule,
     UpdateConfigurationModule,
 )
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.state import ConfigState
-from pyvelo.core.layers import Profile
-from pyvelo.testing import MockVcoClient, make_firewall_module
+from pyvelo.core.layers import Edge, Profile
+from pyvelo.testing import MockVcoClient, make_firewall_module, make_module_json
 
 
 def _make_state() -> ConfigState:
@@ -137,3 +141,72 @@ async def test_mock_client_under_async_with_still_talks_to_its_store() -> None:
     assert [method for method, _ in client.store.requests] == [
         "configuration/updateConfigurationModule"
     ]
+
+
+# A module has no version when it is None or MISSING (a value its type leaves
+# out, which a caller can still set).
+NO_VERSION = pytest.mark.parametrize(
+    "version", [None, MISSING], ids=["None", "MISSING"]
+)
+
+
+@NO_VERSION
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_save_refuses_a_module_with_no_version_before_it_sends(
+    dry_run: bool,  # noqa: FBT001 (a parameter of the test)
+    version: object,
+) -> None:
+    state = _make_state()
+    assert state.edge_config is not None
+    module = state.edge_config.firewall
+    module.version = cast("str | None", version)
+    client = MockVcoClient.for_state(state)
+    module.data.firewall_enabled.set_local(False)
+
+    with pytest.raises(VersionRequiredError, match='"unconditional": true'):
+        _ = await ConfigPipeline(client).save(state, dry_run=dry_run)
+
+    assert client.update_requests == []
+    assert [p.name for p in state.plan().changed] == ["firewall"]
+
+
+@NO_VERSION
+async def test_save_writes_a_module_with_no_version_when_asked_to(
+    version: object,
+) -> None:
+    state = _make_state()
+    assert state.edge_config is not None
+    module = state.edge_config.firewall
+    module.version = cast("str | None", version)
+    client = MockVcoClient.for_state(state)
+    module.data.firewall_enabled.set_local(False)
+
+    result = await ConfigPipeline(client).save(state, unconditional=True)
+
+    assert [str(name) for name in result.modules_updated] == ["firewall"]
+    assert client.update_requests[0].version is MISSING
+    assert client.update_requests[0].update.data["firewall_enabled"] is False
+
+
+async def test_a_save_whose_second_module_has_no_version_sends_nothing() -> None:
+    state = _make_state()
+    assert state.edge_config is not None
+    qos_row = make_module_json(
+        "QOS", {"segments": []}, module_id=3, configuration_id=10, version=None
+    )
+    qos = QosConfigurationModule[Edge].model_validate(qos_row)
+    state.edge_config.modules = [state.edge_config.firewall, qos]
+    state.take_snapshot()
+    client = MockVcoClient.for_state(state)
+    state.edge_config.firewall.data.firewall_enabled.set_local(False)
+    state.edge.qos.service_rate_limit.set_local(
+        ServiceRateLimit(enabled=True, input_type="percent", value=50)
+    )
+    assert [p.name for p in state.plan().changed] == ["firewall", "QOS"]
+
+    with pytest.raises(VersionRequiredError) as exc:
+        _ = await ConfigPipeline(client).save(state)
+
+    assert exc.value.module_name == "QOS"
+    assert client.store.requests == []
+    assert [p.name for p in state.plan().changed] == ["firewall", "QOS"]

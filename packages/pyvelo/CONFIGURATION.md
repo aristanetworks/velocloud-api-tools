@@ -97,6 +97,14 @@ Validators are registered explicitly: pass a `ValidatorRegistry` as
 `validator_registry=` to `ConfigPipeline` or `build_default_pipeline`, or
 register on `pipeline.validators`.
 
+`save(state, unconditional=True)` writes a module that has no `version`. A
+module has none when it was built by hand, or read through a request that left
+`version` out; every module the VCO stores has one (`"0"` is one). Without the
+option such a save raises `VersionRequiredError` before it sends anything, also
+for a dry run. With it, the update is sent with no `version`, and the VCO writes
+it whatever it holds then: a change another writer stored since the read is
+overwritten, and nothing says so.
+
 Application, address-group and service-group names need more resolvers. For
 application names, register `ApplicationResolver(client)` (from
 `pyvelo.config.resolvers.application`) with `pipeline.resolvers.register(...)`
@@ -263,7 +271,17 @@ prefix, gateway and interface). Some keyed lists also declare an *alt key*, a
 second field that identifies an item on its own, usually an ID the VCO issues
 (a rule's `ruleLogicalId`, a segment's `segmentId`), and some a *label*, a name
 people use for the item that is not kept unique (a WAN link's `name`; its key
-is its `internalId` with its address family).
+is its `internalId` with its address family). A DHCP reservation (a LAN
+network's `fixed_ips`, a DHCPv6 server's `fixed_ip`) is keyed by its MAC alone:
+a selector names it by its MAC, and its IP does not select it. Its IP is a
+value, so two reservations can exchange IPs, and changing a MAC plans a removal
+and an addition. pyvelo does not refuse two reservations with one IP: the VCO
+does. A reservation's MAC is matched whatever its letter case, as the VCO
+matches it: `AA:BB:CC:DD:EE:01` selects `aa:bb:cc:dd:ee:01`; an add under it is
+refused as already in the list, and so is a second add of it in the same patch;
+a list value that holds it twice in two cases is refused as repeating a key;
+and a MAC rewritten in another case is one edit of `macAddress`. The text you
+wrote is what is stored.
 
 An object on a list is item operations, keyed by selector. A selector is a
 key, alt key, label or value in string form (`"10"` names VLAN 10), `at(n)`
@@ -820,6 +838,10 @@ firewall: update
   link read with its `internalId` is a plain change. An item read without its ID (for example a QoS rule
   the VCO returned with no `ruleLogicalId`) that is then renamed is also saved
   as a removal plus an addition.
+- Two values are the same when their JSON is: `false` is not `0` and `true`
+  is not `1`, so a change between them is written, and a write is checked for
+  the type it sent. A whole number is the same with or without a fraction part
+  (`1` and `1.0`), because the VCO stores one number for both.
 - A list is written item by item when its items can be told apart, so only the
   items you changed differ from the data read. That is a keyed list (see "The
   patch format") in which every item has a key no other item has, or an ID
@@ -829,11 +851,34 @@ firewall: update
   other list is written whole from the models when something in it changes: a
   positional or untyped list, and a keyed list that holds an item with no key
   and no ID (a WAN link read without an `internalId`) or two items of one name
-  read without IDs. Keys the models do not know are then dropped from every
-  item of that list, and the models' defaults are written into them. A keyed
-  list inside an interface that is not a plain port (a LAG's `slaveInterfaces`)
-  is written item by item as well: each item of a list that holds several kinds
-  of interface is read as the kind it is.
+  read without IDs, when one of those items was changed or removed, or when
+  another item of the list, as read or as written, is equal to one of them in
+  every field the models know (an item an `add` built is new and does not
+  count). Two items that differ only in keys the models do not know count as
+  equal: an edit to another item then writes the list whole, and those keys
+  are lost from every item. While they are as read and no other item is equal
+  to one of them, an edit to another item of the list writes that item alone.
+  Keys the models do not know are dropped from every item of a list written
+  whole, and the models' defaults are written into them, except an ID the
+  library made up for an item read without one (a WAN class of service's `id`,
+  a QoS rule's `ruleLogicalId`): that is not sent.
+  In a list whose items cannot all be told apart (a positional list, or a
+  keyed list as above), an item is the one read at its position, counting only
+  the items not added with `add`. So in such a list written whole, an item
+  read without an ID that now sits where an item read with one was, or past
+  the items read (the list was shortened before it, or reordered), is sent
+  with an ID the library made up. In a list written item by item, an item read
+  without an ID is sent without one, wherever it now sits. An item added with
+  `add` is always sent with the UUID its model made, the same in every plan.
+  An item put in such a list as a model (`model_validate`) is the item that
+  was read at the position it now has, if there was one (it was put before the
+  end, an item before it was deleted, or the list was reordered): when that
+  item was read without an ID, it is sent without one. At a position past the
+  items read, or in a list whose items can all be told apart, it keeps its
+  model's UUID.
+  A keyed list inside an interface that is not a plain port (a LAG's
+  `slaveInterfaces`) is written item by item as well: each item of a list that
+  holds several kinds of interface is read as the kind it is.
 - A patch that moves items (a `move`) plans each item's change at the item, and
   one more change at the list: its order entry, which names the items that
   move, each with its new place. An item added to a keyed list has its place in
@@ -1374,12 +1419,31 @@ ref row your edit adds or removes (a QoS rule's backhaul hub) is derived again
 against the refs read, so a row already there is not added twice, and the hub's
 service is found in the device settings as that save stored them. The
 modules written before the device settings (QoS and firewall, in a save that
-removes a hub: see "Hubs"), and every module of an edge save, are not rebased:
-a changed version raises as above. A device settings write that changes such a
+removes a hub: see "Hubs"), unless a device settings write of an earlier save
+marked them (below), and every module of an edge save, are not rebased: a
+changed version raises as above. A device settings write that changes such a
 module on the VCO after it was stored leaves the state with the module as it
-was stored, so the next write of it meets the changed version. The cost is one
-version read per module written after the device settings, and one full read of
-the module when its version changed.
+was stored: in a profile, the next write of it is rebased (below); in an edge,
+it meets the changed version. The cost is one version read per module written
+after the device settings, in that save or, for a profile's QoS and firewall, at
+their next write in a later save, and one full read of the module when its
+version changed.
+
+A later save rebases them too: a profile's QoS and firewall that a device
+settings write may have changed are written with a rebase the next time they
+are saved, however many saves later (`state.rebase_on_write` names them). That
+holds also after a device settings write that raised but may be stored:
+`WriteNotAppliedError`, or `WriteOutcomeUnknownError` unless the VCO said it
+refused the version; a `ConfigConflictError` stored nothing and names none. So a
+change another writer made to one of them in the meantime is put together with
+your edits and listed in `SaveResult.server_changes`, instead of raising
+`ConfigConflictError`; only a change at a path you edited is still a conflict.
+Until then the state shows them as they were read or last stored: load the
+profile again to see what the device settings write changed. A module with no
+version is not rebased: without `unconditional` the save raises
+`VersionRequiredError` before anything is sent, and with it the module is
+written as the state holds it, over whatever the device settings write changed
+there.
 
 Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises
@@ -1569,17 +1633,22 @@ the save or the `revert` replaced (or, for a module the state created, the
 `revert` removed), and are detached. Reading one is fine. An assignment to one
 raises `DetachedObjectError`, and an in-place edit to a list or dict it holds
 (`seg.outbound.insert(0, rule)`) is reported, once, by the next `plan()` or
-save. A device settings segment's `vrrp` is not one of the library's models
-and has no such guard: an assignment to `vrrp.root` does not raise, and is
-reported by the next `plan()` or save like an in-place edit. Take the object
-from the state again and redo the edit. To reuse a detached object as a new
-item, put a deep copy of it in the state (`copy.deepcopy(rule)`): the copy is
-not detached. A detached object put back as it is makes its module refuse
-every patch (`merge_patch`, `apply`, `assign_segment`) with
-`DetachedObjectError`, which names where it sits (`paths`) and changes
-nothing, also for a patch that would not reach it: put a deep copy there, take
-the object from the state again, or take the module's edits back with
-`pipeline.revert(state, module=...)`.
+save. That holds while you still hold the object the list belongs to, or one
+that contains it. A list or dict you kept on its own (`rules = seg.outbound`,
+with `seg` and the firewall data it came from dropped) is not checked: an edit
+to it is neither reported nor saved (see the known limits). Keep the object
+the list belongs to, or take the list from the state each time. A text caller
+never holds one. A device settings segment's `vrrp` is not one of the
+library's models and has no such guard: an assignment to `vrrp.root` does not
+raise, and is reported by the next `plan()` or save like an in-place edit.
+Take the object from the state again and redo the edit. To reuse a detached
+object as a new item, put a deep copy of it in the state
+(`copy.deepcopy(rule)`): the copy is not detached. A detached object put back
+as it is makes its module refuse every patch (`merge_patch`, `apply`,
+`assign_segment`) with `DetachedObjectError`, which names where it sits
+(`paths`) and changes nothing, also for a patch that would not reach it: put a
+deep copy there, take the object from the state again, or take the module's
+edits back with `pipeline.revert(state, module=...)`.
 
 A write whose answer never arrived (a transport error after the request was
 sent, a cancelled save) may or may not be stored, and so may one that raised
@@ -1615,18 +1684,21 @@ Known limits:
   refs; the save then reports your data changes, if any, as not stored. The
   save reads the module's version before it sends refs, which narrows this to
   a change between that read and the write; a module with no `version` is
-  written without the read.
+  written only when the save is `unconditional`, and then without the read.
 - A keyed list read with an item that cannot be told apart is compared as a
-  whole: an item with no key and no ID (a WAN link without an `internalId`),
-  or two items of one name read without IDs. A change in it to a field the VCO
-  owns is then part of the list's change, not in `left_out`, and a value stored
-  there otherwise than sent is a server change with no value read (`as_read`
-  is `MISSING`), even when it is the value read. A key you removed from an
-  item of such a list counts as stored only when the stored item at that
-  position no longer has it. If the VCO puts the key back on its own, every
-  save that changes that list raises `WriteNotAppliedError` until the key is in
-  the table of rewrites. An edit that shifts the items of such a list
-  (removing or adding an item before others) can raise it too.
+  whole when one of those items was changed or removed, or when another item
+  of the list, as sent, is equal to one of them in every field the models know
+  (an item an `add` built does not count): an item with no key and no ID (a
+  WAN link without an `internalId`), or two items of one name read without
+  IDs. A change in it to a field the VCO owns is then part of the list's
+  change, not in `left_out`, and a value stored there otherwise than sent is a
+  server change with no value read (`as_read` is `MISSING`), even when it is
+  the value read. A key you removed from an item of such a list counts as
+  stored only when the stored item at that position no longer has it. If the
+  VCO puts the key back on its own, every save that changes that list raises
+  `WriteNotAppliedError` until the key is in the table of rewrites. An edit
+  that shifts the items of such a list (removing or adding an item before
+  others) can raise it too.
 - An update with no change the check can find stored is sent without
   `returnData` and a row count of zero is taken as a refusal, so if a VCO
   counted zero rows for a write it stored that changed nothing in effect (not
@@ -1636,6 +1708,13 @@ Known limits:
   your item lost and another item, only the VCO's, in `server_changes`. IPv6
   addresses in the keys of device settings (a static route's destination and
   gateway) are covered.
+- Three checks of a DHCP reservation's MAC still match its letter case
+  exactly. A patch that changes a reservation's MAC to another reservation's
+  MAC spelled in another case is not refused by pyvelo; the VCO refuses the
+  write. An add whose body spells the MAC in another case than its selector is
+  refused: spell it the same in both, or leave it out of the body. The
+  key-uniqueness validator does not report two reservations whose MACs differ
+  only by case.
 
 ## Scope and data handling
 

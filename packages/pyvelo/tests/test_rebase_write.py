@@ -221,8 +221,8 @@ async def test_a_clash_raises_a_conflict_and_sends_nothing(
     assert store.rows[QOS_ID] == held
     assert (error.stated, error.sent) == (False, False)
     assert error.detail == (
-        "the module changed on the VCO after this save wrote device settings, at a "
-        "path this save also changes; nothing was sent"
+        "the module changed on the VCO after a device settings write of this "
+        "profile, at a path this save also changes; nothing was sent"
     )
     assert error.module is not None
     assert error.module.version == held["version"]

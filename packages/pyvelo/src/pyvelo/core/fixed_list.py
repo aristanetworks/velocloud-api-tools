@@ -16,7 +16,7 @@ for owners: that is computed once per class (``holds_fixed_list``).
 import functools
 from collections.abc import Iterator
 
-from pyvelo.core.base import VcoModel, is_dict, is_list
+from pyvelo.core.base import VcoModel, is_dict, is_list, same_json
 from pyvelo.core.fields import FixedList, get_fixed_list
 from pyvelo.core.rebase import (
     KeyedList,
@@ -172,16 +172,16 @@ def _check_fixed(
         item_parts(baseline, node), baseline, payload, strict=True
     ):
         if not is_dict(old) or not is_dict(new):
-            if old != new:
+            if not same_json(old, new):
                 yield path.child(part), "differs"
             continue
         kept_old = {k: v for k, v in old.items() if k not in editable}
         kept_new = {k: v for k, v in new.items() if k not in editable}
-        if kept_old != kept_new:
+        if not same_json(kept_old, kept_new):
             first = next(
                 k
                 for k in {**kept_old, **kept_new}
-                if kept_old.get(k, _ABSENT) != kept_new.get(k, _ABSENT)
+                if not same_json(kept_old.get(k, _ABSENT), kept_new.get(k, _ABSENT))
             )
             yield path.child(part), f"{first} differs"
 

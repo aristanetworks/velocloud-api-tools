@@ -4,7 +4,7 @@ from typing import Annotated, Any
 from pydantic import MISSING, Field
 from pyvelo.core import VcoModel
 from pyvelo.core.fields import KeyField
-from pyvelo.core.rebase import carry_unset_defaults
+from pyvelo.core.rebase import UnreadDefault, carry_unset_defaults
 
 
 class Tagged(VcoModel):
@@ -83,12 +83,16 @@ def test_a_list_without_keys_is_paired_by_position_when_lengths_match() -> None:
     assert after["plain"] == before["plain"]
 
 
-def test_a_list_without_keys_of_another_length_is_not_walked() -> None:
+def test_a_list_without_keys_of_another_length_is_paired_over_the_shorter_length() -> (
+    None
+):
     base, cur = pair({"plain": [{"name": "x"}]})
     cur.plain.append(Tagged(name="y"))
-    expected = dump(cur)["plain"]
-    _, after = carried(base, cur)
-    assert after["plain"] == expected
+    expected = dump(cur)["plain"][1]["tag"]
+    before, after = carried(base, cur)
+    assert type(before["plain"][0]["tag"]) is UnreadDefault
+    assert after["plain"][0]["tag"] == before["plain"][0]["tag"]
+    assert after["plain"][1]["tag"] == expected
 
 
 def test_a_value_the_caller_assigned_is_kept() -> None:

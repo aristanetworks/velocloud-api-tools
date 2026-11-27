@@ -23,6 +23,7 @@ from .base import (
     _merged_fields,  # pyright: ignore[reportPrivateUsage]
 )
 from .merge import (
+    _compared_key,  # pyright: ignore[reportPrivateUsage]
     _list_spec,  # pyright: ignore[reportPrivateUsage]
     _ListSpec,  # pyright: ignore[reportPrivateUsage]
 )
@@ -385,12 +386,14 @@ def _new_map_plan(
 def _repeats_a_key(items: list[object], spec: _ListSpec) -> bool:
     """Whether two *items* of a keyed list value have one key.
 
-    ``merge_patch`` refuses that.
+    ``merge_patch`` refuses that. Keys are compared as ``merge_patch``
+    compares them (``_compared_key``).
     """
     if spec.item_type is None:
         return False
+    variant = spec.item_type.variants[0]
     forms = [
-        key_form(_json_item_key(item, spec.item_type.variants[0], spec.key_paths))
+        _compared_key(spec, key_form(_json_item_key(item, variant, spec.key_paths)))
         for item in items
     ]
     present = [form for form in forms if form is not None]

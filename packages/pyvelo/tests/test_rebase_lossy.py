@@ -172,11 +172,11 @@ class Opt2s(VcoModel):
     rules: Annotated[list[Opt2], KeyField("name")] = Field(default_factory=list)
 
 
-def test_keyed_list_with_a_missing_key_is_walked_by_position_when_unchanged() -> None:
+def test_keyed_list_with_a_missing_key_is_walked_by_key_when_unchanged() -> None:
     raw = {"rules": [{"name": "r1"}, {"port": 1}]}
     base, cur = Opt2s.model_validate(raw), Opt2s.model_validate(raw)
     cur.rules[0].port = 0
-    assert lossy(base, cur) == ["rules[#0].port"]
+    assert lossy(base, cur) == ["rules[r1].port"]
 
 
 def test_keyed_list_with_a_missing_key_changed_elsewhere_is_not_walked() -> None:

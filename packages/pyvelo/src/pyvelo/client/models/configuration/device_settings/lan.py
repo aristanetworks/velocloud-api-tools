@@ -142,6 +142,9 @@ class EdgeLanDhcp(VcoModel):
     override: Annotated[bool, OverrideFlag] = True
 
 
+# A reservation is its MAC. Its IP is a value, so two reservations can exchange
+# IPs, and a reservation with another MAC is another reservation. The VCO
+# matches a MAC whatever its letter case, so its lists fold case (KeyField).
 class LanFixedIP(VcoModel):
     mac_address: str
     lan_ip: str
@@ -198,7 +201,7 @@ class LanDhcpServerV6(VcoModel):
     dhcp_relay: LanDhcpRelayV6 = Field(default_factory=LanDhcpRelayV6)
     enabled: bool = True
     fixed_ip: Annotated[
-        list[LanFixedIP], EdgeLocal, KeyField("mac_address", alt="lan_ip")
+        list[LanFixedIP], EdgeLocal, KeyField("mac_address", fold_case=True)
     ] = Field(default_factory=list)
     lease_time_seconds: int = 86400
     dhcp_address_count: Annotated[int, Alias("numDhcpAddr")] = 10
@@ -256,7 +259,7 @@ class LanNetwork(VcoModel):
         list[LanFixedIP],
         Alias("fixedIp"),
         EdgeLocal,
-        KeyField("mac_address", alt="lan_ip"),
+        KeyField("mac_address", fold_case=True),
     ] = Field(default_factory=list)
     interface_address: Annotated[str | None, EdgeLocal] = None
     interfaces: list[str] = Field(default_factory=list)

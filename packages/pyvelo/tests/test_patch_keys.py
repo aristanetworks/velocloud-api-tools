@@ -1,9 +1,12 @@
 """Keys in a patch: alt keys, duplicate keys, composite keys, labels and ``KeySpec``."""
 
 import copy
+import itertools
 import json
 import pickle
 import uuid
+from decimal import Decimal
+from enum import StrEnum
 from typing import Annotated, Any
 
 import pytest
@@ -27,7 +30,8 @@ from pyvelo.core import (
     delete,
     move,
 )
-from pyvelo.core.base import list_item_type
+from pyvelo.core import rebase as rebase_module
+from pyvelo.core.base import list_item_type, same_json
 from pyvelo.core.fields import get_key_spec
 from pyvelo.core.merge import select_items
 from pyvelo.core.rebase import (
@@ -35,10 +39,12 @@ from pyvelo.core.rebase import (
     Key,
     KeyedList,
     Path,
+    _json_bucket,  # pyright: ignore[reportPrivateUsage]
     item_key,
     key_text,
     node_child,
     pair_items,
+    pair_same,
     python_path,
 )
 
@@ -882,6 +888,152 @@ def test_pair_items_never_pairs_an_added_item() -> None:
     # An item as read that cannot be told from another: the list is written whole.
     twins: list[object] = [{"name": "a"}, {"name": "a"}, {"name": "b"}]
     assert pair_items(twins, new, node) is None
+
+
+def test_the_third_pass_never_pairs_an_added_item() -> None:
+    node = node_child(Root, "rules")
+    assert isinstance(node, KeyedList)
+    old: list[object] = [{"name": "a", "port": 1}, {"port": 9}]
+    new: list[object] = [{"name": "a", "port": 2}, AddedItem({"port": 9})]
+    assert pair_items(old, new, node) is None
+
+
+class Colour(StrEnum):
+    RED = "red"
+
+
+NAN = float("nan")
+TRICKY: list[object] = [
+    # The values of the table of test_same_json.
+    0,
+    False,
+    1,
+    True,
+    1.0,
+    -0.0,
+    1.5,
+    "1",
+    None,
+    [1, {"y": True}],
+    [1.0, {"y": True}],
+    [1, {"y": 1}],
+    {"a": 1},
+    {"a": 1, "b": None},
+    [1],
+    [1, 1],
+    MISSING,
+    # Numbers a float cannot hold, and those that are not a value.
+    2**53 + 1,
+    float(2**53),
+    10**400,
+    NAN,
+    float("nan"),
+    [NAN],
+    float("inf"),
+    float("-inf"),
+    # Containers: keys in another order, a dict subclass, a tuple.
+    {"a": [1, {"b": 2, "c": [True]}], "d": None},
+    {"d": None, "a": [1.0, {"c": [True], "b": 2.0}]},
+    AddedItem({"name": "a", "port": 1}),
+    {"port": 1, "name": "a"},
+    (1, True),
+    (True, 1.0),
+    # Values that are not JSON, which same_json compares by ==.
+    uuid.UUID(int=1),
+    uuid.UUID(int=1),
+    {1, 2},
+    {2, 1},
+    bytearray(b"x"),
+    bytearray(b"x"),
+    Colour.RED,
+    "red",
+    Decimal(1),
+]
+
+
+def test_values_that_are_the_same_json_share_a_bucket() -> None:
+    """``same_json(a, b)`` implies one bucket, or a bucket of None on a side.
+
+    None is a value whose equality the bucket cannot tell: ``pair_same`` then
+    compares every item with every other.
+    """
+    buckets = [_json_bucket(value) for value in TRICKY]
+    for (a, bucket_a), (b, bucket_b) in itertools.product(
+        zip(TRICKY, buckets, strict=True), repeat=2
+    ):
+        assert (
+            not same_json(a, b) or bucket_a == bucket_b or None in (bucket_a, bucket_b)
+        ), (a, b)
+    plain = [0, False, 1.0, "1", None, 2**53 + 1, 10**400, NAN, [1, {"y": True}]]
+    assert None not in [_json_bucket(value) for value in [*plain, AddedItem()]]
+    assert _json_bucket(Colour.RED) == _json_bucket("red")
+
+
+def naive_pairs(
+    old: list[object], new: list[object], old_left: list[int], new_left: list[int]
+) -> dict[int, int]:
+    """``pair_same`` by its definition, every item against every other."""
+    out: dict[int, int] = {}
+    for j in new_left:
+        same = [i for i in old_left if same_json(old[i], new[j])]
+        if len(same) == 1 and [
+            k for k in new_left if same_json(old[same[0]], new[k])
+        ] == [j]:
+            out[j] = same[0]
+    return out
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ([{"p": 9}, {"p": 9}, {"p": 1}], [{"p": 9}, {"p": 1}]),
+        ([{"p": 9}, {"p": 1}], [{"p": 1}, {"p": 9}, {"p": 9}]),
+        ([{"p": 1}, {"p": 2}, {"p": 3}], [{"p": 3}, {"p": 1}, {"p": 2}]),
+        ([{"p": 1}, {"p": 2}], [{"p": 2.0}, {"p": 1.0}]),
+        ([{"p": True}, {"p": 1}], [{"p": 1}, {"p": True}]),
+        ([{"p": 1}, {"p": 1}], [{"p": 2}, {"p": 1.0}]),
+        ([{"a": 1, "b": [1]}], [{"b": [1.0], "a": 1}]),
+        ([{"x": NAN}, {"x": 1}], [{"x": NAN}, {"x": float("nan")}, {"x": 1}]),
+        ([{"p": Decimal(1)}, {"p": 2}], [{"p": 1}, {"p": 2}]),
+        ([{"p": (1,)}, {"p": 3}], [{"p": (True,)}, {"p": 3}]),
+        ([], [{"p": 1}]),
+    ],
+)
+def test_pair_same_pairs_as_its_definition(
+    old: list[object], new: list[object]
+) -> None:
+    """A guard: the buckets change which items are compared, never a pair."""
+    for old_left, new_left in [
+        (list(range(len(old))), list(range(len(new)))),
+        (list(range(len(old)))[1:], list(range(len(new)))[:-1]),
+    ]:
+        pairs: dict[int, int] = {}
+        pair_same(old, new, old_left, new_left, pairs)
+        assert pairs == naive_pairs(old, new, old_left, new_left)
+
+
+def test_pair_same_compares_only_items_that_can_be_equal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def counted(a: object, b: object) -> bool:
+        nonlocal calls
+        calls += 1
+        return same_json(a, b)
+
+    monkeypatch.setattr(rebase_module, "same_json", counted)
+    old: list[object] = [
+        {"prefix": f"10.{i // 256}.{i % 256}.0/24", "action": "permit"}
+        for i in range(500)
+    ]
+    new = copy.deepcopy(old)
+    new[250] = {"prefix": "10.0.250.0/24", "action": "deny"}
+    pairs: dict[int, int] = {}
+    pair_same(old, new, list(range(500)), list(range(500)), pairs)
+    assert len(pairs) == 499
+    assert 250 not in pairs
+    assert calls <= 4 * 500
 
 
 def _added_rule() -> Rule:

@@ -69,7 +69,7 @@ from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.validation import ValidationError
 from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import ConfigContext, Layered, VcoModel
-from pyvelo.core.base import is_dict, is_list
+from pyvelo.core.base import is_dict, is_list, same_json
 from pyvelo.core.effective import effective_view
 from pyvelo.core.identity import (
     HubIdentity,
@@ -482,7 +482,7 @@ class _Replaced:
         self.nodes = [
             (place, ref)
             for place, ref, node in alive
-            if place in outermost or _at(now, place) == _dump(node)
+            if place in outermost or same_json(_at(now, place), _dump(node))
         ]
         return list(dict.fromkeys(change.path for change in changes))
 
@@ -640,6 +640,16 @@ class ConfigState:
     of them. ``ConfigPipeline.revert`` of one reads the configuration too, and
     deletes the module it finds there when it holds exactly what this state's
     module holds (``revert_module`` refuses it: it sends nothing)."""
+    rebase_on_write: set[str] = field(
+        default_factory=set, init=False, repr=False, compare=False
+    )
+    """The names of the profile modules a device settings write of this profile
+    may have changed since the state read them. The VCO changes them itself as
+    it stores the device settings: it rewrites QoS rule flags, and it updates
+    the versions of QoS and firewall when a segment comes into use. The client
+    sends only the device settings. A save writes each module named here with a
+    rebase: it reads the version first and applies the edits to the module as
+    it is now."""
     _modules_were_unset: bool | None = field(default=None, repr=False)
     """Whether ``modules`` was in the target config's ``model_fields_set`` when
     ``module(create=True)`` made the list where it was unset; ``None`` when the

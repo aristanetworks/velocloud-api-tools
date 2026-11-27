@@ -685,3 +685,211 @@ def test_an_item_no_selector_names_has_no_stored_part() -> None:
         'rules["#1"]': Key("#1"),
         "rules[#2]": 2,
     }
+
+
+class Lid(VcoModel):
+    name: str
+    lid: str | None = None
+    port: int = 0
+
+
+class Lids(VcoModel):
+    rules: Annotated[list[Lid], KeyField("name", alt="lid")] = Field(
+        default_factory=list
+    )
+
+
+def x(lid: str, port: int) -> dict[str, object]:
+    return {"name": "x", "lid": lid, "port": port}
+
+
+READ_TWO_X = {"rules": [x("a", 1), x("b", 2)]}
+
+
+def test_an_added_item_the_vco_dropped_does_not_unpair_the_items_after_it() -> None:
+    """The VCO revised both IDs and dropped the new item between the two x."""
+    payload = {"rules": [x("a", 1), {"name": "n", "port": 7}, x("b", 3)]}
+    stored = {"rules": [x("A2", 1), x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, Lids)
+    assert paths(check.not_applied) == ["rules[n]"]
+    assert "rules[#1].port" in paths(check.applied)
+
+
+def test_another_writers_item_does_not_unpair_the_items_after_it() -> None:
+    payload = {"rules": [x("a", 1), x("b", 3)]}
+    stored = {"rules": [x("A2", 1), {"name": "w", "lid": "W", "port": 9}, x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, Lids)
+    assert check.not_applied == ()
+    assert paths(check.applied) == ["rules[#1].port"]
+    assert "rules[w]" in paths(check.server_changes)
+
+
+def test_another_writers_item_of_the_same_name_cannot_be_told_apart() -> None:
+    """A guard: items of one name pair in order, so the edit meets the other item."""
+    payload = {"rules": [x("a", 1), x("b", 3)]}
+    stored = {"rules": [x("A2", 1), x("W", 9), x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, Lids)
+    assert paths(check.not_applied) == ["rules[#1].port"]
+
+
+class OptLid(VcoModel):
+    name: str | None = None
+    lid: str | None = None
+    port: int = 0
+
+
+class OptLids(VcoModel):
+    rules: Annotated[list[OptLid], KeyField("name", alt="lid")] = Field(
+        default_factory=list
+    )
+
+
+def test_a_dropped_item_without_a_key_does_not_take_a_later_items_partner() -> None:
+    """The VCO dropped ``k`` and the item without a name; both x are stored."""
+    payload = {"rules": [x("a", 1), {"name": "k"}, {"port": 3}, x("b", 3)]}
+    stored = {"rules": [x("A2", 1), x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[#1].port"],
+        not_applied=["rules[k]", "rules[#2]"],
+        server_changes=["rules[#0].lid", "rules[#1].lid"],
+    )
+
+
+def test_an_item_without_a_key_after_another_writers_item_stays_unpaired() -> None:
+    """The VCO dropped ``k`` and the item without a name; ``w`` is another's."""
+    payload = {"rules": [x("a", 1), {"name": "k"}, {"port": 3}, x("b", 3)]}
+    w = {"name": "w", "lid": "W", "port": 9}
+    stored = {"rules": [x("A2", 1), w, x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[#1].port"],
+        not_applied=["rules[k]", "rules[#2]"],
+        server_changes=["rules[#0].lid", "rules[#1].lid", "rules[w]"],
+    )
+
+
+def test_an_item_without_a_key_does_not_take_the_partner_of_the_next() -> None:
+    """The item without a name was dropped; ``y`` and the two x are stored.
+
+    ``y`` is read first, so the new item at ``#0`` has no name as read.
+    """
+    y = {"name": "y", "port": 5}
+    read = {"rules": [y, x("a", 1), x("b", 2)]}
+    payload = {"rules": [{"port": 3}, y, x("a", 1), x("b", 3)]}
+    stored = {"rules": [y, x("A2", 1), x("B2", 3)]}
+    check = check_response(read, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[#2].port"],
+        not_applied=["rules[#0]"],
+        server_changes=["rules[#1].lid", "rules[#2].lid"],
+    )
+
+
+def test_another_writers_item_without_a_key_is_skipped() -> None:
+    """A guard: a stored item with no name pairs with none of the payload."""
+    payload = {"rules": [x("a", 1), x("b", 3)]}
+    stored = {"rules": [x("A2", 1), {"lid": "W", "port": 9}, x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[#1].port"],
+        server_changes=["rules[#0].lid", "rules[#1].lid", "rules[#1]"],
+    )
+
+
+def test_an_untouched_item_without_a_key_meets_its_stored_twin() -> None:
+    """``a`` is renamed ``b`` and the VCO stores ``c``.
+
+    The item without a name is untouched and stored as sent, after ``c``.
+    """
+    read = {"rules": [{"name": "a", "port": 1}, {"port": 2}]}
+    payload = {"rules": [{"name": "b", "port": 1}, {"port": 2}]}
+    stored = {"rules": [{"name": "c", "port": 1}, {"port": 2}]}
+    check = check_response(read, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[a]"],
+        not_applied=["rules[b]"],
+        server_changes=["rules[c]"],
+    )
+
+
+def test_another_writers_item_without_a_key_is_not_a_dropped_item() -> None:
+    """A guard: the dropped item and ``W`` differ by ``lid``, so they do not pair."""
+    payload = {"rules": [x("a", 1), x("b", 2), {"name": "k"}, {"port": 9}]}
+    stored = {"rules": [x("A2", 1), x("B2", 2), {"lid": "W", "port": 9}]}
+    check = check_response(READ_TWO_X, payload, stored, OptLids)
+    assert_paths(
+        check,
+        not_applied=["rules[k]", "rules[#3]"],
+        server_changes=["rules[#0].lid", "rules[#1].lid", "rules[#2]"],
+    )
+
+
+def test_an_item_stored_as_sent_is_stored_whoever_wrote_it() -> None:
+    """The stored item without a name is the one sent, byte for byte.
+
+    Had the VCO dropped it and another writer added the same item, the module
+    would hold what was sent all the same: nothing can tell the two apart, and
+    what the caller meant is stored.
+    """
+    payload = {"rules": [x("a", 1), x("b", 2), {"name": "k"}, {"port": 9}]}
+    stored = {"rules": [x("A2", 1), x("B2", 2), {"port": 9}]}
+    check = check_response(READ_TWO_X, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[#3]"],
+        not_applied=["rules[k]"],
+        server_changes=["rules[#0].lid", "rules[#1].lid"],
+    )
+
+
+def test_another_writers_item_without_a_key_before_an_edit_is_skipped() -> None:
+    """A guard: ``W`` is skipped, and the edit of the second x meets its item."""
+    payload = {"rules": [x("a", 1), x("b", 3), {"port": 3}]}
+    stored = {"rules": [x("A2", 1), {"lid": "W", "port": 9}, x("B2", 3)]}
+    check = check_response(READ_TWO_X, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[#1].port"],
+        not_applied=["rules[#2]"],
+        server_changes=["rules[#0].lid", "rules[#1].lid", "rules[#1]"],
+    )
+
+
+def test_twins_stored_as_sent_pair_in_order() -> None:
+    """A guard: two equal items are not paired by their JSON, but in order."""
+    twin = {"port": 3}
+    payload = {"rules": [x("a", 1), x("b", 3), twin, twin]}
+    stored = {"rules": [x("A2", 1), x("B2", 3), twin, twin]}
+    check = check_response(READ_TWO_X, payload, stored, OptLids)
+    assert_paths(
+        check,
+        applied=["rules[#1].port", "rules[#2]", "rules[#3]"],
+        server_changes=["rules[#0].lid", "rules[#1].lid"],
+    )
+
+
+def test_items_stored_in_another_order_pair_along_the_longest_run() -> None:
+    """The VCO stored both ``y`` before the three ``x`` and gave each a new ID.
+
+    The three ``x`` pair in order, so the edit of the third is found stored;
+    the two ``y``, which cross them, pair with nothing.
+    """
+
+    def y(lid: str, port: int) -> dict[str, object]:
+        return {"name": "y", "lid": lid, "port": port}
+
+    read = {"rules": [x("a", 1), x("b", 2), x("c", 3), y("d", 4), y("e", 5)]}
+    payload = {"rules": [x("a", 1), x("b", 2), x("c", 9), y("d", 4), y("e", 5)]}
+    stored = {"rules": [y("D2", 4), y("E2", 5), x("A2", 1), x("B2", 2), x("C2", 9)]}
+    check = check_response(read, payload, stored, Lids)
+    assert paths(check.applied) == ["rules[#2].port"]
+    assert check.not_applied == ()
+    assert {"rules[#0].lid", "rules[#1].lid", "rules[#2].lid"} <= set(
+        paths(check.server_changes)
+    )

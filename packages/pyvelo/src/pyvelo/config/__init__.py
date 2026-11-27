@@ -22,6 +22,7 @@ from pyvelo.client.exceptions import (
     RefsDroppedError,
     RefsNotLoadedError,
     SegmentSetError,
+    VersionRequiredError,
     WriteNotAppliedError,
     WriteOutcomeUnknownError,
 )
@@ -139,6 +140,7 @@ __all__ = [
     "ValidationWarning",
     "Validator",
     "ValidatorRegistry",
+    "VersionRequiredError",
     "WriteNotAppliedError",
     "WriteOutcomeUnknownError",
     "add",
