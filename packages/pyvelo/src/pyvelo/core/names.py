@@ -9,22 +9,26 @@ attribute and an item by the text a reader knows it by, in the one form
 at one, and ``item_part`` gives the part that names one item of a list.
 """
 
+import functools
 from collections import Counter
 from dataclasses import dataclass
-
-from .base import (
-    IdentityResolver,
-    VcoModel,
-    field_models,
-    is_dict,
-    is_list,
-    list_kind,
+from types import UnionType
+from typing import (
+    Annotated,
+    Union,  # pyright: ignore[reportDeprecated]  # the origin of ``T | MISSING``, below
+    get_args,
+    get_origin,
 )
+
+from pydantic.fields import FieldInfo
+
+from .base import IdentityResolver, VcoModel, is_dict, is_list, list_kind
 from .fields import get_key_spec
 from .identity import ResolverNotLoadedError
+from .layers import field_kind
 from .merge import item_selector, select_items
 from .owned import unwrap
-from .patch import PatchError, position_of, selector_of
+from .patch import PatchError, selector_of
 from .rebase import ItemPart, Key, KeyValue, Path, PathPart, item_key, node_field
 
 
@@ -39,8 +43,8 @@ def item_part(model: VcoModel, field_name: str, position: int) -> ItemPart | Non
     it; a position is an ``int``. In ``hubs`` an item labelled ``Hub-A`` is
     ``Key("Hub-A")``, which a path prints as ``hubs[Hub-A]``, and an item of a
     list without a key is its position, ``plain[#0]``. An entry of a list of
-    values is a ``Key`` of its text. None where nothing names the item alone,
-    and for an untyped list.
+    values is a ``Key`` of the entry, so a number prints bare (``ports[443]``).
+    None where nothing names the item alone, and for an untyped list.
 
     It differs from ``item_selector`` in one case: an item whose label is the
     empty text is shown by its key (then its alt key, then its position),
@@ -53,7 +57,8 @@ def item_part(model: VcoModel, field_name: str, position: int) -> ItemPart | Non
     """
     model_cls = type(model)
     field_info = model_cls.model_fields[field_name]
-    if list_kind(field_info) == "map":
+    kind = list_kind(field_info)
+    if kind == "map":
         raise TypeError(
             f"{model_cls.__name__}.{field_name} is a map: an item part would "
             "show its entry as an item of a list. A path names an entry of a "
@@ -63,7 +68,12 @@ def item_part(model: VcoModel, field_name: str, position: int) -> ItemPart | Non
     spec = get_key_spec(field_info)
     items: object = getattr(model, field_name)
     item = items[position] if is_list(items) else None
-    key = None if spec is None else item_key(item, spec.paths)
+    key: KeyValue | None = None
+    if spec is not None:
+        key = item_key(item, spec.paths)
+    elif kind == "value" and isinstance(item, (str, int)):
+        # An entry of a list of values is its own key: a number prints bare.
+        key = item
     if text == "" and spec is not None and spec.label is not None:
         alt = None if spec.alt is None else item_key(item, (spec.alt,))
         text = _selector_without_label(model, field_name, position, key, alt)
@@ -71,7 +81,9 @@ def item_part(model: VcoModel, field_name: str, position: int) -> ItemPart | Non
         return None
     if key is not None and text == selector_of(Key(key)):
         return Key(key)
-    return position if position_of(text) == position else Key(text)
+    # Only the text ``at(position)`` writes is the position: ``#01`` reads as
+    # position 1 too, but printed as ``[#1]`` it would be read as another text.
+    return position if text == selector_of(position) else Key(text)
 
 
 def _selector_without_label(
@@ -126,8 +138,87 @@ class _Items:
     """Whether it is a map, whose entries a path names by their keys."""
 
 
-type _Place = _Model | _Items | None
+@dataclass(frozen=True, slots=True)
+class _Either:
+    """A place the data does not reach, declared as one model or a list of them."""
+
+    models: tuple[type[VcoModel], ...]
+    """The classes the one model can be."""
+    items: tuple[type[VcoModel], ...]
+    """The classes an item of the list can be."""
+
+
+type _Place = _Model | _Items | _Either | None
 """Where a walk of a path stands; None where no class says what is there."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Shape:
+    """What a field is declared to hold, one level deep."""
+
+    models: tuple[type[VcoModel], ...]
+    """The classes of a model it holds as it is."""
+    items: tuple[type[VcoModel], ...]
+    """The classes of the items of a list it holds."""
+    entries: tuple[type[VcoModel], ...]
+    """The classes of the values of a map it holds."""
+    is_list: bool
+    """Whether it can hold a list, of models or of anything else."""
+
+
+_UNION_ORIGINS = (Union, UnionType)  # pyright: ignore[reportDeprecated]  # still an origin
+"""The origins of a union.
+
+Before Python 3.14 ``X | Y`` and ``typing.Union`` are two, and ``T | MISSING``
+is the second, since ``MISSING`` is a value and not a class.
+"""
+
+
+def _alternatives(annotation: object) -> list[object]:
+    """The types *annotation* allows: the members of a union, else itself.
+
+    Each is without its ``Annotated`` wrapper.
+    """
+    while get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    if get_origin(annotation) in _UNION_ORIGINS:
+        return [
+            inner for member in get_args(annotation) for inner in _alternatives(member)
+        ]
+    return [annotation]
+
+
+def _model_classes(annotation: object) -> list[type[VcoModel]]:
+    """The model classes among the types *annotation* allows."""
+    return [
+        member
+        for member in _alternatives(annotation)
+        if isinstance(member, type) and issubclass(member, VcoModel)
+    ]
+
+
+@functools.cache
+def _shape(field_info: FieldInfo) -> _Shape:
+    """What *field_info* is declared to hold.
+
+    A model is looked for in the field itself, in the items of a list and in
+    the values of a map, and no deeper: the keys of a map of lists are data,
+    and nothing below them is known.
+    """
+    models: list[type[VcoModel]] = []
+    items: list[type[VcoModel]] = []
+    entries: list[type[VcoModel]] = []
+    holds_list = False
+    for member in _alternatives(field_kind(field_info).inner_type):
+        origin, args = get_origin(member), get_args(member)
+        if member is list or origin is list:
+            holds_list = True
+            items += _model_classes(args[0]) if args else []
+        elif origin is dict and len(args) == 2:  # noqa: PLR2004 (dict[K, V] has two type arguments)
+            entries += _model_classes(args[1])
+        else:
+            models += _model_classes(member)
+    return _Shape(tuple(models), tuple(items), tuple(entries), holds_list)
 
 
 def _holding(value: object, classes: tuple[type[VcoModel], ...]) -> _Model:
@@ -137,13 +228,53 @@ def _holding(value: object, classes: tuple[type[VcoModel], ...]) -> _Model:
     return _Model(None, classes)
 
 
+def _held(owner: VcoModel, name: str, field_info: FieldInfo) -> _Place:
+    """The place of what the field *name* of *owner* holds; None if it holds none.
+
+    The value decides, not the declared type: a field declared as one model or
+    a list of them is a model place where it holds a model and a list where it
+    holds a list. None where it holds neither (it is unset, a scalar, or a
+    wrapped value), and for a list or a map the declared type has none of.
+    """
+    value = unwrap(getattr(owner, name))
+    if isinstance(value, VcoModel):
+        return _holding(value, ())
+    shape = _shape(field_info)
+    if is_list(value) and list_kind(field_info) not in (None, "map"):
+        return _Items(owner, name, shape.items, is_map=False)
+    if is_dict(value) and shape.entries:
+        return _Items(owner, name, shape.entries, is_map=True)
+    return None
+
+
+def _declared(name: str, infos: list[FieldInfo]) -> _Place:
+    """The place of the field *name* where the data does not reach it.
+
+    *infos* are the field in each class that has it. A field that can hold a
+    model or a list is an ``_Either``; a map only where it can hold nothing
+    else.
+    """
+    shapes = [_shape(info) for info in infos]
+    models = tuple(dict.fromkeys(cls for shape in shapes for cls in shape.models))
+    items = tuple(dict.fromkeys(cls for shape in shapes for cls in shape.items))
+    entries = tuple(dict.fromkeys(cls for shape in shapes for cls in shape.entries))
+    if any(shape.is_list for shape in shapes):
+        if models:
+            return _Either(models, items)
+        return _Items(None, name, items, is_map=False)
+    if entries and not models:
+        return _Items(None, name, entries, is_map=True)
+    return _Model(None, models)
+
+
 def _field(place: _Place, key: object) -> tuple[str, _Place] | None:
     """The attribute name of the field *key* names at *place*, and its value's place.
 
     *key* is any key a class reads the field from. The first of the place's
-    classes that has a field for it names it; the place below is what that
-    field holds in the classes that agree on the name. None where *place* is
-    not a model or no class has such a field.
+    classes that has a field for it names it. The place below is what the
+    field holds, where the data has it; else what the field is declared to
+    hold in the classes that agree on the name. None where *place* is not a
+    model or no class has such a field.
     """
     if not isinstance(place, _Model):
         return None
@@ -153,16 +284,10 @@ def _field(place: _Place, key: object) -> tuple[str, _Place] | None:
     if not found:
         return None
     name, first = found[0]
-    classes = tuple(
-        dict.fromkeys(
-            cls for other, info in found if other == name for cls in field_models(info)
-        )
-    )
-    kind = list_kind(first)
-    if kind is not None:
-        return name, _Items(place.held, name, classes, kind == "map")
-    value = None if place.held is None else unwrap(getattr(place.held, name))
-    return name, _holding(value, classes)
+    below = None if place.held is None else _held(place.held, name, first)
+    if below is None:
+        below = _declared(name, [info for other, info in found if other == name])
+    return name, below
 
 
 def _selector(part: PathPart) -> str:
@@ -171,23 +296,25 @@ def _selector(part: PathPart) -> str:
 
 
 def _position(
-    owner: VcoModel,
-    field: str,
-    part: PathPart,
-    resolvers: IdentityResolver | None,
+    place: _Items, owner: VcoModel, part: PathPart, resolvers: IdentityResolver | None
 ) -> int | None:
-    """The position in the list *field* of *owner* of the one item *part* names.
+    """The position, in the list at *place* of *owner*, of the one item *part* names.
 
     None where it names none or several. A position names the item there,
     whatever the keys of the others (as a selector, ``#1`` would first be read
     as a key or a value that is that text). A key and a bare name are read as
-    a patch's selector is.
+    a patch's selector is; in a map, as the key of an entry in string form.
     """
+    entries: object = getattr(owner, place.field)
     if isinstance(part, int):
-        entries: object = getattr(owner, field)
         return part if is_list(entries) and part < len(entries) else None
-    positions = select_items(owner, field, _selector(part), resolvers)
-    return positions[0] if len(positions) == 1 else None
+    text = _selector(part)
+    if place.is_map:
+        keys: list[object] = list(entries) if is_dict(entries) else []
+        found = [index for index, key in enumerate(keys) if str(key) == text]
+    else:
+        found = select_items(owner, place.field, text, resolvers)
+    return found[0] if len(found) == 1 else None
 
 
 def _item(
@@ -205,7 +332,7 @@ def _item(
     if owner is None:
         return part, below
     try:
-        position = _position(owner, place.field, part, resolvers)
+        position = _position(place, owner, part, resolvers)
         if position is None:
             return part, below
         entries: object = getattr(owner, place.field)
@@ -226,12 +353,35 @@ def _item(
     return part if named is None else named, _holding(item, place.classes)
 
 
+def _either(place: _Either, part: PathPart) -> tuple[PathPart, _Place]:
+    """*part* as shown below a field the data does not reach, a model or a list.
+
+    A key or a position is an item of the list. A name is a field of the one
+    model, unless the items of the list give that key another name: the class
+    alone cannot say which is meant, so the name is kept as written and
+    nothing below it is converted. A name the one model has no field for is a
+    selector written as text.
+    """
+    items = _Model(None, place.items)
+    if not isinstance(part, str):
+        return part, items
+    found = _field(_Model(None, place.models), part)
+    if found is None:
+        return part, items
+    other = _field(items, part)
+    if other is not None and other[0] != found[0]:
+        return part, None
+    return found
+
+
 def _step(
     place: _Place, part: PathPart, resolvers: IdentityResolver | None
 ) -> tuple[PathPart, _Place]:
     """*part* as shown at *place*, and the place below it."""
     if isinstance(place, _Items):
         return _item(place, part, resolvers)
+    if isinstance(place, _Either):
+        return _either(place, part)
     found = _field(place, part)
     return (part, None) if found is None else found
 
@@ -259,6 +409,14 @@ def named_path(
     a class) the walk goes on over the classes, so the field names below are
     still converted; in a union, the first class with a field for the key
     names it. With *data* of None the path is returned as it is.
+
+    A field declared as one model or a list of them is walked by what it
+    holds. Where the data does not say, a key or a position after it is an
+    item of the list, and a name after it is a field of the one model
+    (``wssUsage.locationCount`` is ``wss_usage.location_count``); a name the
+    items of the list read as another field is kept as written, with all
+    below it. The keys of a map of lists are data: they and all below them
+    are kept as written.
 
     *resolvers* is for a list whose key is a name the resolver knows another
     way; no label is looked up through it. Nothing is raised: a lookup that
@@ -292,6 +450,10 @@ def named_value(
     of an object that name one field are both kept as stored, so neither value
     is dropped. A scalar and a ``MISSING`` are returned as they are.
 
+    Where a field is declared as one model or a list of them, the value says
+    which it is: an object is the one model, a list its items. One object
+    found where only a list is declared is one item of it.
+
     The result shares no ``dict`` or ``list`` with *value*.
     """
     place: _Place = None if model is None else _Model(None, (model,))
@@ -301,19 +463,28 @@ def named_value(
 
 
 def _named(value: object, place: _Place) -> object:
-    """A copy of *value*, found at *place*, with its declared keys by attribute name."""
+    """A copy of *value*, found at *place*, with its declared keys by attribute name.
+
+    The value decides what it is, where *place* allows more than one shape: a
+    list is a list of items; an object is one model, or one item where only a
+    list is declared, or a map where *place* is one.
+    """
     if is_list(value):
-        below = (
-            _Model(None, place.classes)
-            if isinstance(place, _Items) and not place.is_map
-            else None
-        )
+        below: _Place = None
+        if isinstance(place, _Either):
+            below = _Model(None, place.items)
+        elif isinstance(place, _Items) and not place.is_map:
+            below = _Model(None, place.classes)
         return [_named(item, below) for item in value]
     if not is_dict(value):
         return value
     if isinstance(place, _Items):
-        below = _Model(None, place.classes) if place.is_map else None
-        return {key: _named(item, below) for key, item in value.items()}
+        entry = _Model(None, place.classes)
+        if place.is_map:
+            return {key: _named(item, entry) for key, item in value.items()}
+        place = entry
+    elif isinstance(place, _Either):
+        place = _Model(None, place.models)
     fields = {key: _field(place, key) for key in value}
     claims = Counter(found[0] for found in fields.values() if found is not None)
     named: dict[object, object] = {}

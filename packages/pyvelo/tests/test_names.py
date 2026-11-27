@@ -4,13 +4,20 @@ A field is shown by its attribute name and an item by the text that names it
 alone; what the data does not hold keeps the part as it was written.
 """
 
-from collections.abc import Callable, Collection
-from typing import Annotated, Literal
+import itertools
+from collections.abc import Callable, Collection, Iterator
+from typing import Annotated, Literal, cast
 
 import pytest
 from layered_models import Mod, mod_json
 from pydantic import MISSING, Field
-from pyvelo.client.models.configuration.device_settings.segment import SegmentSyslog
+from pyvelo.client.models.configuration.device_settings.segment import (
+    DnsPrimaryProvider,
+    SegmentDns,
+    SegmentSyslog,
+)
+from pyvelo.client.models.enterprise.service import SymantecWssLocationUsage
+from pyvelo.client.schemas.enterprise import DnsService
 from pyvelo.core import (
     Alias,
     Edge,
@@ -27,7 +34,9 @@ from pyvelo.core import (
     ResolverNotLoadedError,
     SegmentIdentity,
     VcoModel,
+    at,
     effective_view,
+    get_key_spec,
     item_part,
     item_selector,
     kind_default,
@@ -37,6 +46,7 @@ from pyvelo.core import (
     selector_of,
 )
 from pyvelo.core.layers import L
+from pyvelo.core.rebase import item_key
 
 
 class Hub(VcoModel):
@@ -327,10 +337,12 @@ def test_a_name_whose_lookup_is_not_loaded_keeps_the_part_written() -> None:
 
 class Den(VcoModel):
     floor_size: int = 0
+    ground: Annotated[int, Alias("floor")] = 0
 
 
 class Kennel(VcoModel):
     floor_area: int = 0
+    floor_level: Annotated[int, Alias("floor")] = 0
 
 
 class Cat(VcoModel):
@@ -395,7 +407,327 @@ def test_an_entry_of_a_list_of_values_is_shown_by_its_text() -> None:
     assert item_part(data, "tags", 2) == 2
     assert named_path(Path.parse("tags[#0]"), data) == 'tags["#1"]'
     assert select_items(data, "tags", selector_of(Key("#1"))) == [0]
+
+
+def test_a_position_no_selector_names_alone_is_kept_but_is_no_patch_key() -> None:
+    """The shown position is where the item is; as a patch key it is another item.
+
+    The entry at position 1 shares its text with another, and ``#1`` is read
+    first as the entry whose text that is. So nothing names it alone.
+    """
+    data = Tags.model_validate({"tags": ["#1", "b", "b"]})
+    assert item_part(data, "tags", 1) is None
     assert named_path(Path.parse("tags[#1]"), data) == "tags[#1]"
+    assert select_items(data, "tags", "#1") == [0]
+
+
+class Numbers(VcoModel):
+    numbers: list[int] = Field(default_factory=list)
+
+
+class Mixed(VcoModel):
+    values: list[str | int] = Field(default_factory=list)
+
+
+def test_a_number_entry_of_a_list_of_values_is_shown_bare() -> None:
+    data = Numbers(numbers=[1, 2])
+    assert item_part(data, "numbers", 1) == Key(2)
+    assert named_path(Path.parse("numbers[#1]"), data) == "numbers[2]"
+    mixed = Mixed(values=[7, "8"])
+    assert named_path(Path.parse("values[#0]"), mixed) == "values[7]"
+    assert named_path(Path.parse("values[#1]"), mixed) == 'values["8"]'
+
+
+# ---------------------------------------------------------------------------
+# Every shown part, over lists built from texts that read as something else
+# ---------------------------------------------------------------------------
+
+HOSTILE = (
+    "#1",
+    "#01",
+    "#0",
+    "1",
+    "01",
+    "true",
+    "",
+    "a]b",
+    'say "x"',
+    "Corp.Guest v2",
+    "x,y",
+)
+"""Texts that read as a position, a number, a JSON value, or need quoting."""
+
+
+def hostile_lists() -> Iterator[tuple[VcoModel, str]]:
+    """Lists built from every pair of the hostile texts, and the field of each.
+
+    A keyed list with a label, one with an alt key and a list of values. In
+    the first of each a text is also another item's key (or label, or alt
+    key) and two items share one; in the second a label or an alt key stands
+    beside another item's key.
+    """
+    for a, b in itertools.product(HOSTILE, repeat=2):
+        yield (
+            Rule(
+                name="r",
+                hubs=[
+                    Hub(logical_id=a, name=b),
+                    Hub(logical_id=b, name=a),
+                    Hub(logical_id="other", name=b),
+                    Hub(logical_id="bare", name=None),
+                ],
+            ),
+            "hubs",
+        )
+        yield (
+            Doc(
+                rules=[
+                    Rule(name=a, rule_logical_id=b),
+                    Rule(name=b, rule_logical_id=a),
+                    Rule(name="other", rule_logical_id=b),
+                    Rule(name="bare"),
+                ]
+            ),
+            "rules",
+        )
+        yield (
+            Rule(name="r", hubs=[Hub(logical_id=a), Hub(logical_id="k", name=b)]),
+            "hubs",
+        )
+        yield (
+            Doc(rules=[Rule(name=a), Rule(name="k", rule_logical_id=b)]),
+            "rules",
+        )
+        yield Tags(tags=[a, b]), "tags"
+        yield Tags(tags=[a, b, a, "other"]), "tags"
+    yield Numbers(numbers=[1, 2, 2, 3, 0]), "numbers"
+    for values in itertools.permutations([2, "2", 1, "#1", "01"], 3):
+        yield Mixed(values=list(values)), "values"
+
+
+def entries_of(model: VcoModel, field: str) -> list[object]:
+    entries: object = getattr(model, field)
+    assert isinstance(entries, list)
+    return cast("list[object]", entries)
+
+
+def names_alone(model: VcoModel, field: str, selector: str, position: int) -> bool:
+    try:
+        return select_items(model, field, selector) == [position]
+    except PatchError:
+        return False
+
+
+def test_every_shown_part_parses_back_and_selects_its_item_and_no_other() -> None:
+    shown_parts = 0
+    unnamed = 0
+    for model, field in hostile_lists():
+        for position, entry in enumerate(entries_of(model, field)):
+            where = (field, position, entry)
+            part = item_part(model, field, position)
+            if part is None:
+                # Nothing names the item alone: not even its position, which
+                # is the last thing tried.
+                assert not names_alone(model, field, at(position), position), where
+                unnamed += 1
+                continue
+            parsed = Path.parse(str(Path((field, part))))
+            assert parsed.parts == (field, part), where
+            assert names_alone(model, field, selector_of(part), position), where
+            shown_parts += 1
+    assert shown_parts > 1000
+    assert unnamed > 0
+
+
+def test_item_part_and_item_selector_agree_but_for_an_empty_label() -> None:
+    compared = 0
+    for model, field in hostile_lists():
+        spec = get_key_spec(type(model).model_fields[field])
+        label = None if spec is None else spec.label
+        for position, entry in enumerate(entries_of(model, field)):
+            if label is not None and item_key(entry, (label,)) == "":
+                continue
+            part = item_part(model, field, position)
+            text = None if part is None else selector_of(part)
+            assert text == item_selector(model, field, position), (field, entry)
+            compared += 1
+    assert compared > 1000
+
+
+def test_a_text_that_reads_as_a_position_with_a_leading_zero_is_not_one() -> None:
+    tags = Tags(tags=["#1", "#01"])
+    assert item_part(tags, "tags", 1) == Key("#01")
+    assert named_path(Path.parse("tags[#1]"), tags) == 'tags["#01"]'
+    assert select_items(tags, "tags", "#01") == [1]
+    rule = Rule(
+        name="r",
+        hubs=[Hub(logical_id="#1"), Hub(logical_id="h2", name="#01")],
+    )
+    assert item_part(rule, "hubs", 1) == Key("#01")
+    assert select_items(rule, "hubs", "#01") == [1]
+
+
+# ---------------------------------------------------------------------------
+# A field that holds one model or a list of them
+# ---------------------------------------------------------------------------
+
+
+def dns_service(usage: object) -> DnsService:
+    return DnsService.model_validate(
+        {
+            "id": 1,
+            "logicalId": "00000000-0000-4000-8000-000000000001",
+            "name": "dns",
+            "created": "2026-01-01T00:00:00.000Z",
+            "type": "dns",
+            "data": {},
+            "wssUsage": usage,
+        }
+    )
+
+
+USAGE: dict[str, object] = {
+    "locationCount": 2,
+    "profiles": [{"id": 5, "segmentObjectId": 9}],
+}
+
+
+def test_a_field_that_holds_one_model_is_walked_as_that_model() -> None:
+    service = dns_service(USAGE)
+    assert isinstance(service.wss_usage, SymantecWssLocationUsage)
+    assert named_path(Path.parse("wssUsage.locationCount"), service) == (
+        "wss_usage.location_count"
+    )
+    assert named_path(Path.parse("wssUsage.profiles[#0].segmentObjectId"), service) == (
+        "wss_usage.profiles[#0].segment_object_id"
+    )
+
+
+def test_the_same_field_holding_a_list_is_walked_as_a_list() -> None:
+    service = dns_service([USAGE])
+    assert isinstance(service.wss_usage, list)
+    assert named_path(Path.parse("wssUsage[#0].locationCount"), service) == (
+        "wss_usage[#0].location_count"
+    )
+    assert named_path(
+        Path.parse("wssUsage[#0].profiles[#0].segmentObjectId"), service
+    ) == ("wss_usage[#0].profiles[#0].segment_object_id")
+
+
+def test_a_class_alone_takes_a_name_as_a_field_and_a_bracket_as_an_item() -> None:
+    assert named_path(Path.parse("wssUsage.locationCount"), DnsService) == (
+        "wss_usage.location_count"
+    )
+    assert named_path(Path.parse("wssUsage[#0].locationCount"), DnsService) == (
+        "wss_usage[#0].location_count"
+    )
+    unset = dns_service(USAGE).model_copy(update={"wss_usage": MISSING})
+    assert named_path(Path.parse("wssUsage.locationCount"), unset) == (
+        "wss_usage.location_count"
+    )
+
+
+def test_a_value_is_named_by_the_shape_it_has() -> None:
+    named: dict[str, object] = {
+        "location_count": 2,
+        "profiles": [{"id_": 5, "segment_object_id": 9}],
+    }
+    assert named_value({"wssUsage": USAGE}, DnsService) == {"wss_usage": named}
+    assert named_value({"wssUsage": [USAGE]}, DnsService) == {"wss_usage": [named]}
+    assert named_value(USAGE, DnsService, Path.parse("wssUsage")) == named
+    assert named_value([USAGE], DnsService, Path.parse("wssUsage")) == [named]
+    assert named_value(USAGE, DnsService, Path.parse("wssUsage[#0]")) == named
+
+
+def test_one_item_found_where_a_list_is_declared_is_named_as_an_item() -> None:
+    assert named_value(A, Doc, Path.parse("rules[Web].hubs")) == {
+        "logical_id": "h1",
+        "name": "Hub-A",
+    }
+
+
+PRIMARY = "deviceSettings:dns:primaryProvider"
+PRIVATE = "deviceSettings:dns:privateProviders"
+
+
+def test_a_dns_provider_is_walked_as_one_object_or_as_a_list() -> None:
+    one = SegmentDns.model_validate(
+        {
+            "primaryProvider": {"ref": PRIMARY, "inlineKey": {"inlineKey": 1}},
+            "backupProvider": [],
+            "privateProviders": {"ref": PRIVATE},
+        }
+    )
+    assert isinstance(one.primary_provider, DnsPrimaryProvider)
+    assert named_path(Path.parse("primaryProvider.service"), one) == (
+        "primary_provider.service"
+    )
+    assert named_path(Path.parse("primaryProvider.inlineKey.inlineKey"), one) == (
+        "primary_provider.inlineKey.inlineKey"
+    )
+    assert named_path(Path.parse("privateProviders.ref"), one) == (
+        "private_providers.ref"
+    )
+    listed = SegmentDns.model_validate(
+        {
+            "primaryProvider": [{"ref": PRIMARY}],
+            "backupProvider": [],
+            "privateProviders": [{"ref": PRIVATE}, {"ref": PRIVATE}],
+        }
+    )
+    assert isinstance(listed.primary_provider, list)
+    assert named_path(Path.parse("primaryProvider[#0].ref"), listed) == (
+        "primary_provider[#0].ref"
+    )
+    assert named_path(Path.parse("privateProviders[#1].ref"), listed) == (
+        "private_providers[#1].ref"
+    )
+    for path in ("primaryProvider.service", "primaryProvider[#0].ref"):
+        assert named_path(Path.parse(path), SegmentDns) == (
+            path.replace("primaryProvider", "primary_provider")
+        )
+    value = {"primaryProvider": {"ref": PRIMARY}, "localDNS": [{"fqdn": "a.test"}]}
+    assert named_value(value, SegmentDns) == {
+        "primary_provider": {"ref": PRIMARY},
+        "local_dns": [{"fqdn": "a.test"}],
+    }
+    assert named_value({"primaryProvider": [{"ref": PRIMARY}]}, SegmentDns) == {
+        "primary_provider": [{"ref": PRIMARY}]
+    }
+
+
+class Lodge(VcoModel):
+    home: Den | list[Kennel] | None = None
+    floors: dict[str, list[Den]] = Field(default_factory=dict)
+
+
+def test_a_class_alone_keeps_a_name_the_one_model_and_the_items_name_differently() -> (
+    None
+):
+    """``floor`` is ``Den.ground`` and ``Kennel.floor_level``: the class cannot say."""
+    assert named_path(Path.parse("home.floor.below"), Lodge) == "home.floor.below"
+    assert named_path(Path.parse("home.floorSize"), Lodge) == "home.floor_size"
+    assert named_path(Path.parse("home[#0].floor"), Lodge) == "home[#0].floor_level"
+    assert named_path(Path.parse("home[#0].floorArea"), Lodge) == (
+        "home[#0].floor_area"
+    )
+    one = Lodge.model_validate({"home": {"floor": 2}})
+    assert named_path(Path.parse("home.floor"), one) == "home.ground"
+    listed = Lodge.model_validate({"home": [{"floor": 2}]})
+    assert named_path(Path.parse("home[#0].floor"), listed) == "home[#0].floor_level"
+    assert named_value({"floor": 1}, Lodge, Path.parse("home")) == {"ground": 1}
+    assert named_value([{"floor": 1}], Lodge, Path.parse("home")) == [
+        {"floor_level": 1}
+    ]
+
+
+def test_a_key_of_a_map_of_lists_is_data_and_is_not_renamed() -> None:
+    data = Lodge.model_validate({"floors": {"floorSize": [{"floorSize": 3}]}})
+    path = Path.parse("floors.floorSize[#0].floorSize")
+    assert named_path(path, data) == path
+    assert named_path(path, Lodge) == path
+    value = {"floors": {"floorSize": [{"floorSize": 3}]}}
+    assert named_value(value, Lodge) == value
 
 
 # ---------------------------------------------------------------------------
