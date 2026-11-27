@@ -7,7 +7,7 @@ import pytest
 from pydantic import MISSING, Field
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.core import Alias, KeyField, PatchError, VcoModel
-from pyvelo.core.merge import nest_patch
+from pyvelo.core.merge import address_path, nest_patch
 from pyvelo.core.rebase import Key, Path
 
 
@@ -461,3 +461,79 @@ def test_the_variant_an_item_holds_is_the_one_a_path_reaches() -> None:
     with pytest.raises(PatchError) as exc:
         _ = zoo.merge_patch(nest_patch(_Zoo, 1, path="animals[#1].home.floorArea"))
     assert exc.value.kind == "unknown_field"
+
+
+# --- the whole address as one path, and a segment at its head ---------------
+
+
+def test_the_whole_address_is_one_path() -> None:
+    assert address_path(None, None) == Path(())
+    assert address_path(None, "sub.n").parts == ("sub", "n")
+    assert address_path("S", None).parts == ("segments", Key("S"))
+    assert address_path("S", "mid.leaf") == "segments[S].mid.leaf"
+    assert address_path("Corp v2", "rules[#0]").parts == (
+        "segments",
+        Key("Corp v2"),
+        "rules",
+        0,
+    )
+    path = Path(("segments", Key("S"), "mid"))
+    assert address_path(None, path) is path
+    assert address_path(None, "segments[S].mid") == address_path("S", "mid")
+
+
+def test_a_segment_at_the_head_of_a_path_is_the_segment_of_the_call() -> None:
+    by_path = nest_patch(Outer, 1, path="segments[S].mid.dhGroup")
+    assert by_path == nest_patch(Outer, 1, segment="S", path="mid.dhGroup")
+    assert by_path == {"segments": {"S": {"mid": {"dh_group": 1}}}}
+
+
+@pytest.mark.parametrize(
+    ("path", "head", "below"),
+    [
+        ("segments[S].mid.n", "segments[S]", "mid.n"),
+        ("segments[T].rules[#0]", "segments[T]", "rules[#0]"),
+        ("segments.S.mid", "segments.S", "mid"),
+        ("segments[#0]", "segments[#0]", None),
+        (Path(("segments", Key("S"), "mid")), "segments[S]", "mid"),
+    ],
+)
+def test_a_segment_given_twice_is_refused(
+    path: str, head: str, below: str | None
+) -> None:
+    instead = (
+        "leave out the path"
+        if below is None
+        else f"start the path below the segment (path={below!r})"
+    )
+    for call in (
+        lambda: address_path("S", path),
+        lambda: nest_patch(Outer, {}, segment="S", path=path),
+        lambda: nest_patch(NoSeg, {}, segment="S", path=path),
+    ):
+        with pytest.raises(PatchError) as exc:
+            _ = call()
+        assert (exc.value.kind, exc.value.path) == ("address", Path(()))
+        assert exc.value.message == (
+            "the segment is given twice: by segment='S' and by the path, which "
+            f"starts at {head}. One of the two would be dropped without a word. "
+            f"Give it once: leave out segment, or {instead}"
+        )
+
+
+def test_a_path_that_ends_at_segments_does_not_give_the_segment_twice() -> None:
+    with pytest.raises(PatchError, match="Seg has no field 'segments'") as exc:
+        _ = nest_patch(Outer, [], segment="S", path="segments")
+    assert exc.value.path == Path(("segments", Key("S"), "segments"))
+
+
+@pytest.mark.parametrize("path", ["stops[x", ""])
+def test_an_address_that_cannot_be_read_is_refused_as_nest_patch_refuses_it(
+    path: str,
+) -> None:
+    with pytest.raises(PatchError) as by_address:
+        _ = address_path("S", path)
+    with pytest.raises(PatchError) as by_nest:
+        _ = nest_patch(Outer, 1, segment="S", path=path)
+    assert by_address.value.kind == "address"
+    assert str(by_address.value) == str(by_nest.value)

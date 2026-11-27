@@ -137,8 +137,10 @@ rule `allow-web` (see "Paths" below). A path goes through a field that holds
 one of several kinds of object (the cloud security configuration's GRE and
 IPsec forms) to a field any of them has, and reaches the form that is stored.
 `segment` names a segment like any other selector of the `segments` list: by
-name, in any case, or by `segmentId`. Without an address, `patch` must be a
-`dict`.
+name, in any case, or by `segmentId`. A path that starts at `segments[...]`
+names its segment itself, so `path='segments["Global Segment"].outbound'` is
+the same address; give the segment one way or the other, not both. Without an
+address, `patch` must be a `dict`.
 
 `apply` changes `state` in place and returns that same object: `candidate =
 await pipeline.apply(state, ...)` gives no second state to fall back on
@@ -570,7 +572,14 @@ written left to right:
 | An item by its position | `[#n]`, counting from 0 in the list as it was read. This is for an item that no name or key names alone, and for an item of a list without a key. | `rules[#0]` |
 | An entry of a map, and a key the model does not declare | The key as stored, after a dot. It is bare when it is letters, digits and `_` and does not start with a digit; else it is a JSON string. | `refs."deviceSettings:backHaulEdge"` |
 
-A segment is an item of `segments` like any other: `segments[Guest]`.
+A segment is an item of `segments` like any other: `segments[Guest]`. At the
+head of a path it stands for `segment`: `path="segments[Guest].rules"` is
+`segment="Guest", path="rules"`, and the rules for a patch that adds or
+removes a segment hold for both. Giving the segment both ways is refused
+(`PatchError`, kind `address`), whether or not the two name one segment,
+because one of them would be dropped without a word: leave out `segment`, or
+start the path below the segment. `address_path(segment, path)`
+(`pyvelo.core`) gives the whole address of a call as one `Path`.
 
 Given to `apply`, the parts of a path map one for one onto the keys of a
 patch, so `apply(path=P, patch=body)` is `apply(patch=...)` with the body

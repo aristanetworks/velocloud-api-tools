@@ -131,8 +131,8 @@ from pyvelo.core.identity import (
     SegmentName,
 )
 from pyvelo.core.layers import Edge, Effective, Layered, Profile
-from pyvelo.core.merge import nest_patch, read_given_id, select_items
-from pyvelo.core.patch import ItemOp, is_new, parse_item_op
+from pyvelo.core.merge import address_path, nest_patch, read_given_id, select_items
+from pyvelo.core.patch import ItemOp, is_new, parse_item_op, selector_of
 from pyvelo.core.rebase import Path, raw_changes
 
 
@@ -700,7 +700,8 @@ class ConfigPipeline:
         - ``path="rules[Web].match"`` is
           ``patch={"rules": {"Web": {"match": patch}}}``;
         - ``segment="S"`` is ``patch={"segments": {"S": patch}}``;
-        - both are ``patch={"segments": {"S": {"a": {"b": patch}}}}``.
+        - both are ``patch={"segments": {"S": {"a": {"b": patch}}}}``, and so
+          is ``path="segments[S].a.b"`` alone.
 
         With neither, *patch* must be a ``dict`` (``TypeError`` otherwise).
         With either, it is any JSON value; ``None`` means what ``null`` means
@@ -720,7 +721,13 @@ class ConfigPipeline:
         starts at the item class of the module's ``segments`` field, else at
         the module data's class. *segment* is a selector of the ``segments``
         list like any other: the segment's name in any case (through the
-        segment resolver) or its ``segmentId``. The address is checked
+        segment resolver) or its ``segmentId``. ``segments[S]`` at the head
+        of *path* stands for *segment*, so a path printed from the top of a
+        module is taken as it is, and the rules for a patch that adds or
+        removes a segment (step 2) hold for it as they do for *segment*.
+        Giving the segment both ways raises ``PatchError``, whether or not
+        the two name one segment: one of them would be dropped without a
+        word. The address is checked
         against the model classes, not the instances (``nest_patch``), so an
         unset intermediate field is fine, and an item its list lacks is
         refused when the patch is merged (``no_item``). A text that is not a
@@ -2515,18 +2522,16 @@ def _refuse_segment_ops_to_a_missing_module(
 
     A profile target only, for device settings, QoS and firewall: an ``add``,
     a ``delete`` or a list value for ``segments`` works on all three modules,
-    and inserting a module into a profile is not supported. A patch without
-    them is left to ``state.module``, which raises ``ValueError`` as ever.
+    and inserting a module into a profile is not supported. The patch is read
+    at its address, however that is given (``address_path``): by *segment*,
+    by a *path* that starts at ``segments``, or by neither. A patch without
+    segment operations is left to ``state.module``, which raises
+    ``ValueError`` as ever; an address that cannot be read raises as
+    ``address_path`` does.
     """
     if state.target_type != "profile" or module_name not in PROFILE_SEGMENT_MODULES:
         return
-    nested: object
-    if segment is not None and path is None:
-        nested = {"segments": {segment: patch}}
-    elif segment is None and path is None:
-        nested = patch
-    else:
-        return
+    nested = _nested_under(address_path(segment, path), patch)
     if isinstance(nested, dict) and holds_segment_ops(
         cast("dict[str, object]", nested)
     ):
@@ -2538,6 +2543,19 @@ def _refuse_segment_ops_to_a_missing_module(
             SEGMENTS,
             "segment_rule",
         )
+
+
+def _nested_under(address: Path, patch: object) -> object:
+    """*patch* nested under the parts of *address*, with no model consulted.
+
+    Each part is a key: a name as written, an item part as its selector. It is
+    ``nest_patch`` without the classes, for a module that has no data to take
+    them from; a field is not looked up, so it keeps the name it was given.
+    """
+    nested = patch
+    for part in reversed(address.parts):
+        nested = {part if isinstance(part, str) else selector_of(part): nested}
+    return nested
 
 
 def _device_settings_as_read(state: ConfigState) -> object:

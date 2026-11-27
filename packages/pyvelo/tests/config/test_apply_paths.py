@@ -11,10 +11,14 @@ import pytest
 from hub_state import rule_uses_hub
 from pydantic import Field
 from pyvelo.client.models.configuration.profile_segments import segment_template
-from pyvelo.config import ConfigPipeline, PatchError
-from pyvelo.core import KeyField, VcoModel, add, named_path
+from pyvelo.client.schemas.configuration import EnterpriseConfigurationProfile
+from pyvelo.config import ConfigPipeline, ConfigState, PatchError
+from pyvelo.config.resolver import ResolverContext
+from pyvelo.core import KeyField, VcoModel, add, address_path, named_path
+from pyvelo.core.layers import Profile
 from pyvelo.core.merge import nest_patch
 from pyvelo.core.rebase import Key, Path
+from pyvelo.testing import make_firewall_module, make_firewall_segment
 from shown_paths import reached, round_trips
 
 apply = ConfigPipeline(client=None).apply
@@ -88,6 +92,50 @@ async def test_a_missing_item_is_the_patchs_no_item() -> None:
     )
 
 
+async def test_a_segment_at_the_head_of_a_path_stands_for_segment() -> None:
+    by_path = await rule_uses_hub()
+    by_segment = await rule_uses_hub()
+    body = {"destination_port_low": 443}
+    _ = await apply(by_path, module="business_policy", path=f"{RULE}.match", patch=body)
+    _ = await apply(
+        by_segment,
+        module="business_policy",
+        segment="Guest",
+        path="rules[Web].match",
+        patch=body,
+    )
+    assert by_path.profile.qos == by_segment.profile.qos
+    assert by_path.profile.qos.segments[GUEST].rules[0].match.destination_port_low == (
+        443
+    )
+    cls = type(by_path.profile.qos)
+    assert address_path(None, f"{RULE}.match") == address_path(
+        "Guest", "rules[Web].match"
+    )
+    assert nest_patch(cls, body, path=f"{RULE}.match") == nest_patch(
+        cls, body, segment="Guest", path="rules[Web].match"
+    )
+
+
+async def test_a_segment_given_twice_is_refused() -> None:
+    state = await rule_uses_hub()
+    with pytest.raises(PatchError) as error:
+        _ = await apply(
+            state,
+            module="business_policy",
+            segment="Guest",
+            path="segments[Guest].rules",
+            patch={},
+        )
+    assert error.value.kind == "address"
+    assert str(error.value) == (
+        "the segment is given twice: by segment='Guest' and by the path, which "
+        "starts at segments[Guest]. One of the two would be dropped without a "
+        "word. Give it once: leave out segment, or start the path below the "
+        "segment (path='rules')"
+    )
+
+
 async def test_a_path_that_does_not_parse_is_refused_with_the_form() -> None:
     state = await rule_uses_hub()
     with pytest.raises(PatchError) as error:
@@ -107,6 +155,57 @@ async def test_an_item_part_where_no_list_is_is_refused() -> None:
         "segments[Guest].vpn[Web]",
     )
     assert "is not a list" in error.value.message
+
+
+def _firewall_only() -> ConfigState:
+    """A profile that has a firewall module and neither of the other two."""
+    segment = make_firewall_segment("Global Segment", 0, layer=Profile)
+    firewall = make_firewall_module(
+        mod_id=1, config_id=20, segments=[segment], layer=Profile
+    )
+    return ConfigState(
+        edge_config=None,
+        profile_config=EnterpriseConfigurationProfile(
+            name="Default Profile", id_=20, modules=[firewall]
+        ),
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("segment", "path", "patch"),
+    [
+        ("Guest", None, add({"rules": []})),
+        (None, "segments[Guest]", add({"rules": []})),
+        (None, "segments.Guest", add({"rules": []})),
+        (None, Path(("segments", Key("Guest"))), {"_op": "delete"}),
+        (None, "segments", {"Guest": add({"rules": []})}),
+        (None, "segments", []),
+    ],
+)
+async def test_segment_ops_by_path_to_a_missing_module_are_refused(
+    segment: str | None, path: str | None, patch: object
+) -> None:
+    """As ``segment="Guest"`` with the same body is: build the state that test uses."""
+    state = _firewall_only()
+    with pytest.raises(PatchError) as error:
+        _ = await apply(
+            state, module="business_policy", segment=segment, path=path, patch=patch
+        )
+    assert (error.value.kind, error.value.path) == ("segment_rule", "segments")
+    assert error.value.message.startswith("the profile has no")
+    assert state.find_module("QOS") is None
+
+
+@pytest.mark.parametrize("path", ["segments[Guest].rules", "service_rate_limit"])
+async def test_a_patch_by_path_with_no_segment_op_is_left_to_the_missing_module(
+    path: str,
+) -> None:
+    state = _firewall_only()
+    with pytest.raises(ValueError, match="QOS") as error:
+        _ = await apply(state, module="business_policy", path=path, patch={})
+    assert not isinstance(error.value, PatchError)
 
 
 def _rule(name: str) -> dict[str, Any]:

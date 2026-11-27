@@ -173,6 +173,11 @@ def nest_patch(
     patch}}}``. A path may end anywhere: at a field, at a list, or at an item,
     whose patch is then an item's (a plain object, or an operation).
 
+    ``segments[S]`` at the head of *path* stands for *segment*: the address
+    is one path (``address_path``), so ``path="segments[S].a.b"`` and
+    ``segment="S", path="a.b"`` give the same patch. Giving the segment both
+    ways is refused, whether or not the two name one segment.
+
     With *segment* the parts start at the item type of the ``segments``
     field, without at *model*. A field part is looked up in every class the
     value there can be: the variants of a union field, of the items of a
@@ -189,7 +194,8 @@ def nest_patch(
     refuse (``no_item``).
 
     A bad address raises ``PatchError`` of kind ``address``. A text that is
-    not a path, and a path with no parts, raise at the empty path. The others
+    not a path, a path with no parts, and a segment given twice raise at the
+    empty path (``address_path``). The others
     raise at the path of the part that failed, in python names, under
     ``segments[S]`` when there is a *segment*: a part that names no field of
     any class (the message gives the classes joined with `` | ``, the part
@@ -207,7 +213,7 @@ def nest_patch(
                 "give an object, or name the place a value goes with segment or path"
             )
         return cast("dict[str, object]", checked_patch(patch))
-    parts = () if path is None else _read_path(path).parts
+    parts = address_path(segment, path).parts
     place = _AddressPlace("model", (model,), None)
     walked = Path(())
     if segment is not None:
@@ -218,6 +224,7 @@ def nest_patch(
             f"an item of {model.__name__}.segments",
         )
         walked = walked.child(Key(segment))
+        parts = parts[2:]
     # Where the patch sits once nested, in python names, for its errors and its depth.
     keys, where_nested = _address_names(place, parts, walked)
     nested = checked_patch(patch, where_nested)
@@ -226,6 +233,44 @@ def nest_patch(
     if segment is None:
         return cast("dict[str, object]", nested)
     return {"segments": {segment: nested}}
+
+
+def address_path(segment: str | None, path: str | Path | None) -> Path:
+    """The whole address of an addressed patch, as one path.
+
+    ``segments[<segment>]`` when there is a *segment*, then the parts of
+    *path*, which is a ``Path`` or the text of one (``Path.parse``). A path
+    that starts at an item of ``segments`` names its segment itself, so
+    ``address_path(None, "segments[Guest].rules")`` and
+    ``address_path("Guest", "rules")`` are one address. With neither, the
+    empty path.
+
+    Raises ``PatchError`` of kind ``address`` at the empty path for a text
+    that is not a path, for a *path* with no parts, and for a segment given
+    twice: by *segment* and by a *path* that starts at an item of
+    ``segments``, whether or not the two name one segment. One of them would
+    be dropped, and the patch would go to a segment the caller did not mean.
+    """
+    read = Path(()) if path is None else _read_path(path)
+    if segment is None:
+        return read
+    parts = read.parts
+    if len(parts) > 1 and parts[0] == "segments":
+        below = Path(parts[2:])
+        instead = (
+            f"start the path below the segment (path={str(below)!r})"
+            if below.parts
+            else "leave out the path"
+        )
+        raise PatchError(
+            f"the segment is given twice: by segment={segment!r} and by the "
+            f"path, which starts at {Path(parts[:2])}. One of the two would be "
+            "dropped without a word. Give it once: leave out segment, or "
+            f"{instead}",
+            Path(()),
+            "address",
+        )
+    return Path(("segments", Key(segment), *parts))
 
 
 def _read_path(path: str | Path) -> Path:

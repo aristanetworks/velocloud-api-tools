@@ -174,7 +174,7 @@ from .layers import (
     unwrap,
 )
 from .mending import MendingKind, MendingPatch, backhaul_hub_mending
-from .merge import item_selector, nest_patch, select_items
+from .merge import address_path, item_selector, nest_patch, select_items
 from .names import item_part, named_path, named_value
 from .owned import (
     ByFlag,
@@ -345,6 +345,7 @@ __all__ = [
     "VcoModel",
     "VcoTimestamp",
     "add",
+    "address_path",
     "at",
     "backhaul_hub_mending",
     "bind_layers",

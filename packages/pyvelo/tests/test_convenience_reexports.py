@@ -54,6 +54,7 @@ class TestPatchToolReexports:
             "ListKind": base,
             "select_items": merge,
             "nest_patch": merge,
+            "address_path": merge,
             "position_of": patch,
             "Path": rebase,
             "Key": rebase,
