@@ -10,7 +10,10 @@ in the root ``pyproject.toml``. It is test support and no part of the library.
 A failed test reports what ``failure_text`` makes of its exception and where
 it was raised, never the exception's own text: that quotes names and values
 of the lab. ``check`` and ``pytest.fail`` word a failure for the report as it
-is; a ``LiveSuiteError`` carries a message that is safe to show.
+is; a ``LiveSuiteError`` carries a message that is safe to show. A restore
+that fails after its test failed is one worded failure that says both, each
+error as ``failure_text`` gives it, with no exception chained to it
+(``restoring``): a chained exception would be reported with its own text.
 
 Running the live suite
 ----------------------
@@ -61,8 +64,9 @@ A test that writes is marked ``live_write``. The client the suite connects
 (``connect``) refuses, with ``WritesRefusedError`` and before anything is sent:
 
 * every portal call that is not a read, except the three writes the suite
-  makes itself: ``update_configuration_module`` and
-  ``insert_configuration_module`` of the client, and ``delete_module``, and
+  makes itself: ``update_configuration_module``,
+  ``insert_configuration_module`` and ``delete_configuration_module`` of the
+  client (``delete_module`` and ``delete_again`` send through the last), and
   the twelve role calls of a hub (``enable_edge_hub``, ``disable_cluster_backhaul``
   and the rest, below). A read is a method whose name starts with ``get``,
   ``list`` or ``is``. This covers a raw ``client.portal(...)`` and every other
@@ -71,7 +75,15 @@ A test that writes is marked ``live_write``. The client the suite connects
   rest);
 * those three writes from a test that is not marked ``live_write``, outside a
   ``restoring`` block, or to a module no open block found or inserted: the
-  suite can only write what it will put back;
+  suite can only write what it will put back. A delete names its module by ID
+  alone, so the block that found or inserted that ID must itself be on an edge
+  marked ``pyvelo-it-replace-modules``, and on a firewall or a QoS module: the
+  suite inserts no other, so it could not put another back. An insert of a
+  module of any other name is refused for the same reason from the other
+  side: the suite could not delete it again. ``delete_again``
+  sends one more delete, inside the block a module was deleted in, for a
+  module an answer to this run said was deleted: a test records with it what
+  the Orchestrator answers for a module that is gone;
 * a role call of a hub unless the test is marked ``live_write``, a
   ``restoring`` block is open on the device settings module of a marked
   profile that the call's ``configurationId`` and ``moduleId`` name, and the
@@ -101,7 +113,29 @@ make them replace the module's whole association set. Any other module is
 restored with data alone. The restore
 undoes what this run did and nothing else. A module this run inserted is
 deleted; one it deleted is inserted again; one it wrote gets its original data
-back. Where the module is not as the Orchestrator last answered this run
+back. A delete that was sent and not answered as done (an error, a row count
+of 0, or no answer) leaves the module there or gone, and the restore puts
+either right. The run holds such a delete until a restore sees the module
+still there, and no longer than its block: a later block that finds the
+module gone did not delete it. An insert that ended with no answer on what
+became of it may have stored a module whose ID the run was never told: one cut
+off on its way or on the way back (a read or write timeout or error, a
+connection closed mid-answer), one interrupted or cancelled mid-call, one
+answered with an HTTP status of 500 or above, and one whose answer cannot be
+read. No other failed insert counts: not one that was never transmitted, and
+not one the Orchestrator answered with an error or with a lower HTTP status,
+after which an unknown module is another writer's. The restore of the block
+such an insert was sent in takes a module it finds there for that one, and
+undoes it as a module this run inserted, where the module was not there when
+the block opened, its ID is higher than every module ID the run has found,
+inserted or deleted by then (the Orchestrator numbers modules upward), and,
+where the block found a module, the run deleted that one or sent a delete of
+it. That module counts as this run's own on
+one assumption, which the suite cannot check: that no other writer inserted
+that module on the same marked edge while the block was open. The run holds
+such an insert no longer than its block either: a module a later block finds
+is left alone. Where the module is not as the Orchestrator
+last answered this run
 (another writer changed it, added it or removed it), the restore leaves it
 alone and fails the test. On an Orchestrator that answers a write with a row
 count, what it stored is not known, and the original is written back without
@@ -150,6 +184,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, cast
 
+import httpx
 import pytest
 from pydantic import MISSING, BaseModel, RootModel, ValidationError
 from pyvelo.client import (
@@ -177,6 +212,7 @@ from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
     ConfigurationModuleBase,
     ConfigurationModuleUpdate,
+    DeleteConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     GetConfiguration,
@@ -197,7 +233,6 @@ from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.core import (
     Alias,
     ConfigContext,
-    NoneIsMissing,
     PaginatedVcoModel,
     PatchError,
     RowsModifiedConfirmation,
@@ -217,8 +252,6 @@ if TYPE_CHECKING:
         Mapping,
         Sequence,
     )
-
-    import httpx
 
 SYNTHETIC_PREFIX = "pyvelo-it-"
 """Every rule, description and the like these tests add starts with this."""
@@ -772,6 +805,74 @@ def _stored_nothing(exc: BaseException, *, unsent: bool) -> bool:
     )
 
 
+_CUT_OFF = (
+    httpx.ReadTimeout,
+    httpx.ReadError,
+    httpx.WriteTimeout,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+    httpx.CloseError,
+)
+"""The transport errors of a request that was on its way, or whose answer was."""
+
+_SERVER_ERROR = 500
+"""The first HTTP status that says nothing of what the Orchestrator did."""
+
+
+def _says_not_inserted(exc: ValidationError) -> bool:
+    """Whether the answer that *exc* could not read says that nothing was inserted.
+
+    So it is where the result holds an ``error``, or a row count of 0, in
+    place of the new module's ID.
+    """
+    for entry in exc.errors():
+        given: object = entry.get("input")
+        if isinstance(given, dict):
+            result = cast("dict[str, object]", given)
+            if result.get("error") or result.get("rows") == 0:
+                return True
+    return False
+
+
+def _left_unanswered(exc: BaseException, *, begun: bool) -> bool:
+    """Whether an insert that raised *exc* ended with no answer on what became of it.
+
+    Only then may the Orchestrator hold a module that this run was never told
+    of, and only then may a restore take an unknown module for this run's own
+    (``LiveRun.take_unanswered``). So this is a list of what counts, and
+    whatever is not on it does not:
+
+    * the request was cut off on its way, or its answer was (``_CUT_OFF``);
+    * the call was interrupted once it had begun: a cancellation, Ctrl-C, any
+      ``BaseException`` that is not an ``Exception``;
+    * the answer was an HTTP status of 500 or above;
+    * an answer came that cannot be read as the insert's: no result, or a
+      result that does not validate and does not itself say that nothing was
+      inserted (``_says_not_inserted``).
+
+    Not on it: a call that never began (*begun* is false); a transport error
+    that means nothing was transmitted (no connection, no connection free); an
+    HTTP status below 500; and every error the Orchestrator answered the
+    method with, with or without a list of codes. After any of those a module
+    of the name that the run does not know is another writer's, and the
+    Orchestrator's error may be its answer to exactly that module.
+
+    This asks more than ``_stored_nothing`` does for an update. There, a wrong
+    "may be stored" only skips a comparison of a module the run already owns;
+    here, a wrong "may be stored" lets the restore delete or overwrite a
+    module the run has never seen.
+    """
+    if not begun:
+        return False
+    if isinstance(exc, VcoHttpError):
+        return exc.status_code >= _SERVER_ERROR
+    if isinstance(exc, ValidationError):
+        return not _says_not_inserted(exc)
+    return not isinstance(exc, Exception) or isinstance(
+        exc, (*_CUT_OFF, VcoEmptyResultError)
+    )
+
+
 def _redacted(exc: VcoOperationError) -> VcoOperationError:
     """*exc* with each error code and field kept and no message.
 
@@ -829,6 +930,25 @@ NOT_COVERED = (
     "that no open restoring block covers; nothing was sent; open "
     "`restoring(site)` on the module's own site and write inside it"
 )
+NOT_DELETED_BEFORE = (
+    "a second delete of a module this run did not delete inside a restoring "
+    "block that is still open on its site; nothing was sent; delete_again only "
+    "sends the delete of a module again that an answer to this run said was "
+    "deleted, and only inside the block it was deleted in, so delete it first "
+    "with delete_module and call delete_again inside the same restoring block"
+)
+NOT_INSERTABLE = (
+    "which the suite could not put back, as it inserts only a firewall or a "
+    "QoS module; nothing was sent; delete only a firewall or a QoS module, and "
+    "change any other module with an update inside its restoring block"
+)
+NOT_DELETABLE = (
+    "which the suite could not delete again, as it deletes only a firewall or a "
+    "QoS module; nothing was sent; insert only a firewall or a QoS module, and "
+    "change any other module with an update inside its restoring block"
+)
+INSERTABLE = (ConfigurationModuleName.FIREWALL, ConfigurationModuleName.QOS)
+"""The modules ``insert_module`` inserts: the only ones the suite deletes."""
 
 
 NO_HUB = (
@@ -1042,8 +1162,27 @@ class LiveRun:
     """The ID of each module a block's test inserted, with the block that was open for
     it.
     """
-    deleted: set[int] = field(default_factory=set[int])
-    """The ID of each module this run deleted."""
+    deleted: dict[int, Block] = field(default_factory=dict[int, Block])
+    """The ID of each module this run deleted (an answer said so), with the block
+    the delete was sent in: the outermost one that was open on the module.
+    ``delete_again`` sends a second delete only while that block is open.
+    """
+    maybe_deleted: dict[int, Block] = field(default_factory=dict[int, Block])
+    """The ID of each module this run sent a delete for that no answer said was
+    deleted, with its block as in ``deleted``: it may be there or gone. An ID
+    leaves when a restore sees the module still there, and when that block
+    closes: past it, a module that is gone was not deleted by anything this run
+    still has open.
+    """
+    unanswered_inserts: list[Block] = field(default_factory=list[Block])
+    """The block of each insert that ended with no answer on what became of it
+    (``_left_unanswered`` says which failures those are, and no other failed
+    insert is kept): the innermost one that was open on its configuration and
+    module name. Such an insert may have left a module whose ID this run was never
+    told, and the restore of that block takes one for this run's own
+    (``take_unanswered``). An entry goes when its block closes: a module that a
+    later block finds there is not known to be this run's.
+    """
     sent: int = 0
     """How many portal calls that are not reads the client has begun: a write that
     raised with this unchanged sent nothing.
@@ -1066,6 +1205,19 @@ class LiveRun:
         found = {module for _, module in self.open if module is not None}
         return module_id in found or module_id in self.inserted
 
+    def _blocks_of(self, module_id: int) -> list[Block]:
+        """The open blocks that found module *module_id*, or inserted it.
+
+        The outermost first.
+        """
+        inserter = self.inserted.get(module_id)
+        return [
+            block for block in self.open if block[1] == module_id or block is inserter
+        ]
+
+    def _is_open(self, block: Block) -> bool:
+        return any(block is other for other in self.open)
+
     def block_for(self, configuration_id: int, name: str) -> Block | None:
         """The innermost open block on that configuration's *name* module."""
         return next(
@@ -1078,11 +1230,71 @@ class LiveRun:
             None,
         )
 
+    def _known(self) -> set[int]:
+        """The ID of every module this run has found, inserted or deleted.
+
+        ``seen`` holds each module a block found or inserted, from then until
+        an answer says that it is deleted, and ``deleted`` holds it from then
+        on: neither forgets a module when its block closes.
+        """
+        found = {module for _, module in self.open if module is not None}
+        return found.union(self.seen, self.inserted, self.deleted, self.maybe_deleted)
+
+    def take_unanswered(
+        self, block: Block, module_id: int, beside: Iterable[int]
+    ) -> None:
+        """Take module *module_id*, which the restore of *block* found, as this run's.
+
+        That is, as one *block* inserted, where an insert that got no answer
+        can have left it. *beside* holds the IDs of the modules of the name
+        that were there when the block opened and that the block did not find
+        (``Original.beside``). The module is taken where all of this holds:
+
+        * *block* sent an insert that ended with no answer on what became of
+          it (``unanswered_inserts``);
+        * where the block found a module, this run removed that one: an
+          answer said it was deleted, or a delete of it was sent and not
+          answered as done (``deleted``, ``maybe_deleted``). With the found
+          module not deleted by this run, another module in its place is
+          another writer's doing, and a second one beside it is not undone by
+          writing the original over it;
+        * its ID is greater than every module ID this run has found, inserted
+          or deleted, and than each of *beside*. The Orchestrator numbers
+          modules upward, so a module that insert stored is newer than all
+          that were there before it. The test is made when the restore runs,
+          so an ID the run learned after that insert counts as well: the
+          module is then left alone, though it may be the run's.
+
+        The module is then one the block inserted, and what it holds is not
+        known (``inserted``, ``seen``). Otherwise no record changes.
+
+        Nothing here tells that module from one another writer inserted there
+        while the block was open: that no one did is taken on trust.
+        """
+        if not any(block is other for other in self.unanswered_inserts):
+            return
+        found = block[1]
+        removed = found in self.deleted or found in self.maybe_deleted
+        if found is not None and not removed:
+            return
+        if any(module_id <= known for known in self._known().union(beside)):
+            return
+        self.inserted[module_id] = block
+        self.seen[module_id] = _UNKNOWN
+
     def close(self, block: Block) -> None:
-        """Take *block* out of the open ones, and with it the modules it inserted."""
+        """Take *block* out of the open ones.
+
+        And with it the modules it inserted, the ones it may have deleted, and
+        its inserts that got no answer.
+        """
         self.open[:] = [b for b in self.open if b is not block]
-        for module_id in [m for m, b in self.inserted.items() if b is block]:
-            del self.inserted[module_id]
+        self.unanswered_inserts[:] = [
+            b for b in self.unanswered_inserts if b is not block
+        ]
+        for record in (self.inserted, self.maybe_deleted):
+            for module_id in [m for m, b in record.items() if b is block]:
+                del record[module_id]
 
     def check_update(self, module_id: int) -> None:
         """Raise ``WritesRefusedError`` unless the update of *module_id* is allowed.
@@ -1147,6 +1359,18 @@ class LiveRun:
         if (kind, target_id) != (self.hub.kind, self.hub.id_):
             raise WritesRefusedError(ROLE_CALL_NOT_THE_HUB)
 
+    def check_insert(self, configuration_id: int, name: str) -> None:
+        """Raise ``WritesRefusedError`` unless a *name* module may be inserted there.
+
+        A block must be open on that configuration's *name* module, on a site
+        marked for deleting and inserting modules (``check_replace``), and the
+        module must be a firewall or a QoS module: the two the suite deletes
+        (``check_own_delete``), so the two it can take away again.
+        """
+        self.check_replace(configuration_id, name, "an insert")
+        if name not in {insertable.value for insertable in INSERTABLE}:
+            raise WritesRefusedError(f"an insert of a {name} module, {NOT_DELETABLE}")
+
     def check_delete(self, configuration_id: int, name: str, module_id: int) -> None:
         """Raise ``WritesRefusedError`` unless a block is on that module.
 
@@ -1155,6 +1379,55 @@ class LiveRun:
         self.check_replace(configuration_id, name, "a delete")
         if not self._covers(module_id):
             raise WritesRefusedError(f"a delete of a {name} module {NOT_COVERED}")
+
+    def check_own_delete(self, module_id: int) -> Block:
+        """Raise ``WritesRefusedError`` unless a block covers the delete of *module_id*.
+
+        This is the check of the client's own delete, whose request names the
+        module by ID alone. An open block must have found that ID, or have been
+        open as this run inserted it, so that the ID is known to be that
+        configuration's module of that name; the module must be a firewall or
+        a QoS module, the two the suite can insert again; and that same block's
+        site must be one marked for deleting and inserting modules.
+        Returns the outermost such block: the one the run's records keep the
+        delete with.
+        """
+        self._check_may_write()
+        blocks = self._blocks_of(module_id)
+        if not blocks:
+            raise WritesRefusedError(f"a delete of a module {NOT_COVERED}")
+        site = blocks[0][0]
+        if site.name not in INSERTABLE:
+            raise WritesRefusedError(
+                f"a delete of a {site.name.value} module, {NOT_INSERTABLE}"
+            )
+        if not any(block[0].replace_modules for block in blocks):
+            raise WritesRefusedError(
+                f"a delete of a {site.name.value} module of an edge that is not "
+                f"marked {REPLACE_MODULES_MARK}; nothing was sent; "
+                f"{REPLACE_MODULES_REMEDY}"
+            )
+        return blocks[0]
+
+    def check_delete_again(
+        self, configuration_id: int, name: str, module_id: int
+    ) -> None:
+        """Raise ``WritesRefusedError`` unless *module_id* may be sent one more delete.
+
+        A block must be open on that configuration's *name* module, on a site
+        marked for deleting and inserting modules, and an answer to this run
+        must have said that the module was deleted inside a block on that
+        module that is still open.
+        """
+        self.check_replace(configuration_id, name, "a delete")
+        block = self.deleted.get(module_id)
+        if (
+            block is None
+            or not self._is_open(block)
+            or block[0].configuration_id != configuration_id
+            or block[0].name.value != name
+        ):
+            raise WritesRefusedError(NOT_DELETED_BEFORE)
 
 
 def require_writes(run: LiveRun) -> None:
@@ -1193,19 +1466,19 @@ def check_call(method: str) -> None:
 
     A read is a method whose name, after its namespace, starts with ``get``,
     ``list`` or ``is``. A write passes only from the code that checked it:
-    ``update_configuration_module`` and ``insert_configuration_module`` as
-    ``run_of`` guards them, ``delete_module``, and the twelve role calls of a
-    hub as ``run_of`` guards them (``ROLE_CALLS``).
+    ``update_configuration_module``, ``insert_configuration_module`` and
+    ``delete_configuration_module`` as ``run_of`` guards them (``delete_module``
+    and ``delete_again`` send through the last), and the twelve role calls of
+    a hub as ``run_of`` guards them (``ROLE_CALLS``).
     """
     if _READ.match(method.rsplit("/", 1)[-1]) or _sending.get() == method:
         return
     raise WritesRefusedError(
         f"a call to {method}, which is not a read and is not a write the suite "
-        "checks; nothing was sent; the live suite writes only module updates and "
-        "inserts through the client's own methods, deletes through "
-        "delete_module, and the role calls of the hub it admitted through the "
-        "client's own methods, each inside a restoring block, so leave this call "
-        "out of a live test"
+        "checks; nothing was sent; the live suite writes only module updates, "
+        "inserts and deletes, and the role calls of the hub it admitted, each "
+        "through the client's own methods (a delete through delete_module too) "
+        "and inside a restoring block, so leave this call out of a live test"
     )
 
 
@@ -1321,34 +1594,17 @@ async def admit_hub(
     return run.hub
 
 
-def run_of(client: VcoClient) -> LiveRun:  # noqa: C901 (existing: split it when it next changes)
-    """The run of *client*, made on the first call.
+def _guarded_update(
+    run: LiveRun, update: Callable[..., Awaitable[AnyStoredModule | None]]
+) -> Callable[..., Awaitable[AnyStoredModule | None]]:
+    """*update*, the client's module update, checked before it is sent.
 
-    That call also puts the guard on the client.
+    ``LiveRun.check_update`` checks it.
 
-    The guard is on the client's own methods, so a test that forgets every
-    helper is refused too. It covers every portal call the client makes
-    (``portal``, ``portal_list``, ``portal_paginated`` and
-    ``portal_paginated_list``): a read passes, and a write passes only from
-    ``update_configuration_module`` or ``insert_configuration_module`` (inside
-    a ``restoring`` block, to a module that block covers), from
-    ``delete_module``, or from a role call of the hub ``admit_hub`` admitted
-    (inside a ``restoring`` block on the device settings module of a marked
-    profile). A refused write carries its codes alone: the
-    Orchestrator's validation text quotes the names of what it refuses, and a
-    refused write in a test would put them in the test output.
-
-    It does not cover a second client a test builds itself, nor the websocket
-    calls of a client (remote diagnostics).
+    An update that passes may send its method (``_sends``), and ``run.seen``
+    then holds the module as the Orchestrator answered, or ``_UNKNOWN``. A
+    refusal of the Orchestrator carries its codes alone.
     """
-    run = _RUNS.get(client)
-    if run is not None:
-        return run
-    run = LiveRun()
-    _RUNS[client] = run
-    update = client.update_configuration_module
-    insert = client.insert_configuration_module
-    paginated = client.portal_paginated
 
     async def guarded_update(
         request: UpdateConfigurationModule, *, level: ConfigContext | None = None
@@ -1376,15 +1632,49 @@ def run_of(client: VcoClient) -> LiveRun:  # noqa: C901 (existing: split it when
         )
         return stored
 
+    return guarded_update
+
+
+def _guarded_insert(
+    run: LiveRun,
+    insert: Callable[..., Awaitable[InsertConfigurationModuleResult | AnyStoredModule]],
+) -> Callable[..., Awaitable[InsertConfigurationModuleResult | AnyStoredModule]]:
+    """*insert*, the client's module insert, checked before it is sent.
+
+    ``LiveRun.check_insert`` checks it.
+
+    An insert that passes may send its method (``_sends``); the module it made
+    is then one the run inserted (``run.inserted``, for the block open on its
+    configuration and name), and ``run.seen`` holds it as the Orchestrator
+    answered, or ``_UNKNOWN``. A refusal of the Orchestrator carries its codes
+    alone.
+
+    An insert that ends with no answer on what became of it
+    (``_left_unanswered``: cut off on its way or on the way back, interrupted
+    or cancelled mid-call, answered with an HTTP status of 500 or above, or
+    with an answer that cannot be read) may be stored all the same, and
+    nothing gave the ID of what it made: the run keeps the block it was sent
+    in (``run.unanswered_inserts``), and the restore of that block looks for
+    the module. Any other failed insert leaves no record: one that never
+    began or was not transmitted, and one the Orchestrator answered with an
+    error or with an HTTP status below 500.
+    """
+
     async def guarded_insert(
         request: InsertConfigurationModule, *, level: ConfigContext | None = None
     ) -> InsertConfigurationModuleResult | AnyStoredModule:
-        run.check_replace(request.configuration_id, request.name, "an insert")
+        run.check_insert(request.configuration_id, request.name)
+        sent = run.sent
         try:
             with _sends("configuration/insertConfigurationModule"):
                 inserted = await insert(request, level=level)
-        except VcoOperationError as exc:
-            raise _redacted(exc) from None
+        except BaseException as exc:
+            block = run.block_for(request.configuration_id, request.name)
+            if block is not None and _left_unanswered(exc, begun=run.sent != sent):
+                run.unanswered_inserts.append(block)
+            if isinstance(exc, VcoOperationError):
+                raise _redacted(exc) from None
+            raise
         block = run.block_for(request.configuration_id, request.name)
         if block is not None:
             run.inserted[inserted.id_] = block
@@ -1395,6 +1685,86 @@ def run_of(client: VcoClient) -> LiveRun:  # noqa: C901 (existing: split it when
         )
         return inserted
 
+    return guarded_insert
+
+
+_deleting_again: ContextVar[int | None] = ContextVar(
+    "live_support_deleting_again", default=None
+)
+"""The ID of the deleted module whose delete ``delete_again`` checked and now sends."""
+
+
+def _guarded_delete(
+    run: LiveRun, delete: Callable[..., Awaitable[RowsModifiedConfirmation]]
+) -> Callable[..., Awaitable[RowsModifiedConfirmation]]:
+    """*delete*, the client's module delete, checked before it is sent.
+
+    ``LiveRun.check_own_delete`` checks it, or ``delete_again`` did.
+
+    It is the one place that sends ``configuration/deleteConfigurationModule``
+    (``_sends``): ``delete_module`` and ``delete_again`` call the client's
+    method, and so does a pipeline's ``revert``. The run's records then say
+    whether the module is deleted, or may be. A refusal of the Orchestrator
+    carries its codes alone. The answer is returned as it came: its ``error``
+    is the Orchestrator's text, which a test does not print.
+    """
+
+    async def send(request: DeleteConfigurationModule) -> RowsModifiedConfirmation:
+        try:
+            with _sends("configuration/deleteConfigurationModule"):
+                return await delete(request)
+        except VcoOperationError as exc:
+            raise _redacted(exc) from None
+
+    async def guarded_delete(
+        request: DeleteConfigurationModule,
+    ) -> RowsModifiedConfirmation:
+        module_id = request.id_
+        if _deleting_again.get() == module_id:
+            # An answer already said this module is deleted: whatever this one
+            # says, no record changes.
+            return await send(request)
+        block = run.check_own_delete(module_id)
+        unsure, sent = run.maybe_deleted.get(module_id), run.sent
+        # How each case ends. From the send on, the module may be gone whatever
+        # happens to the answer, so it is in ``maybe_deleted`` first. An answer
+        # that says it is deleted (no error, and a row count that is not 0)
+        # leaves the records as ``delete_module`` always left them: in
+        # ``deleted``, out of ``inserted`` and ``seen``. An answer that says it
+        # is not (an error, or a count of 0), and any exception once the call
+        # was sent, leave it in ``maybe_deleted``, ``inserted`` and ``seen``: a
+        # restore that finds the module still there deletes it (one this run
+        # inserted) or writes the original over it, and one that finds it gone
+        # inserts the original again, or finds the layer as it was. An exception
+        # with nothing sent (``run.sent`` unchanged) leaves the mark as it was.
+        # The mark goes when a restore sees the module, and with its block.
+        run.maybe_deleted[module_id] = block
+        try:
+            answer = await send(request)
+        except BaseException:
+            if run.sent == sent:
+                _ = run.maybe_deleted.pop(module_id, None)
+                if unsure is not None:
+                    run.maybe_deleted[module_id] = unsure
+            raise
+        if not answer.error and answer.rows != 0:
+            _ = run.maybe_deleted.pop(module_id, None)
+            run.deleted[module_id] = block
+            _ = run.inserted.pop(module_id, None)
+            _ = run.seen.pop(module_id, None)
+        return answer
+
+    return guarded_delete
+
+
+def _checked_pages(
+    paginated: Callable[..., AsyncGenerator[list[Any]]],
+) -> Callable[..., AsyncGenerator[list[Any]]]:
+    """*paginated*, the client's ``portal_paginated``, with ``check_call`` before it.
+
+    It is a generator, so the check runs when the first page is asked for.
+    """
+
     async def guarded_paginated[T: BaseModel](
         method: str, request: PaginatedVcoModel, item_type: type[T]
     ) -> AsyncGenerator[list[T]]:
@@ -1403,12 +1773,51 @@ def run_of(client: VcoClient) -> LiveRun:  # noqa: C901 (existing: split it when
             async for page in pages:
                 yield page
 
+    return guarded_paginated
+
+
+def run_of(client: VcoClient) -> LiveRun:
+    """The run of *client*, made on the first call.
+
+    That call also puts the guard on the client.
+
+    The guard is on the client's own methods, so a test that forgets every
+    helper is refused too. It covers every portal call the client makes
+    (``portal``, ``portal_list``, ``portal_paginated`` and
+    ``portal_paginated_list``): a read passes, and a write passes only from
+    ``update_configuration_module``, ``insert_configuration_module`` or
+    ``delete_configuration_module`` (inside a ``restoring`` block, to a module
+    that block covers; an insert and a delete only of a firewall or a QoS
+    module, where
+    that block's edge is marked for deleting and inserting modules, or from
+    ``delete_again`` for a module deleted in a block that is still open), or
+    from a role call of the hub ``admit_hub`` admitted
+    (inside a ``restoring`` block on the device settings module of a marked
+    profile). A refused write carries its codes alone: the
+    Orchestrator's validation text quotes the names of what it refuses, and a
+    refused write in a test would put them in the test output.
+
+    It does not cover a second client a test builds itself, nor the websocket
+    calls of a client (remote diagnostics).
+    """
+    run = _RUNS.get(client)
+    if run is not None:
+        return run
+    run = LiveRun()
+    _RUNS[client] = run
     # Instance attributes, which shadow the methods: a spy a test puts over them
     # (``monkeypatch.setattr``) wraps these.
     attributes = vars(client)
-    attributes["update_configuration_module"] = guarded_update
-    attributes["insert_configuration_module"] = guarded_insert
-    attributes["portal_paginated"] = guarded_paginated
+    attributes["update_configuration_module"] = _guarded_update(
+        run, client.update_configuration_module
+    )
+    attributes["insert_configuration_module"] = _guarded_insert(
+        run, client.insert_configuration_module
+    )
+    attributes["delete_configuration_module"] = _guarded_delete(
+        run, client.delete_configuration_module
+    )
+    attributes["portal_paginated"] = _checked_pages(client.portal_paginated)
     for name, (method, kind) in ROLE_CALLS.items():
         attributes[name] = _guarded_role_call(run, getattr(client, name), method, kind)
     for name in ("portal", "portal_list", "portal_paginated_list"):
@@ -1548,35 +1957,48 @@ async def effective_data(
 # ---------------------------------------------------------------------------
 
 
-class DeleteConfigurationModule(VcoModel):
-    """``configuration/deleteConfigurationModule``.
-
-    The library has no wrapper for it.
-    """
-
-    id_: Annotated[int, Alias("id")]
-    enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
-
-
-async def delete_module(site: Site, module_id: int) -> None:
-    run = run_of(site.client)
-    run.check_delete(site.configuration_id, site.name.value, module_id)
+def _delete_request(site: Site, module_id: int) -> DeleteConfigurationModule:
     request = DeleteConfigurationModule(id_=module_id)
     if site.enterprise_id is not None:
         request.enterprise_id = site.enterprise_id
-    try:
-        with _sends("configuration/deleteConfigurationModule"):
-            result = await site.client.portal(
-                "configuration/deleteConfigurationModule",
-                request,
-                RowsModifiedConfirmation,
-            )
-    except VcoOperationError as exc:
-        raise _redacted(exc) from None
+    return request
+
+
+async def delete_module(site: Site, module_id: int) -> None:
+    """Delete module *module_id* of *site*; an answer with an error fails the test.
+
+    The site is checked here (``LiveRun.check_delete``); the delete is then
+    sent through the client's own method, whose guard checks the module by its
+    ID and keeps the run's records (``_guarded_delete``).
+    """
+    run = run_of(site.client)
+    run.check_delete(site.configuration_id, site.name.value, module_id)
+    result = await site.client.delete_configuration_module(
+        _delete_request(site, module_id)
+    )
     check(not result.error, f"deleting the {site.name.value} module was refused")
-    run.deleted.add(module_id)
-    _ = run.inserted.pop(module_id, None)
-    _ = run.seen.pop(module_id, None)
+
+
+async def delete_again(site: Site, module_id: int) -> RowsModifiedConfirmation:
+    """Send one more delete of a module this run deleted, and return the answer.
+
+    It is for the one test that records what the Orchestrator answers to the
+    delete of a module that is gone. A block must be open on *site*, marked
+    for deleting and inserting modules, and an answer to this run must have
+    said that *module_id* was deleted inside that block, which is still open
+    (``LiveRun.check_delete_again``): no other delete is sent this way. The
+    answer's ``error`` is the
+    Orchestrator's text: read whether it is there, and do not print it.
+    """
+    run = run_of(site.client)
+    run.check_delete_again(site.configuration_id, site.name.value, module_id)
+    token = _deleting_again.set(module_id)
+    try:
+        return await site.client.delete_configuration_module(
+            _delete_request(site, module_id)
+        )
+    finally:
+        _deleting_again.reset(token)
 
 
 async def insert_module(site: Site, data: object, refs: object) -> None:
@@ -1612,6 +2034,12 @@ class Original:
     data: object
     refs: object
     """Only to insert the module again if a test deleted it."""
+    beside: frozenset[int] = frozenset()
+    """The IDs of the other modules of the name, where the read that found this
+    one listed more than one. The block deals with this one alone; the others
+    are kept so that a restore does not take one of them for a module this run
+    inserted (``LiveRun.take_unanswered``).
+    """
 
 
 SEGMENT_DRIFT_KEY = "routeMapsVersion"
@@ -1812,14 +2240,20 @@ _ = atexit.register(report_leftover_backups, _print_to_stderr)
 
 
 async def capture(site: Site) -> Original | None:
-    """The raw data and refs of the module now, or None if the layer lacks it."""
-    module = await site.read()
-    if module is None:
+    """The raw data and refs of the module now, or None if the layer lacks it.
+
+    The module is the first of the name that the layer lists, as ``Site.read``
+    gives it; the IDs of any others of the name go with it (``Original.beside``).
+    """
+    held = [module for module in await site.layer() if module.name == site.name]
+    if not held:
         return None
+    module = held[0]
     return Original(
         module_id=module.id_,
         data=copy.deepcopy(module.raw_data),
         refs=copy.deepcopy(module.raw_refs),
+        beside=frozenset(other.id_ for other in held[1:]),
     )
 
 
@@ -1866,20 +2300,49 @@ async def write_data(site: Site, module: AnyStoredModule, data: object) -> None:
     )
 
 
-async def restore(site: Site, original: Original | None) -> None:
+async def restore(site: Site, original: Original | None, block: Block) -> None:
     """Put the module back as *original* and check that it is.
 
-    Undo only what this run did.
+    Undo only what this run did. *block* is the open block being restored.
 
     The raw data goes back as written, under the module's current version. A
     module this run inserted is deleted; one it deleted is inserted again; one
     it wrote gets the original data. Where the module is not as the
     Orchestrator last answered this run (another writer changed, added or
     removed it) nothing is written and the test fails.
+
+    One module that the run was never told of counts as its own: the module
+    that an insert left which ended with no answer on what became of it
+    (``_left_unanswered``: cut off, interrupted, answered with an HTTP status
+    of 500 or above, or with an answer that cannot be read; not an insert the
+    Orchestrator answered with an error, nor one that was not transmitted).
+    Where such an insert was sent in this block, the module now there was not
+    there when the block opened, it has a higher ID than every module this run
+    has found, inserted or deleted by the time of this restore, and, where the
+    block found a module, this run deleted that one or sent a delete of it,
+    the module is taken for the one that insert stored
+    (``LiveRun.take_unanswered``) and undone as a module this run inserted:
+    deleted where the block found none, the original's data written over it
+    where the block found one. That rests on an assumption nothing here can
+    check: that no other writer inserted that module on the same marked edge
+    while the block was open. Where any of those conditions fails, the module
+    is left as it is and the test fails, as for any module of another writer.
+
+    One module of the name is read, and one is undone. If two inserts that got
+    no answer each left a module, the other stays as the test left it: where
+    the block found none, the check that the layer is empty again fails for
+    it; where the block found one, only the module read is checked, as for any
+    second module of a name.
     """
     run = run_of(site.client)
     name = site.name.value
     current = await site.read()
+    if current is not None:
+        # It is there: a delete of it that was not answered as done did nothing.
+        _ = run.maybe_deleted.pop(current.id_, None)
+        # And it may be what an insert that got no answer left.
+        beside = original.beside if original is not None else frozenset[int]()
+        run.take_unanswered(block, current.id_, beside)
     if original is None:
         if current is None:
             return
@@ -1897,7 +2360,8 @@ async def restore(site: Site, original: Original | None) -> None:
         return
     if current is None:
         check(
-            original.module_id in run.deleted,
+            original.module_id in run.deleted
+            or original.module_id in run.maybe_deleted,
             f"restore: the {name} module is gone and this run did not delete it; "
             "it was not put back; check who deleted it, and insert it again "
             "from the saved original if it is wanted",
@@ -1970,12 +2434,33 @@ def interrupts_held() -> Generator[None]:
             signal.raise_signal(signal.SIGINT)
 
 
+def _ended_with(error: BaseException) -> str:
+    """How a test's writes ended, for the failure of the restore after them to say.
+
+    As ``failure_text`` gives the error, or in the words of a failure or a
+    skip the suite worded itself; never the error's own text.
+    """
+    if isinstance(error, pytest.skip.Exception):
+        return f"the test had skipped before that ({error})"
+    return f"the test had failed before that ({failure_text(error) or error})"
+
+
 @asynccontextmanager
 async def restoring(site: Site) -> AsyncGenerator[Original | None]:
     """Run a test's writes to *site*'s module and, however they end, undo them.
 
     The block is open for the client's write guard from the backup until the
     restore is done, so that the restore's own writes are covered.
+
+    A restore that fails is one worded failure with no exception chained to
+    it: a chained exception is reported with its own text, which can quote the
+    lab. It gives the restore's error as ``failure_text`` does, where the suite
+    did not word it (a refused write as its class, operation and codes; by
+    its class alone where ``failure_text`` gives nothing), then says how the
+    test's own writes had ended, where they ended
+    with an error (``_ended_with``), then where the original is saved. Only
+    this block knows which exception is the test's own: the chain a report is
+    made from holds the restore's errors and the causes of the test's as well.
     """
     run = run_of(site.client)
     require_writes(run)
@@ -1986,26 +2471,35 @@ async def restoring(site: Site) -> AsyncGenerator[Original | None]:
         run.seen[original.module_id] = copy.deepcopy(original.data)
     entry: Block = (site, original.module_id if original is not None else None)
     run.open.append(entry)
+    ended: BaseException | None = None
     try:
         try:
             yield original
+        except BaseException as error:
+            ended = error
+            raise
         finally:
             with interrupts_held():
                 try:
-                    await restore(site, original)
+                    await restore(site, original, entry)
                 except (Exception, pytest.fail.Exception) as exc:
-                    if backup is None:
+                    if backup is None and ended is None:
                         raise
-                    what = (
+                    said = [
                         str(exc)
                         if isinstance(exc, (pytest.fail.Exception, LiveSuiteError))
-                        else type(exc).__name__
-                    )
-                    pytest.fail(
-                        f"{what}; the original {site.name.value} module is saved "
-                        f"at {backup}",
-                        pytrace=False,
-                    )
+                        else failure_text(exc) or type(exc).__name__
+                    ]
+                    if ended is not None:
+                        said.append(_ended_with(ended))
+                    if backup is not None:
+                        said.append(
+                            f"the original {site.name.value} module is saved at "
+                            f"{backup}"
+                        )
+                    raise pytest.fail.Exception(
+                        "; ".join(said), pytrace=False
+                    ) from None
                 else:
                     if backup is not None:
                         backup.unlink(missing_ok=True)
@@ -2377,6 +2871,46 @@ def without_return_data(client: VcoClient, monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(client, "update_configuration_module", update_without)
     monkeypatch.setattr(client, "insert_configuration_module", insert_without)
+
+
+def losing_the_insert_answer(
+    client: VcoClient, monkeypatch: pytest.MonkeyPatch, *, sent: bool
+) -> list[int]:
+    """Have the next module insert of *client* end as one whose answer is lost.
+
+    The caller gets ``httpx.ReadTimeout``, as from a request whose answer did
+    not arrive: the client passes a transport error on as it is, and a save
+    then keeps the module new and its name in ``state.unconfirmed_inserts``.
+
+    With *sent*, the insert is sent first, through the client's method as it
+    is now, the guard of ``run_of`` included: the guard checks it and records
+    the module as one this run inserted, and its ID is appended to the list
+    returned. Without *sent*, nothing is sent: the request never left.
+
+    Only the next insert is lost. Every later one goes through as it would
+    without this, so that the insert a ``restoring`` block puts a deleted
+    module back with is sent and answered. The test's ``monkeypatch`` takes
+    the wrapper off at its end; pass the patch of a ``monkeypatch.context()``
+    block to take it off sooner.
+    """
+    inserted: list[int] = []
+    insert = client.insert_configuration_module
+    lost = False
+
+    async def losing(
+        request: InsertConfigurationModule, *, level: ConfigContext | None = None
+    ) -> InsertConfigurationModuleResult | AnyStoredModule:
+        nonlocal lost
+        if lost:
+            return await insert(request, level=level)
+        lost = True
+        if sent:
+            stored = await insert(request, level=level)
+            inserted.append(stored.id_)
+        raise httpx.ReadTimeout("the answer to the insert was lost")
+
+    monkeypatch.setattr(client, "insert_configuration_module", losing)
+    return inserted
 
 
 def read_backs(answers: Sequence[Answer]) -> int:

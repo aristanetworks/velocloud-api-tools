@@ -9,18 +9,65 @@ not walked, so a firewall of thousands of rules costs nothing to look through.
 
 The one list that holds segment entries is the root's ``segments``: the
 fields below one of its items come with that item as their ``segment``.
+
+What a class can hold is read from the classes alone: ``models_below`` is
+every model class below one, and ``can_hold`` and ``can_hold_field`` are the
+two questions a walk's ``holds`` asks of it (whether a class can hold a
+model of a given class, or a field a predicate accepts).
 """
 
+import functools
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import cast
 
 from pydantic.fields import FieldInfo
 
-from .base import VcoModel, is_dict, is_list
+from .base import VcoModel, field_models, is_dict, is_list
 from .fields import get_key_spec
 from .owned import unwrap
 from .rebase import Key, Path, item_key
+
+
+@functools.cache
+def models_below(model_cls: type[VcoModel]) -> tuple[type[VcoModel], ...]:
+    """*model_cls* and every model class a model of it can hold, at any depth.
+
+    *model_cls* comes first, and each class once. The classes are read from
+    the declared field types (``field_models``: through ``Annotated``, unions,
+    ``list``, ``dict`` and ``tuple``), so a subclass that adds a field below a
+    field declared with a class that has none is not found. Computed once per
+    class.
+    """
+    found: dict[type[VcoModel], None] = {}
+    pending = [model_cls]
+    while pending:
+        current = pending.pop()
+        if current in found:
+            continue
+        found[current] = None
+        for field_info in current.model_fields.values():
+            pending.extend(field_models(field_info))
+    return tuple(found)
+
+
+def can_hold(model_cls: type[VcoModel], target: type[VcoModel]) -> bool:
+    """Whether a model of *model_cls* is a *target* or can hold one, at any depth."""
+    return target in models_below(model_cls)
+
+
+def can_hold_field(
+    model_cls: type[VcoModel], marked: Callable[[FieldInfo], bool]
+) -> bool:
+    """Whether a model of *model_cls*, or one below it, has a field *marked* accepts.
+
+    The model below may be at any depth.
+    """
+    return any(
+        marked(field_info)
+        for below in models_below(model_cls)
+        for field_info in below.model_fields.values()
+    )
 
 
 @dataclass(frozen=True)

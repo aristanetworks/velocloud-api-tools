@@ -2,9 +2,10 @@
 
 import pyvelo
 import pyvelo.client
+import pyvelo.config
 import pyvelo.core
 from pyvelo.client import exceptions
-from pyvelo.core import base, fields, merge, patch, rebase
+from pyvelo.core import base, fields, mending, merge, patch, rebase
 
 
 class TestValidationReexports:
@@ -68,3 +69,14 @@ class TestPatchToolReexports:
     def test_the_kind_of_a_patch_error_comes_from_pyvelo_core(self) -> None:
         assert pyvelo.core.PatchErrorKind is patch.PatchErrorKind
         assert "PatchErrorKind" in pyvelo.core.__all__
+
+
+class TestMendingReexports:
+    def test_the_mending_names_come_from_pyvelo_core_and_the_type_from_pyvelo_config(
+        self,
+    ) -> None:
+        for name in ("MendingKind", "MendingPatch", "backhaul_hub_mending"):
+            assert getattr(pyvelo.core, name) is getattr(mending, name), name
+            assert name in pyvelo.core.__all__, name
+        assert pyvelo.config.MendingPatch is mending.MendingPatch
+        assert "MendingPatch" in pyvelo.config.__all__

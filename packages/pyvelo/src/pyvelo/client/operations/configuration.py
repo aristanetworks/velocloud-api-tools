@@ -61,6 +61,7 @@ from pyvelo.client.schemas.configuration import (
     ConfigurationModuleList,
     ConfigurationModuleVersion,
     DeleteConfiguration,
+    DeleteConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
     GetAllApplicationsResult,
@@ -514,6 +515,54 @@ def _require_this_module[M: ConfigurationModuleBase](
     return cast("M", stored)  # _not_this_module found it of the class of module
 
 
+async def find_named_module(
+    client: VcoClientBaseProtocol,
+    module: ConfigurationModuleBase,
+    plan: ModulePlan,
+    *,
+    enterprise_id: int | None = None,
+) -> ConfigurationModuleBase | None:
+    """The module of the plan's name the configuration of *module* holds, or None.
+
+    It is read as ``write_module`` with ``if_absent`` reads it before it sends
+    an insert again: one read of the configuration with its modules; of
+    several rows of the name, the one with the highest ID, parsed at the
+    config level of *module*. None when *module* has no ``configuration_id``
+    or the configuration holds no row of the name. Raises
+    ``WriteOutcomeUnknownError`` when the configuration read, or the row
+    found, does not parse; an error of the read request itself propagates.
+    :func:`check_found_insert` says whether the module found is *module*.
+    """
+    return await _read_named(client, module, plan, enterprise_id)
+
+
+def check_found_insert[M: ConfigurationModuleBase](
+    module: M, plan: ModulePlan, found: ConfigurationModuleBase
+) -> ModuleWrite[M]:
+    """*found* as the insert of *plan* for *module*, checked as an insert's answer is.
+
+    *plan* must be an insert: one that inserts nothing has no change to look
+    for, and every module of the right class and configuration would pass
+    (``ValueError`` before any check; ``write_module`` sends nothing for it).
+    It is the check ``write_module`` with ``if_absent`` makes of the module
+    it finds (:func:`find_named_module`): the module's class and
+    configuration, then whether everything the plan inserts is stored
+    (``check_module_write``). What *found* holds beyond the plan is not a
+    failure here: it is in the write's ``server_changes``. Returns the write
+    when nothing is missing. Raises ``WriteOutcomeUnknownError`` for a module
+    of another class or configuration, and the ``ModuleWriteError`` of
+    ``check_module_write`` (``WriteNotAppliedError``, ``RefsDroppedError``)
+    when something the plan inserts is missing or different.
+    """
+    if plan.operation != "insert":
+        raise ValueError(
+            f"the plan of {plan.name} is {plan.operation!r}, not an insert, so "
+            "there is nothing to check a module found by name against"
+        )
+    stored = _require_this_module(module, plan, found, answer="row")
+    return check_module_write(module, plan, stored, answer="row")
+
+
 class ConfigurationMixin(Protocol):
     """Operations for configuration/ API endpoints."""
 
@@ -555,6 +604,22 @@ class ConfigurationMixin(Protocol):
         """Delete a configuration/profile from the enterprise."""
         return await self.portal(
             "configuration/deleteConfiguration",
+            request,
+            RowsModifiedConfirmation,
+        )
+
+    @domain_tag(CONFIG)
+    async def delete_configuration_module(
+        self: VcoClientBaseProtocol, request: DeleteConfigurationModule
+    ) -> RowsModifiedConfirmation:
+        """Delete one module of a configuration, by the module's ID.
+
+        The result holds the answer's ``error`` and ``rows``, each None when
+        the answer has none; where the VCO gives a row count, 0 means nothing
+        was deleted.
+        """
+        return await self.portal(
+            "configuration/deleteConfigurationModule",
             request,
             RowsModifiedConfirmation,
         )
@@ -791,7 +856,7 @@ class ConfigurationMixin(Protocol):
         return await _check_stale(self, module, plan, enterprise_id)
 
     async def write_module[M: ConfigurationModuleBase](  # noqa: C901, PLR0912, PLR0913, PLR0915 (existing: split it when it next changes)
-        self: VcoClientBaseProtocol,
+        self: _ConfiguringClient,
         module: M,
         plan: ModulePlan,
         *,
@@ -1041,7 +1106,7 @@ class ConfigurationMixin(Protocol):
 
     @domain_tag(CONFIG)
     async def update_module[M: ConfigurationModuleBase](  # noqa: PLR0913 (existing: split it when it next changes)
-        self: VcoClientBaseProtocol,
+        self: _ConfiguringClient,
         module: M,
         data: DeviceSettingsData
         | WanData
@@ -1218,3 +1283,15 @@ class ConfigurationMixin(Protocol):
             request,
             GetAllApplicationsResult,
         )
+
+
+if TYPE_CHECKING:
+
+    class _ConfiguringClient(VcoClientBaseProtocol, ConfigurationMixin, Protocol):
+        """The transport and the configuration operations, together.
+
+        The ``self`` of a configuration operation that calls another one on
+        it: ``write_module`` sends its insert or update through
+        ``insert_configuration_module`` and ``update_configuration_module``,
+        and ``update_module`` writes through ``write_module``.
+        """

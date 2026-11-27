@@ -16,6 +16,7 @@ The configuration pipeline and its state (:class:`ConfigPipeline`,
 """
 
 from pyvelo.client import (
+    BackhaulWithoutHubError,
     ComposedModuleError,
     ConfigConflictError,
     DanglingReferenceError,
@@ -70,6 +71,7 @@ __all__ = [
     # Concrete resolvers
     "AddressGroupResolver",
     "ApplicationResolver",
+    "BackhaulWithoutHubError",
     # Resolver framework
     "BaseResolver",
     "ComposedModuleError",

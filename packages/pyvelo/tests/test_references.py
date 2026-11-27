@@ -1,11 +1,11 @@
-"""``references``, ``provided`` and ``check_references``.
+"""``references``, ``provided``, ``check_references`` and the patches that mend a hub.
 
 What the data refers to, what it provides, and which references name nothing.
 """
 
-import json
+import dataclasses
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import segment_helpers
@@ -14,7 +14,8 @@ from pyvelo.client.exceptions import DanglingReferenceError
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
-from pyvelo.core import Key, Path, Profile, VcoModel
+from pyvelo.config.reference_mending import hub_reference_mending
+from pyvelo.core import Key, MendingPatch, Path, Profile, VcoModel, backhaul_hub_mending
 from pyvelo.core.references import (
     Reference,
     ReferenceFindings,
@@ -25,6 +26,7 @@ from pyvelo.core.references import (
     provided,
     reference_text,
     references,
+    removal_patch,
     union,
 )
 
@@ -414,73 +416,178 @@ def test_the_sources_are_a_sentence_of_their_own() -> None:
     assert "reference; " not in str(both)
 
 
-# -- the advice for a hub that is no backhaul hub -----------------------------------
-
-
-def _advice(message: str) -> dict[str, Any]:
-    """The patch the message gives: the JSON object that starts at ``{"segments"``."""
-    start = message.index('{"segments"')
-    patch, _ = json.JSONDecoder().raw_decode(message[start:])
-    return patch
+# -- the patches that mend a hub reference ------------------------------------------
 
 
 def _dangling_hub(
-    *, named: bool, segment: segment_helpers.Segment = GUEST
-) -> tuple[Reference, ...]:
+    *,
+    named: bool = True,
+    segments: tuple[segment_helpers.Segment, ...] = (GUEST,),
+    rules: tuple[str, ...] = ("Web",),
+) -> tuple[QosData[Profile], tuple[Reference, ...]]:
+    """QoS data whose *rules* in each of *segments* backhaul to Hub-B, and its refs.
+
+    Hub-B is no backhaul hub of any segment (``NOW_HUBS``), so every reference
+    dangles.
+    """
     entry = backhaul_entry(HUB_B, SERVICE)
     if not named:
         del entry["name"]
-    data = qos_data((segment, [backhaul_rule("Web", entry)]))
-    findings = _check(data, None, NOW_HUBS, NOW_HUBS, "QOS")
-    return findings.dangling
+    data = qos_data(
+        *((s, [backhaul_rule(rule, entry) for rule in rules]) for s in segments)
+    )
+    return data, _check(data, None, NOW_HUBS, NOW_HUBS, "QOS").dangling
 
 
-def test_the_advice_for_a_hub_adds_it_to_the_hub_list_and_the_backhaul_list_of_its_segment() -> (  # noqa: E501 (a test's name)
-    None
-):
-    (reference,) = _dangling_hub(named=True)
-
-    patch = _advice(str(DanglingReferenceError([reference])))
-
-    entry = {"_op": "add", "name": HUB_B.name}
-    assert patch == {
-        "segments": {
-            GUEST[1]: {
-                "vpn": {
-                    "enabled": True,
-                    "edgeToEdgeHub": {"enabled": True, "vpnHubs": {"+": entry}},
-                    "backHaulEdges": {"+": entry},
-                }
-            }
-        }
-    }
+def _out_of_the_rule(hub: str, segment: str = GUEST[1]) -> dict[str, Any]:
+    """The patch that deletes *hub* from the backhaul entries of rule ``Web``."""
+    entries = {"backhaulEdges": {hub: {"_op": "delete"}}}
+    action = {"edge2EdgeRouteAction": {"routeCfg": entries}}
+    return {"segments": {segment: {"rules": {"Web": {"action": action}}}}}
 
 
-def test_the_advice_for_a_hub_with_no_name_gives_its_logical_id() -> None:
-    (reference,) = _dangling_hub(named=False)
-
-    patch = _advice(str(DanglingReferenceError([reference])))
-
-    entry = {"_op": "add", "logicalId": HUB_B.logical_id}
-    vpn = patch["segments"][GUEST[1]]["vpn"]
-    assert vpn["backHaulEdges"] == {"+": entry}
-    assert vpn["edgeToEdgeHub"]["vpnHubs"] == {"+": entry}
-
-
-def test_the_advice_is_for_the_first_hub_reference_and_its_own_segment() -> None:
-    other = _dangling_hub(named=True, segment=GLOBAL)
-    (first,) = _dangling_hub(named=True)
-    message = str(DanglingReferenceError([first, *other]))
-
-    assert list(_advice(message)["segments"]) == [GUEST[1]]
+def _mending(
+    data: VcoModel,
+    dangling: tuple[Reference, ...],
+    *,
+    hub_lists: dict[int, set[object]] | None = None,
+    target_type: Literal["edge", "profile"] = "profile",
+) -> tuple[MendingPatch, ...]:
+    return hub_reference_mending(
+        dangling, {"QOS": data}, hub_lists or {}, target_type=target_type
+    )
 
 
-def test_the_advice_for_an_edge_says_the_profiles_device_settings_are_edited() -> None:
-    (reference,) = _dangling_hub(named=True)
+def test_the_removal_patch_deletes_the_entry_from_its_rule() -> None:
+    data, (reference,) = _dangling_hub()
 
-    on_profile = str(DanglingReferenceError([reference]))
-    on_edge = str(DanglingReferenceError([reference], on_edge=True))
+    assert removal_patch(data, reference) == _out_of_the_rule(HUB_B.name)
+
+
+def test_the_removal_patch_for_an_entry_with_no_name_gives_its_logical_id() -> None:
+    data, (reference,) = _dangling_hub(named=False)
+
+    assert removal_patch(data, reference) == _out_of_the_rule(HUB_B.logical_id)
+
+
+def test_there_is_no_removal_patch_for_a_path_that_names_no_item() -> None:
+    data, (reference,) = _dangling_hub()
+    parts = list(reference.path.parts)
+    parts[parts.index(Key("Web"))] = Key("Nope")
+
+    assert removal_patch(data, dataclasses.replace(reference, path=Path(parts))) is None
+
+
+def test_the_member_patch_makes_the_hub_a_backhaul_hub_of_its_segment() -> None:
+    data, dangling = _dangling_hub()
+
+    (_, add) = _mending(data, dangling)
+
+    assert add == backhaul_hub_mending(GUEST[1], HUB_B.name)
+
+
+def test_the_member_patch_for_an_entry_with_no_name_gives_its_logical_id() -> None:
+    data, dangling = _dangling_hub(named=False)
+
+    (_, add) = _mending(data, dangling)
+
+    assert add == backhaul_hub_mending(GUEST[1], HUB_B.logical_id, by_logical_id=True)
+
+
+def test_the_member_patch_leaves_the_hub_list_alone_when_the_hub_is_in_it() -> None:
+    data, dangling = _dangling_hub()
+
+    (_, add) = _mending(data, dangling, hub_lists={GUEST[0]: {HUB_B_ID}})
+
+    assert add == backhaul_hub_mending(GUEST[1], HUB_B.name, in_hub_list=True)
+
+
+def test_two_rules_of_one_segment_need_one_member_patch() -> None:
+    data, dangling = _dangling_hub(rules=("Web", "Mail"))
+
+    mending = _mending(data, dangling)
+
+    assert [m.kind for m in mending] == [
+        "remove_reference",
+        "remove_reference",
+        "add_member",
+    ]
+
+
+def test_two_rules_that_name_one_hub_two_ways_need_one_member_patch() -> None:
+    named = backhaul_entry(HUB_B, SERVICE)
+    unnamed = {key: value for key, value in named.items() if key != "name"}
+    data = qos_data(
+        (GUEST, [backhaul_rule("Web", named), backhaul_rule("Mail", unnamed)])
+    )
+    dangling = _check(data, None, NOW_HUBS, NOW_HUBS, "QOS").dangling
+
+    mending = _mending(data, dangling)
+
+    assert [m.kind for m in mending] == [
+        "remove_reference",
+        "remove_reference",
+        "add_member",
+    ]
+    assert mending[2] == backhaul_hub_mending(GUEST[1], HUB_B.name)
+
+
+def test_the_same_rule_in_two_segments_needs_a_member_patch_for_each() -> None:
+    data, dangling = _dangling_hub(segments=(GLOBAL, GUEST))
+
+    mending = _mending(data, dangling)
+
+    assert [m.kind for m in mending] == [
+        "remove_reference",
+        "remove_reference",
+        "add_member",
+        "add_member",
+    ]
+    assert [m.patch for m in mending[:2]] == [
+        _out_of_the_rule(HUB_B.name, GLOBAL[1]),
+        _out_of_the_rule(HUB_B.name, GUEST[1]),
+    ]
+    assert list(mending[2:]) == [
+        backhaul_hub_mending(GLOBAL[1], HUB_B.name),
+        backhaul_hub_mending(GUEST[1], HUB_B.name),
+    ]
+
+
+def test_a_segment_reference_gets_no_patch() -> None:
+    segment_data = _segment_data(7)
+    (segment,) = _check(segment_data, None, NOW, NOW).dangling
+    data, dangling = _dangling_hub()
+    edited = {"deviceSettings": segment_data, "QOS": data}
+
+    alone = hub_reference_mending([segment], edited, {}, target_type="profile")
+    both = hub_reference_mending(
+        [segment, *dangling], edited, {}, target_type="profile"
+    )
+
+    assert alone == ()
+    assert both == _mending(data, dangling)
+
+
+def test_on_an_edge_the_member_patch_is_for_the_profile() -> None:
+    data, dangling = _dangling_hub()
+
+    remove, add = _mending(data, dangling, target_type="edge")
+
+    assert (remove.target_type, add.target_type) == ("edge", "profile")
+
+
+def test_the_message_says_that_on_an_edge_the_profile_is_edited() -> None:
+    data, dangling = _dangling_hub()
+    mending = _mending(data, dangling, target_type="edge")
+
+    on_edge = str(DanglingReferenceError(dangling, on_edge=True, mending=mending))
+    on_profile = str(DanglingReferenceError(dangling, mending=mending))
+    unmended = str(DanglingReferenceError(dangling, on_edge=True))
 
     assert "This is an Edge" in on_edge
     assert "profile's device settings" in on_edge
+    # The Edge state holds the profile as loaded, so the Edge is loaded again.
+    assert "then load the Edge again and redo its edit" in on_edge
     assert "This is an Edge" not in on_profile
+    assert "send that patch to the profile's device settings" not in on_profile
+    assert "send {" not in unmended

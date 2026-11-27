@@ -3,6 +3,7 @@
 from pyvelo.client.auth import VcoAuth
 from pyvelo.client.credentials import get_vco_credentials
 from pyvelo.client.exceptions import (
+    BackhaulWithoutHubError,
     ComposedModuleError,
     ConfigConflictError,
     DanglingReferenceError,
@@ -44,6 +45,7 @@ from pyvelo.client.vco_client import VcoClient
 from pyvelo.client.websocket import PendingDiagnostic, VcoWebSocket
 
 __all__ = [
+    "BackhaulWithoutHubError",
     "ComposedModuleError",
     "ConfigConflictError",
     "DanglingReferenceError",

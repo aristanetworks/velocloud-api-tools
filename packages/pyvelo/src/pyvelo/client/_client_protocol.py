@@ -17,24 +17,15 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from pyvelo.client.module_check import ModuleWrite
-    from pyvelo.client.module_write import ModulePlan
-    from pyvelo.client.schemas.configuration import (
-        AnyStoredModule,
-        ConfigurationModuleBase,
-        EdgeConfiguration,
-        EnterpriseConfigurationProfile,
-        GetConfiguration,
-        InsertConfigurationModule,
-        InsertConfigurationModuleResult,
-        UpdateConfigurationModule,
-    )
-    from pyvelo.core import ConfigContext, PaginatedVcoModel, VcoModel
-    from pyvelo.core.base import IdentityLookup
+    from pyvelo.core import PaginatedVcoModel, VcoModel
 
 
 class VcoClientBaseProtocol(Protocol):
-    """Transport and cross-operation methods used by operation mixins."""
+    """The transport that every operation mixin's methods are built on.
+
+    It holds no operation. A mixin method that calls an operation of its own
+    mixin on ``self`` types ``self`` as this protocol together with that mixin.
+    """
 
     _vco_fqdn: str
     _ws_cache: Any
@@ -67,44 +58,5 @@ class VcoClientBaseProtocol(Protocol):
     async def portal_paginated_list[T: BaseModel](
         self, method: str, request: PaginatedVcoModel, item_type: type[T]
     ) -> Sequence[T]: ...
-
-    async def update_configuration_module(
-        self,
-        request: UpdateConfigurationModule,
-        *,
-        level: ConfigContext | None = None,
-    ) -> AnyStoredModule | None: ...
-
-    async def insert_configuration_module(
-        self,
-        request: InsertConfigurationModule,
-        *,
-        level: ConfigContext | None = None,
-    ) -> InsertConfigurationModuleResult | AnyStoredModule: ...
-
-    async def get_configuration(
-        self, request: GetConfiguration
-    ) -> EdgeConfiguration | EnterpriseConfigurationProfile: ...
-
-    async def write_module[M: ConfigurationModuleBase](  # noqa: PLR0913 (existing: split it when it next changes)
-        self,
-        module: M,
-        plan: ModulePlan,
-        *,
-        enterprise_id: int | None = None,
-        if_absent: bool = False,
-        rebase: bool = False,
-        version_checked: bool = False,
-        resolvers: IdentityLookup | None = None,
-        profile_device_settings: ConfigurationModuleBase | None = None,
-    ) -> ModuleWrite[M]: ...
-
-    async def check_module_version[M: ConfigurationModuleBase](
-        self,
-        module: M,
-        plan: ModulePlan,
-        *,
-        enterprise_id: int | None = None,
-    ) -> ModuleWrite[M] | None: ...
 
     def _on_stale_websocket_closed(self, task: asyncio.Task[None]) -> None: ...

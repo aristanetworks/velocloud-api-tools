@@ -214,8 +214,14 @@ def assign_on_trial(
 
     Nothing of *state* changes. Raises whatever a step raises: the caller
     applies the same assignments, and the same edit, to the real modules
-    only when this returns.
+    only when this returns. A module whose data holds an object a write
+    replaced, put back as it is, raises ``DetachedObjectError`` before any
+    copy is made (``VcoModel.check_nothing_detached``): an assignment to the
+    real modules would stop at it half-way.
     """
+    for module in modules.values():
+        if isinstance(module.data, VcoModel):
+            module.data.check_nothing_detached("assign_segment")
     trial = {name: copy.deepcopy(module) for name, module in modules.items()}
     for assignment in assignments:
         apply_assignment(trial, assignment)

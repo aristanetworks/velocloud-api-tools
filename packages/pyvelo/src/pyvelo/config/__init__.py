@@ -9,6 +9,7 @@ errors a patch or a save raises.
 
 from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import (
+    BackhaulWithoutHubError,
     ComposedModuleError,
     ConfigConflictError,
     DanglingReferenceError,
@@ -26,7 +27,7 @@ from pyvelo.client.exceptions import (
 )
 from pyvelo.client.module_check import ModuleWrite
 from pyvelo.client.module_write import ModulePlan
-from pyvelo.core import PatchError, PatchErrorKind, add, at, delete, move
+from pyvelo.core import MendingPatch, PatchError, PatchErrorKind, add, at, delete, move
 from pyvelo.core.identity import (
     HubIdentity,
     HubServiceNotFoundError,
@@ -82,6 +83,7 @@ from .validation_warning import ValidationWarning
 
 __all__ = [
     "Added",
+    "BackhaulWithoutHubError",
     "Change",
     "ComposedModuleError",
     "ConfigConflictError",
@@ -107,6 +109,7 @@ __all__ = [
     "IntentError",
     "LayerNotSavedError",
     "LossyFieldError",
+    "MendingPatch",
     "Modified",
     "ModulePlan",
     "ModuleWrite",

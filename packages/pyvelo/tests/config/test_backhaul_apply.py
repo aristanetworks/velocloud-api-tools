@@ -6,6 +6,7 @@ The states are those of ``test_backhaul_refs_state``: a profile whose Global
 Segment lists ``HUB_A`` for backhaul with a service row, and an edge over it.
 """
 
+import json
 import uuid
 from typing import Any
 
@@ -16,6 +17,7 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.hub_services import BACKHAUL_REF
 from pyvelo.client.models.configuration.qos.rule import BackhaulEdge
 from pyvelo.core.identity import HubServiceNotFoundError
+from pyvelo.core.mending import backhaul_hub_mending
 from pyvelo.core.patch import add
 from segment_helpers import GLOBAL, GUEST, firewall_entry, qos_entry
 from test_backhaul_refs_state import (  # pyright: ignore[reportImplicitRelativeImport]
@@ -136,6 +138,22 @@ async def test_a_hub_and_its_rule_in_one_save_is_refused() -> None:
         HUB_A.name,
         HUB_B.name,
     ]
+
+
+async def test_the_patch_the_error_gives_makes_the_hub_usable_by_the_rule() -> None:
+    state = await a_profile()  # Hub-B is in neither list of the Global Segment
+    pipeline, _ = hub_pipeline(state, vpn_check=True)
+    rule = {"module": "qos", "segment": GLOBAL[1], "path": "rules"}
+    with pytest.raises(HubServiceNotFoundError) as error:
+        _ = await pipeline.apply(state, patch=hub_in_rule(HUB_B.name), **rule)
+    patch = backhaul_hub_mending(GLOBAL[1], HUB_B.name).patch
+    assert json.dumps(patch) in str(error.value)
+
+    _ = await pipeline.apply(state, module="device_settings", patch=patch)
+    _ = await pipeline.save(state)
+    _ = await pipeline.apply(state, patch=hub_in_rule(HUB_B.name), **rule)
+
+    assert [m.name for m in state.plan().changed] == ["QOS"]
 
 
 async def test_an_edge_rule_on_a_hub_the_profile_has_no_service_for_is_refused() -> (

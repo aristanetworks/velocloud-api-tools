@@ -43,8 +43,9 @@ PATCH: dict[str, object] = {
     "segments": {"Global Segment": {"outbound": {"+": NEW_RULE}}},
 }
 REPLACED = (
-    "this object was replaced by a write; take it again from the module as stored "
-    "(after a save: state.edge.<module> or state.profile.<module>; "
+    "this object was replaced by a write or a revert; take it again from the "
+    "module the state holds now "
+    "(after a save or a revert: state.edge.<module> or state.profile.<module>; "
     "after update_module: the module it returned, or error.module after a write "
     "error), or put a deep copy of it there (copy.deepcopy)"
 )
@@ -95,7 +96,7 @@ def test_assignment_on_a_detached_object_raises() -> None:
         segment.firewall_logging_enabled = True
     with pytest.raises(DetachedObjectError, match=r"FirewallOutboundRule\.name") as exc:
         rule.name = "other"
-    assert "take it again from the module as stored" in str(exc.value)
+    assert "take it again from the module the state holds now" in str(exc.value)
     # The other intents are refused too; reading what the edge stores is not.
     for intent in (data.firewall_enabled.inherit, data.firewall_enabled.localize):
         with pytest.raises(DetachedObjectError, match=r"firewall_enabled\.\w+\(\)"):
@@ -157,6 +158,35 @@ def test_merge_patch_on_a_detached_object_raises() -> None:
     with pytest.raises(DetachedObjectError):
         _ = data.merge_patch({"no_such_field": 1})
     assert dump(data) == before
+
+
+def test_merge_patch_on_a_model_that_holds_a_detached_model_changes_nothing() -> None:
+    old, held, _ = firewall()
+    _ = old.mark_detached()
+    data, _, _ = firewall()
+    data.segments[0] = held  # the object itself, not a deep copy
+    before, fields = dump(data), set(data.model_fields_set)
+    patch = {
+        "firewall_enabled": False,
+        "segments": {"Global Segment": {"firewall_logging_enabled": True}},
+    }
+
+    with pytest.raises(DetachedObjectError) as exc:
+        _ = data.merge_patch(patch)
+
+    assert (dump(data), set(data.model_fields_set)) == (before, fields)
+    assert exc.value.paths == [Path(("segments", 0))]
+    assert "FirewallData[Edge].merge_patch: the FirewallSegment[Edge] at " in str(
+        exc.value
+    )
+    assert "copy.deepcopy" in str(exc.value)
+    assert "or take the module's edits back with revert" in str(exc.value)
+    # A patch that would not reach the object is refused too, until it is mended.
+    with pytest.raises(DetachedObjectError):
+        _ = data.merge_patch({"firewall_enabled": False})
+    data.segments[0] = copy.deepcopy(held)
+    _ = data.merge_patch(patch)
+    assert data.firewall_enabled.stored is False
 
 
 def test_mark_detached_lists_every_model_with_its_place() -> None:

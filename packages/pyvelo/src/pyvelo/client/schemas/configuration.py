@@ -887,6 +887,13 @@ class DeleteConfiguration(VcoModel):
     enterprise_id: int | MISSING = MISSING
 
 
+class DeleteConfigurationModule(VcoModel):
+    """Request to delete one module of a configuration, by the module's ID."""
+
+    id_: Annotated[int, Alias("id")]
+    enterprise_id: Annotated[int | MISSING, NoneIsMissing] = MISSING
+
+
 __all__ = [
     "EMPTY_EDGE_MODULE_DATA",
     "AnyConfigurationModule",
@@ -898,6 +905,7 @@ __all__ = [
     "ConfigurationModuleVersion",
     "ControlPlaneConfigurationModule",
     "DeleteConfiguration",
+    "DeleteConfigurationModule",
     "DeviceSettingsConfigurationModule",
     "EdgeConfiguration",
     "EnterpriseConfigurationModule",

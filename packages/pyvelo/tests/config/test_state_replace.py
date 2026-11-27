@@ -64,7 +64,9 @@ PROFILE_FW: dict[str, Any] = {
 PROFILE_QOS: dict[str, Any] = {
     "segments": [{"segment": desc(0, "Global Segment"), "rules": []}]
 }
-IN_PLACE = "objects taken from the state before a save were changed in place at: "
+IN_PLACE = (
+    "objects taken from the state before a save or a revert were changed in place at: "
+)
 REDO = (
     ". The state holds the module as stored; take the objects from the state "
     "again and redo the change"

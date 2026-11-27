@@ -29,6 +29,7 @@ from pyvelo.client import (
     ConfigConflictError,
     ModuleWriteError,
     VcoClient,
+    VcoEmptyResultError,
     VcoHttpError,
     VcoOperationError,
     WriteNotAppliedError,
@@ -36,13 +37,16 @@ from pyvelo.client import (
 )
 from pyvelo.client.enums.configuration import ConfigurationModuleName as Name
 from pyvelo.client.exceptions import PRECONDITION_FAILED, LossyFieldError, WriteAnswer
+from pyvelo.client.models.configuration.qos.root import ServiceRateLimit
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas import edge as edge_schemas
 from pyvelo.client.schemas import enterprise as enterprise_schemas
 from pyvelo.client.schemas.configuration import (
     ConfigurationModuleUpdate,
+    DeleteConfigurationModule,
     EnterpriseConfigurationProfile,
     FirewallConfigurationModule,
+    InsertConfigurationModuleBase,
     InsertQosConfigurationModule,
     UpdateConfigurationModule,
 )
@@ -53,6 +57,7 @@ from pyvelo.client.schemas.enterprise import (
     GetEnterpriseEdgesItem,
 )
 from pyvelo.client.schemas.profiles import GetEnterpriseConfigurations
+from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.core import PatchError, RowsModifiedConfirmation
 from pyvelo.core.layers import Edge
 from pyvelo.core.rebase import Key, Path, RawChange
@@ -850,16 +855,19 @@ REFUSAL: dict[str, Any] = {
 """The Orchestrator's refusal of data it does not take; its text names a lab entity."""
 
 
+INSERT = "configuration/insertConfigurationModule"
+
+
 class FakeLab:
     """A fake Orchestrator for a live run.
 
     A ``ModuleStore``, plus the edges, profiles and enterprise it lists.
 
     It is an ``httpx`` handler, as the store is: a client built over it runs
-    its own request building and parsing. Module updates, inserts,
+    its own request building and parsing. Module updates, inserts, deletes,
     ``getConfiguration`` and the configuration stack of an edge go to the
-    store; the listings, the enterprise and the delete of a module are
-    answered here.
+    store; the listings and the enterprise are answered here, and so is the
+    delete of a module where ``delete_answer`` says what to answer.
     """
 
     def __init__(self) -> None:
@@ -878,6 +886,14 @@ class FakeLab:
         """
         self.before: Callable[[str], None] | None = None
         """Called with the method of each request before it is answered."""
+        self.delete_answer: dict[str, Any] | None = None
+        """What the delete of a module is answered with, the module left where it is;
+        with ``None`` the store deletes it and answers.
+        """
+        self.insert_response: httpx.Response | None = None
+        """What the insert of a module is answered with, nothing stored; with ``None``
+        the store inserts it and answers.
+        """
 
     def add_profile(
         self, profile_id: int, *, description: str | None = None, edge_count: int = 0
@@ -926,39 +942,50 @@ class FakeLab:
         """The method of each request, without its namespace."""
         return [method.rsplit("/", 1)[-1] for method, _ in self.requests]
 
-    def __call__(self, request: httpx.Request) -> httpx.Response:  # noqa: C901 (existing: split it when it next changes)
+    def _enterprise(self, params: dict[str, Any]) -> httpx.Response:
+        """The answer to ``enterprise/getEnterprise``, or how it fails."""
+        if self.enterprise_failure == "http":
+            return httpx.Response(503, text="secret-lab-name is down")
+        if self.enterprise_failure == "empty":
+            return httpx.Response(200, json=make_jsonrpc_response())
+        if self.enterprise_error:
+            error = {"code": -32000, "message": "invalid enterprise context"}
+            return httpx.Response(200, json=make_jsonrpc_response(error=error))
+        result = (
+            {}
+            if self.enterprise_failure == "no_id"
+            else {"id": params.get("enterpriseId", ENTERPRISE)}
+        )
+        return httpx.Response(200, json=make_jsonrpc_response(result=result))
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
         body: dict[str, Any] = json.loads(request.content)
         method: str = body["method"]
         params: dict[str, Any] = body.get("params") or {}
         self.requests.append((method, params))
         if self.before is not None:
             self.before(method)
-        error: dict[str, Any] | None = None
-        result: object = None
+        result: object
         update = method == "configuration/updateConfigurationModule"
         if method in self.refused_methods or (update and params["id"] in self.refused):
-            error = REFUSAL
-        elif method == "enterprise/getEnterprise":
-            if self.enterprise_failure == "http":
-                return httpx.Response(503, text="secret-lab-name is down")
-            if self.enterprise_failure == "empty":
-                return httpx.Response(200, json=make_jsonrpc_response())
-            if self.enterprise_error:
-                error = {"code": -32000, "message": "invalid enterprise context"}
-            result = {"id": params.get("enterpriseId", ENTERPRISE)}
-            if self.enterprise_failure == "no_id":
-                result = {}
-        elif method == "enterprise/getEnterpriseEdges":
+            return httpx.Response(200, json=make_jsonrpc_response(error=REFUSAL))
+        if method == INSERT and self.insert_response is not None:
+            return self.insert_response
+        if method == "enterprise/getEnterprise":
+            return self._enterprise(params)
+        if method == "enterprise/getEnterpriseEdges":
             result = {"metaData": {"more": False}, "data": list(self.edges.values())}
         elif method == "enterprise/getEnterpriseConfigurations":
             result = list(self.profiles.values())
-        elif method == "configuration/deleteConfigurationModule":
-            del self.store.rows[params["id"]]
-            result = {"rows": 1}
+        elif method == "enterprise/getEnterpriseNetworkSegments":
+            result = []  # what a pipeline's load asks for; no module here has one
+        elif (
+            method == "configuration/deleteConfigurationModule"
+            and self.delete_answer is not None
+        ):
+            result = self.delete_answer
         else:
             return self.store(request)
-        if error is not None:
-            return httpx.Response(200, json=make_jsonrpc_response(error=error))
         return httpx.Response(200, json=make_jsonrpc_response(result=result))
 
 
@@ -1447,6 +1474,176 @@ async def test_a_restore_that_fails_names_the_backup_and_never_the_data(
     assert json.loads(backup.read_text())["data"] == original
 
 
+def as_pytest_reports(failed: pytest.ExceptionInfo[BaseException]) -> str:
+    """The report pytest writes for a failure the suite worded itself.
+
+    A failure raised with ``pytrace=False`` is reported as the text of each
+    exception of its chain, and ``redact_report`` leaves such a report as it
+    is: an exception chained to a worded failure is printed with its own text.
+    """
+    return str(failed.getrepr(style="value"))
+
+
+def lab_error() -> VcoOperationError:
+    """An error of a read, as a test's body ends with one: its text names the lab."""
+    error = VcoOperationError("getConfiguration", "secret-lab-name cannot be read")
+    error.__cause__ = ValueError("secret-lab-name in the answer")
+    return error
+
+
+BODY_FAILURES: list[tuple[Callable[[], BaseException], str]] = [
+    (
+        lab_error,
+        (
+            "the test had failed before that (VcoOperationError in "
+            "getConfiguration: no error code)"
+        ),
+    ),
+    (lambda: KeyError("secret-lab-name"), "the test had failed before that (KeyError)"),
+    (
+        lambda: pytest.fail.Exception("a message the test wrote", pytrace=False),
+        "the test had failed before that (a message the test wrote)",
+    ),
+    (
+        lambda: pytest.skip.Exception("no rule to copy"),
+        "the test had skipped before that (no rule to copy)",
+    ),
+]
+"""How a test's body ends, and what a failed restore after it says of that."""
+
+
+@pytest.mark.parametrize(
+    ("ending", "said"), BODY_FAILURES, ids=["an error", "a raw error", "fail", "skip"]
+)
+async def test_a_restore_that_fails_after_its_test_failed_reports_both_failures(
+    ending: Callable[[], BaseException],
+    said: str,
+    backups: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The restore's failure, then the body's as ``failure_text`` gives it.
+
+    Nothing else of the chain is reported: not the text of the body's
+    exception, nor of an exception it was raised from.
+    """
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            fake.data(2)["serviceRateLimit"]["value"] = 9  # another writer's change
+            raise ending()
+    (backup,) = backups.iterdir()
+    report = as_pytest_reports(caught)
+    assert "secret-lab-name" not in report
+    assert report == (
+        "restore: the QOS module changed outside this run after its last write "
+        "(~ serviceRateLimit.value); it was left as it is, with this run's "
+        "changes; check who else changed the QOS module, and put the original "
+        f"back by hand if it is wanted; {said}; the original QOS module is saved "
+        f"at {backup}"
+    )
+
+
+async def test_a_restore_with_no_backup_that_fails_after_its_test_failed_reports_both(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An edge with no module of its own: the module the test added stays."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
+        async with live.restoring(site) as original:
+            assert original is None
+            await live.insert_module(site, copy.deepcopy(QOS), None)
+            fake.delete_answer = {"rows": 0}  # the restore's delete deletes nothing
+            raise lab_error()
+    assert as_pytest_reports(caught) == (
+        "restore: the QOS module the test added is still there; the test had "
+        "failed before that (VcoOperationError in getConfiguration: no error code)"
+    )
+
+
+async def test_a_restore_that_fails_alone_reports_as_it_did_and_no_text_of_its_error(
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The error of the restore's own write is named by its class alone."""
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+
+    def fails(method: str) -> None:
+        if method == "configuration/updateConfigurationModule":
+            raise httpx.ConnectError("secret-lab-name did not answer")
+
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            fake.before = fails
+    (backup,) = backups.iterdir()
+    assert as_pytest_reports(caught) == (
+        f"ConnectError; the original QOS module is saved at {backup}"
+    )
+
+
+async def test_a_restore_whose_write_back_is_refused_reports_the_operation_and_codes(
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal's text names the lab (``REFUSAL``); its operation and codes do not.
+
+    The report holds the second and nothing of the first.
+    """
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012 (restoring raises as it exits, so the block holds the run it restores)
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            fake.refused.add(2)  # the Orchestrator refuses the restore's write
+    (backup,) = backups.iterdir()
+    report = as_pytest_reports(caught)
+    assert report == (
+        "DataRefusedError in configuration/updateConfigurationModule: "
+        f"DS00000001 lan.networks; the original QOS module is saved at {backup}"
+    )
+    assert "secret-lab-name" not in report
+
+
+async def test_a_restore_with_no_backup_that_fails_alone_ends_with_its_own_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing to add to it: the report is made of the error, as of any other."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    with pytest.raises(VcoOperationError) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
+        async with live.restoring(site) as original:
+            assert original is None
+            await live.insert_module(site, copy.deepcopy(QOS), None)
+            fake.refused_methods = {"configuration/deleteConfigurationModule"}
+    assert live.failure_text(caught.value) == (
+        "DataRefusedError in configuration/deleteConfigurationModule: "
+        "DS00000001 lan.networks"
+    )
+
+
+async def test_a_test_that_fails_alone_ends_with_its_own_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The restore worked: the body's error leaves the block as it was raised."""
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    error = KeyError("secret-lab-name")
+    with pytest.raises(KeyError) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            raise error
+    assert caught.value is error
+    assert fake.data(2) == QOS
+
+
 async def test_a_refused_delete_and_a_refused_effective_read_carry_codes_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1547,6 +1744,719 @@ async def test_a_module_a_block_inserted_is_not_covered_once_the_block_is_closed
             _ = await lab.client.update_configuration_module(qos_update(added))
 
 
+def module_delete(module_id: int) -> DeleteConfigurationModule:
+    return DeleteConfigurationModule(id_=module_id)
+
+
+def replaceable_lab() -> FakeLab:
+    """``lab_fake`` with edge 5 marked for deleting and inserting modules as well.
+
+    And edge 7 (configuration 12), marked the same, with no QoS module of its own.
+    """
+    fake = lab_fake()
+    fake.edges[5]["description"] = REPLACEABLE
+    fake.add_edge(7, 12, 20, description=REPLACEABLE)
+    return fake
+
+
+def deletes_of(fake: FakeLab) -> list[int]:
+    """The module ID of each delete *fake* was sent."""
+    return [
+        params["id"]
+        for method, params in fake.requests
+        if method == "configuration/deleteConfigurationModule"
+    ]
+
+
+async def test_the_clients_own_delete_of_the_module_a_block_found_is_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        sent = run.sent
+        answer = await lab.client.delete_configuration_module(module_delete(1))
+        assert (answer.error, answer.rows) == (None, 1)
+        assert run.sent == sent + 1
+        assert 1 not in fake.store.rows
+        # The records are as after ``delete_module``.
+        assert set(run.deleted) == {1}
+        assert run.maybe_deleted == {}
+        assert 1 not in run.seen
+    # Leaving the block inserted the original again.
+    back = await site.read_present()
+    assert back.id_ != 1
+    assert back.raw_data == QOS
+    assert deletes_of(fake) == [1]
+
+
+async def test_the_clients_own_delete_of_a_module_inserted_in_the_block_is_sent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site) as original:
+        assert original is None
+        await live.insert_module(site, copy.deepcopy(QOS), None)
+        (added,) = set(fake.store.rows) - {1, 2, 3}
+        assert set(run.inserted) == {added}
+        answer = await lab.client.delete_configuration_module(module_delete(added))
+        assert (answer.error, answer.rows) == (None, 1)
+        assert set(run.deleted) == {added}
+        assert run.maybe_deleted == {}
+        assert run.inserted == {}
+        assert added not in run.seen
+    # The restore found the layer as the block found it, and sent nothing.
+    assert set(fake.store.rows) == {1, 2, 3}
+    assert deletes_of(fake) == [added]
+
+
+async def test_the_clients_own_delete_from_a_test_that_is_not_marked_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    with (
+        live.writer_test(marked=False),
+        pytest.raises(live.WritesRefusedError) as refused,
+    ):
+        _ = await lab.client.delete_configuration_module(module_delete(1))
+    assert str(refused.value) == live.NOT_MARKED
+    assert deletes_of(fake) == []
+
+
+async def test_the_clients_own_delete_without_the_opt_in_is_refused() -> None:
+    fake = replaceable_lab()
+    lab = await live.discover_lab(client_over(fake), None)
+    with pytest.raises(live.WritesRefusedError, match="live write tests are off"):
+        _ = await lab.client.delete_configuration_module(module_delete(1))
+    assert deletes_of(fake) == []
+
+
+async def test_the_clients_own_delete_outside_a_block_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    with pytest.raises(live.WritesRefusedError) as refused:
+        _ = await lab.client.delete_configuration_module(module_delete(1))
+    assert str(refused.value) == live.OUTSIDE_RESTORING
+    assert deletes_of(fake) == []
+
+
+async def test_the_clients_own_delete_needs_the_mark_for_modules_on_the_blocks_site(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = lab_fake()  # edge 5: marked, not for modules
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    async with live.restoring(site):
+        with pytest.raises(live.WritesRefusedError) as refused:
+            _ = await lab.client.delete_configuration_module(module_delete(1))
+    assert str(refused.value) == (
+        "a delete of a QOS module of an edge that is not marked "
+        "pyvelo-it-replace-modules; nothing was sent; put "
+        "pyvelo-it-replace-modules beside pyvelo-it-target in the description of "
+        "an edge the suite may delete and insert modules of"
+    )
+    assert deletes_of(fake) == []
+    assert set(fake.store.rows) == {1, 2, 3}
+
+
+async def test_the_clients_own_delete_of_a_module_no_open_block_covers_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    other = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(other):
+        await live.insert_module(other, copy.deepcopy(QOS), None)
+        (added,) = set(run.inserted)
+        fake.requests.clear()
+    # The block that inserted it is closed (and deleted it); one is open elsewhere.
+    fake.module(added, 12, "QOS", QOS)
+    async with live.restoring(site):
+        # The unmarked edge's module, the profile's, the one a closed block inserted,
+        # and an ID of no module at all.
+        for module_id in (3, 2, added, 99):
+            with pytest.raises(live.WritesRefusedError) as refused:
+                _ = await lab.client.delete_configuration_module(
+                    module_delete(module_id)
+                )
+            assert str(refused.value) == (
+                "a delete of a module that no open restoring block covers; "
+                "nothing was sent; open `restoring(site)` on the module's own "
+                "site and write inside it"
+            )
+    assert deletes_of(fake) == [added]  # the first block's own restore, and no other
+    assert {1, 2, 3, added} <= set(fake.store.rows)
+
+
+async def test_a_delete_is_not_covered_by_a_marked_block_that_is_not_the_modules_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The profile's module, found by a block of its own, with a marked edge's open.
+
+    Neither the client's own delete nor ``delete_module`` on the edge's site
+    takes the edge's mark for the profile's module.
+    """
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    profile = lab.profile_site(20, Name.QOS)
+    async with live.restoring(profile), live.restoring(site):
+        with pytest.raises(live.WritesRefusedError, match="that is not marked"):
+            _ = await lab.client.delete_configuration_module(module_delete(2))
+        with pytest.raises(live.WritesRefusedError, match="that is not marked"):
+            await live.delete_module(site, 2)
+    assert deletes_of(fake) == []
+    assert fake.data(2) == QOS
+
+
+async def test_delete_module_sends_through_the_clients_own_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    run = live.run_of(lab.client)
+    delete = lab.client.delete_configuration_module
+    seen: list[int] = []
+
+    async def spy(request: DeleteConfigurationModule) -> RowsModifiedConfirmation:
+        seen.append(request.id_)
+        return await delete(request)
+
+    monkeypatch.setattr(lab.client, "delete_configuration_module", spy)
+    async with live.restoring(site):
+        await live.delete_module(site, 1)
+        assert seen == [1]
+        assert set(run.deleted) == {1}
+    assert (await site.read_present()).raw_data == QOS
+
+
+NOT_DELETED = [{"rows": 0}, {"error": "secret-lab-name is locked"}]
+"""Answers to a delete that say the module was not deleted."""
+
+
+@pytest.mark.parametrize("answer", NOT_DELETED, ids=["no row", "an error"])
+@pytest.mark.parametrize("gone", [False, True], ids=["there", "gone"])
+async def test_after_a_delete_answered_as_not_done_the_module_found_is_put_right(
+    answer: dict[str, Any],
+    gone: bool,  # noqa: FBT001 (a parameter of the test)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        await raise_limit(site, 2)
+        fake.delete_answer = answer
+        told = await lab.client.delete_configuration_module(module_delete(1))
+        assert (told.error, told.rows) == (answer.get("error"), answer.get("rows"))
+        fake.delete_answer = None
+        # Not known to be deleted, and not forgotten either.
+        assert run.deleted == {}
+        assert set(run.maybe_deleted) == {1}
+        assert 1 in run.seen
+        if gone:
+            del fake.store.rows[1]  # the Orchestrator deleted it all the same
+    back = await site.read_present()
+    assert back.raw_data == QOS
+    assert (back.id_ == 1) is not gone
+    assert fake.methods().count("insertConfigurationModule") == (1 if gone else 0)
+
+
+@pytest.mark.parametrize("answer", NOT_DELETED, ids=["no row", "an error"])
+@pytest.mark.parametrize("gone", [False, True], ids=["there", "gone"])
+async def test_after_a_delete_answered_as_not_done_the_module_inserted_is_put_right(
+    answer: dict[str, Any],
+    gone: bool,  # noqa: FBT001 (a parameter of the test)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        await live.insert_module(site, copy.deepcopy(QOS), None)
+        (added,) = set(run.inserted)
+        fake.delete_answer = answer
+        _ = await lab.client.delete_configuration_module(module_delete(added))
+        fake.delete_answer = None
+        assert run.deleted == {}
+        assert set(run.maybe_deleted) == {added}
+        assert set(run.inserted) == {added}
+        assert added in run.seen
+        if gone:
+            del fake.store.rows[added]
+    assert set(fake.store.rows) == {1, 2, 3}
+    # Still there, the restore deleted it; gone, it sent no second delete.
+    assert deletes_of(fake) == ([added] if gone else [added, added])
+
+
+@pytest.mark.parametrize("gone", [False, True], ids=["there", "gone"])
+async def test_after_a_delete_that_raised_once_sent_the_module_found_is_put_right(
+    gone: bool,  # noqa: FBT001 (a parameter of the test)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    run = live.run_of(lab.client)
+
+    def fails(method: str) -> None:
+        if method == "configuration/deleteConfigurationModule":
+            raise httpx.ConnectError("the request did not arrive")
+
+    async with live.restoring(site):
+        if gone:
+            fake.store.lose_answers = {1}  # the store's first write: done, unanswered
+        else:
+            fake.before = fails
+        with pytest.raises(httpx.TransportError):
+            _ = await lab.client.delete_configuration_module(module_delete(1))
+        fake.before = None
+        assert (1 in fake.store.rows) is not gone
+        assert run.deleted == {}
+        assert set(run.maybe_deleted) == {1}
+        assert 1 in run.seen
+    back = await site.read_present()
+    assert back.raw_data == QOS
+    assert (back.id_ == 1) is not gone
+
+
+@pytest.mark.parametrize("gone", [False, True], ids=["there", "gone"])
+async def test_after_a_delete_that_raised_once_sent_the_module_inserted_is_put_right(
+    gone: bool,  # noqa: FBT001 (a parameter of the test)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        await live.insert_module(site, copy.deepcopy(QOS), None)
+        (added,) = set(run.inserted)
+        if gone:
+            fake.store.lose_answers = {2}  # the insert was the store's first write
+        else:
+            fake.refused_methods = {"configuration/deleteConfigurationModule"}
+        with pytest.raises((httpx.ReadTimeout, VcoOperationError)) as caught:
+            _ = await lab.client.delete_configuration_module(module_delete(added))
+        fake.refused_methods = set()
+        # A refusal of the Orchestrator carries its codes and no name of the lab.
+        assert "secret-lab-name" not in str(caught.value)
+        assert run.deleted == {}
+        assert set(run.maybe_deleted) == {added}
+        assert set(run.inserted) == {added}
+    assert set(fake.store.rows) == {1, 2, 3}
+    assert deletes_of(fake) == ([added] if gone else [added, added])
+
+
+async def test_a_delete_that_failed_before_it_was_sent_changes_no_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        seen = copy.deepcopy(run.seen)
+        with monkeypatch.context() as patched:
+
+            async def unsendable(*_args: object, **_kwargs: object) -> None:
+                raise RuntimeError("failed before anything was sent")
+
+            patched.setattr(lab.client, "portal", unsendable)
+            with pytest.raises(RuntimeError):
+                _ = await lab.client.delete_configuration_module(module_delete(1))
+        assert run.deleted == {}
+        assert run.maybe_deleted == {}
+        assert run.seen == seen
+    assert deletes_of(fake) == []
+    assert fake.data(1) == QOS
+
+
+async def test_delete_again_sends_the_delete_of_a_module_this_run_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        await live.insert_module(site, copy.deepcopy(QOS), None)
+        (added,) = set(run.inserted)
+        await live.delete_module(site, added)
+        # The client's own delete is not sent for a module that is gone.
+        with pytest.raises(live.WritesRefusedError, match="no open restoring block"):
+            _ = await lab.client.delete_configuration_module(module_delete(added))
+        assert deletes_of(fake) == [added]
+        sent = run.sent
+        answer = await live.delete_again(site, added)
+        assert (answer.error, answer.rows) == (None, 0)
+        assert run.sent == sent + 1
+        assert deletes_of(fake) == [added, added]
+        assert set(run.deleted) == {added}
+        assert run.inserted == {}
+    assert set(fake.store.rows) == {1, 2, 3}
+
+
+async def test_delete_again_is_refused_for_a_module_this_run_did_not_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        fake.delete_answer = {"rows": 0}
+        _ = await lab.client.delete_configuration_module(module_delete(1))
+        fake.delete_answer = None
+        assert set(run.maybe_deleted) == {1}
+        # The module the block found, one whose delete was answered as not done,
+        # another edge's, and an ID of no module at all.
+        for module_id in (1, 3, 99):
+            with pytest.raises(live.WritesRefusedError) as refused:
+                _ = await live.delete_again(site, module_id)
+            assert str(refused.value) == (
+                "a second delete of a module this run did not delete inside a "
+                "restoring block that is still open on its site; nothing was "
+                "sent; delete_again only sends the delete of a module again that "
+                "an answer to this run said was deleted, and only inside the "
+                "block it was deleted in, so delete it first with delete_module "
+                "and call delete_again inside the same restoring block"
+            )
+    assert deletes_of(fake) == [1]
+    assert set(fake.store.rows) == {1, 2, 3}
+
+
+async def test_delete_again_needs_an_open_block_on_its_site_marked_for_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    elsewhere = lab.profile_site(20, Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        await live.insert_module(site, copy.deepcopy(QOS), None)
+        (added,) = set(run.inserted)
+        await live.delete_module(site, added)
+    fake.requests.clear()
+    with pytest.raises(live.WritesRefusedError) as outside:
+        _ = await live.delete_again(site, added)
+    assert str(outside.value) == live.OUTSIDE_RESTORING
+    async with live.restoring(elsewhere):
+        with pytest.raises(live.WritesRefusedError, match=r"^a delete of a QOS module"):
+            _ = await live.delete_again(site, added)
+        with pytest.raises(live.WritesRefusedError, match="that is not marked"):
+            _ = await live.delete_again(elsewhere, added)
+    with (
+        live.writer_test(marked=False),
+        pytest.raises(live.WritesRefusedError) as unmarked,
+    ):
+        _ = await live.delete_again(site, added)
+    assert str(unmarked.value) == live.NOT_MARKED
+    assert deletes_of(fake) == []
+
+
+async def test_a_refused_delete_again_carries_its_codes_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    async with live.restoring(site):
+        await live.delete_module(site, 1)
+        fake.refused_methods = {"configuration/deleteConfigurationModule"}
+        with pytest.raises(VcoOperationError) as caught:
+            _ = await live.delete_again(site, 1)
+        fake.refused_methods = set()
+    assert live.refusal_codes(caught.value) == "DS00000001 lan.networks"
+    assert "secret-lab-name" not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__
+    assert (await site.read_present()).raw_data == QOS
+
+
+async def test_delete_again_is_refused_once_the_block_that_deleted_is_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another block on the same site, marked the same, did not delete the module."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        await live.insert_module(site, copy.deepcopy(QOS), None)
+        (added,) = set(run.inserted)
+        await live.delete_module(site, added)
+    fake.requests.clear()
+    async with live.restoring(site):
+        with pytest.raises(live.WritesRefusedError) as refused:
+            _ = await live.delete_again(site, added)
+    assert str(refused.value) == live.NOT_DELETED_BEFORE
+    assert deletes_of(fake) == []
+
+
+async def test_delete_again_is_refused_on_another_site_than_the_deleting_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    other = lab.edge_site(lab.layouts[0], Name.QOS)  # marked for modules as well
+    run = live.run_of(lab.client)
+    async with live.restoring(site), live.restoring(other):
+        await live.insert_module(site, copy.deepcopy(QOS), None)
+        (added,) = set(run.inserted)
+        await live.delete_module(site, added)
+        with pytest.raises(live.WritesRefusedError) as refused:
+            _ = await live.delete_again(other, added)
+        assert str(refused.value) == live.NOT_DELETED_BEFORE
+        assert deletes_of(fake) == [added]
+        # On the site of the block that deleted it, the second delete is sent.
+        _ = await live.delete_again(site, added)
+        assert deletes_of(fake) == [added, added]
+
+
+async def test_a_delete_answered_as_not_done_is_forgotten_when_a_restore_sees_the_module(  # noqa: E501 (a test's name)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A block inside another on one module: the inner restore reads the module."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        async with live.restoring(site):
+            fake.delete_answer = {"rows": 0}
+            _ = await lab.client.delete_configuration_module(module_delete(1))
+            fake.delete_answer = None
+            assert set(run.maybe_deleted) == {1}
+        # The inner restore saw the module there. The outer block, which the
+        # record is kept for, is still open.
+        assert run.maybe_deleted == {}
+    assert fake.data(1) == QOS
+    assert deletes_of(fake) == [1]
+
+
+async def test_a_delete_answered_as_not_done_is_forgotten_when_its_block_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        fake.delete_answer = {"rows": 0}
+        _ = await lab.client.delete_configuration_module(module_delete(1))
+        fake.delete_answer = None
+        del fake.store.rows[1]  # the Orchestrator deleted it all the same
+        assert set(run.maybe_deleted) == {1}
+    # The restore found the module gone and inserted it again: it never saw
+    # module 1 there, and the record went with the block.
+    assert (await site.read_present()).id_ != 1
+    assert run.maybe_deleted == {}
+
+
+async def test_a_later_block_does_not_take_an_earlier_unsure_delete_for_its_own(
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delete answered as not done, the module left; later another writer deletes it.
+
+    The later block's restore must say that this run did not delete the
+    module, and not insert it again on the word of the earlier block's delete.
+    """
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    async with live.restoring(site):
+        fake.delete_answer = {"rows": 0}
+        _ = await lab.client.delete_configuration_module(module_delete(1))
+        fake.delete_answer = None
+    assert 1 in fake.store.rows
+    with pytest.raises(pytest.fail.Exception) as caught:
+        async with live.restoring(site):
+            del fake.store.rows[1]  # another writer deleted it
+    (backup,) = backups.iterdir()
+    assert str(caught.value) == (
+        "restore: the QOS module is gone and this run did not delete it; it "
+        "was not put back; check who deleted it, and insert it again from the "
+        f"saved original if it is wanted; the original QOS module is saved at {backup}"
+    )
+    assert "insertConfigurationModule" not in fake.methods()
+
+
+WAN: dict[str, Any] = {"links": []}
+"""A WAN module's data: a module the suite updates and never inserts."""
+
+
+async def test_a_delete_of_a_module_the_suite_cannot_insert_again_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A WAN module a block found, on an edge marked for deleting and inserting."""
+    fake = replaceable_lab()
+    fake.module(4, 10, "WAN", WAN)
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.WAN)
+    refusal = (
+        "a delete of a WAN module, which the suite could not put back, as it "
+        "inserts only a firewall or a QoS module; nothing was sent; delete only "
+        "a firewall or a QoS module, and change any other module with an update "
+        "inside its restoring block"
+    )
+    async with live.restoring(site) as original:
+        assert original is not None
+        assert original.module_id == 4
+        with pytest.raises(live.WritesRefusedError) as own:
+            _ = await lab.client.delete_configuration_module(module_delete(4))
+        with pytest.raises(live.WritesRefusedError) as helper:
+            await live.delete_module(site, 4)
+    assert str(own.value) == refusal
+    assert str(helper.value) == refusal
+    assert deletes_of(fake) == []
+    assert fake.data(4) == WAN
+
+
+class InsertWanModule(InsertConfigurationModuleBase):
+    """An insert of a WAN module: the client's own requests insert no such module."""
+
+    name: Literal["WAN"] = "WAN"
+    data: dict[str, Any]
+
+
+async def test_an_insert_of_a_module_the_suite_could_not_delete_again_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A WAN insert built by hand, on an edge marked for deleting and inserting.
+
+    The suite deletes only a firewall or a QoS module, so it could not take
+    this one away again: the insert is refused before anything is sent.
+    """
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.WAN)
+    run = live.run_of(lab.client)
+    async with live.restoring(site) as original:
+        assert original is None
+        sent = run.sent
+        with pytest.raises(live.WritesRefusedError) as refused:
+            _ = await lab.client.insert_configuration_module(
+                InsertWanModule(configuration_id=12, data=copy.deepcopy(WAN))  # pyright: ignore[reportArgumentType] (a module name the typed requests do not cover: the guard is what refuses it)
+            )
+        assert run.sent == sent
+    assert str(refused.value) == (
+        "an insert of a WAN module, which the suite could not delete again, as "
+        "it deletes only a firewall or a QoS module; nothing was sent; insert "
+        "only a firewall or a QoS module, and change any other module with an "
+        "update inside its restoring block"
+    )
+    assert "insertConfigurationModule" not in fake.methods()
+    assert set(fake.store.rows) == {1, 2, 3}
+
+
+async def test_an_insert_whose_answer_is_lost_is_sent_and_is_the_runs_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        lost = live.losing_the_insert_answer(lab.client, monkeypatch, sent=True)
+        with pytest.raises(httpx.ReadTimeout):
+            await live.insert_module(site, copy.deepcopy(QOS), None)
+        (added,) = set(fake.store.rows) - {1, 2, 3}
+        assert lost == [added]
+        assert set(run.inserted) == {added}
+    # The module is the run's own, so leaving the block deleted it.
+    assert set(fake.store.rows) == {1, 2, 3}
+
+
+async def test_an_insert_that_never_left_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        sent = run.sent
+        lost = live.losing_the_insert_answer(lab.client, monkeypatch, sent=False)
+        with pytest.raises(httpx.ReadTimeout):
+            await live.insert_module(site, copy.deepcopy(QOS), None)
+        assert lost == []
+        assert run.sent == sent
+        assert run.inserted == {}
+    assert "insertConfigurationModule" not in fake.methods()
+    assert set(fake.store.rows) == {1, 2, 3}
+
+
+@pytest.mark.parametrize("sent", [True, False], ids=["stored", "never sent"])
+async def test_only_the_next_insert_loses_its_answer(
+    sent: bool,  # noqa: FBT001 (a parameter of the test)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The insert after the lost one is answered: the restore's own insert is one."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    async with live.restoring(site):
+        await live.delete_module(site, 1)
+        lost = live.losing_the_insert_answer(lab.client, monkeypatch, sent=sent)
+        with pytest.raises(httpx.ReadTimeout):
+            await live.insert_module(site, copy.deepcopy(QOS), None)
+        for module_id in lost:
+            await live.delete_module(site, module_id)
+        assert await site.read() is None
+    # The spy is still over the client, and the restore's insert went through it.
+    back = await site.read_present()
+    assert back.raw_data == QOS
+    assert len(lost) == (1 if sent else 0)
+    assert fake.methods().count("insertConfigurationModule") == len(lost) + 1
+
+
+@pytest.mark.parametrize("sent", [True, False], ids=["stored", "never sent"])
+async def test_a_save_whose_insert_answer_is_lost_leaves_the_insert_unconfirmed(
+    sent: bool,  # noqa: FBT001 (a parameter of the test)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real pipeline's save of a new module, with the insert's answer lost."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    pipeline = ConfigPipeline(lab.client)
+    async with live.restoring(site):
+        state = await pipeline.load(7)
+        state.edge.qos.service_rate_limit.set_local(
+            ServiceRateLimit.model_validate(
+                {"enabled": False, "inputType": "percent", "value": 1}
+            )
+        )
+        assert [m.operation for m in state.plan().changed] == ["insert"]
+        lost = live.losing_the_insert_answer(lab.client, monkeypatch, sent=sent)
+        with pytest.raises(httpx.ReadTimeout):
+            _ = await pipeline.save(state)
+        assert state.unconfirmed_inserts == {"QOS"}
+        assert state.module("QOS").is_new
+        stored = set(fake.store.rows) - {1, 2, 3}
+        assert stored == set(lost)
+        assert len(lost) == (1 if sent else 0)
+        assert set(run.inserted) == stored
+    assert set(fake.store.rows) == {1, 2, 3}
+
+
 class WriteCall:
     """A write the client sends over the portal, and how a test might send it."""
 
@@ -1595,7 +2505,7 @@ WRITE_CALLS = [
         "a module delete sent by hand",
         lambda client: client.portal(
             "configuration/deleteConfigurationModule",
-            live.DeleteConfigurationModule(id_=1),
+            DeleteConfigurationModule(id_=1),
             RowsModifiedConfirmation,
         ),
     ),
@@ -2274,6 +3184,435 @@ async def test_another_module_in_place_of_the_one_found_is_left_alone(
         f"wanted; the original QOS module is saved at {backup}"
     )
     assert fake.data(77)["added"] == 1
+    assert "updateConfigurationModule" not in fake.methods()
+
+
+NOT_INSERTED = (
+    "restore: a QOS module this run did not insert is there now; it was left "
+    "as it is; check who created it, and delete it by hand if the lab should "
+    "not have it"
+)
+ANOTHER_MODULE = (
+    "restore: another QOS module is there than the one the test began with, "
+    "and this run did not insert it; it was left as it is; check who replaced "
+    "the module, and put the original back by hand if it is wanted"
+)
+"""What a restore says of a module it does not take for this run's own."""
+
+
+def insert_not_answered(method: str) -> None:
+    """A ``FakeLab.before``: an insert is sent, and neither stored nor answered."""
+    if method == INSERT:
+        raise httpx.ReadTimeout("no answer came")
+
+
+async def test_a_module_left_by_an_insert_that_got_no_answer_is_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The answer is lost under the guard: the run is never told the module's ID."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site) as original:
+        assert original is None
+        fake.store.lose_answers = {1}  # the store's first write: stored, not answered
+        with pytest.raises(httpx.ReadTimeout):
+            await live.insert_module(site, copy.deepcopy(QOS), None)
+        (added,) = set(fake.store.rows) - {1, 2, 3}
+        assert run.inserted == {}
+        assert added not in run.seen
+    assert await site.read() is None
+    assert set(fake.store.rows) == {1, 2, 3}
+    assert deletes_of(fake) == [added]
+
+
+async def test_the_original_is_written_over_a_module_left_by_an_insert_that_got_no_answer(  # noqa: E501 (a test's name)
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        await live.delete_module(site, 1)
+        fake.store.lose_answers = {2}  # the insert, the store's second write
+        with pytest.raises(httpx.ReadTimeout):
+            await live.insert_module(site, {**QOS, "added": 1}, None)
+        (added,) = set(fake.store.rows) - {2, 3}
+        assert fake.data(added) == {**QOS, "added": 1}
+        assert run.inserted == {}
+    # The block's own check passed: the module there holds the original's data.
+    back = await site.read_present()
+    assert back.id_ == added
+    assert back.raw_data == QOS
+    assert fake.methods().count("insertConfigurationModule") == 1  # none to restore
+    assert list(backups.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "deleted", [False, True], ids=["none found", "original deleted"]
+)
+async def test_an_insert_that_got_no_answer_and_stored_nothing_leaves_the_restore_as_it_was(  # noqa: E501 (a test's name)
+    deleted: bool,  # noqa: FBT001 (a parameter of the test)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0 if deleted else 2], Name.QOS)
+    async with live.restoring(site):
+        if deleted:
+            await live.delete_module(site, 1)
+        fake.before = insert_not_answered
+        with pytest.raises(httpx.ReadTimeout):
+            await live.insert_module(site, copy.deepcopy(QOS), None)
+        fake.before = None
+        assert await site.read() is None
+    # The layer is as the block found it: empty, or the original inserted again.
+    back = await site.read()
+    assert (back is not None) is deleted
+    if back is not None:
+        assert back.id_ != 1
+        assert back.raw_data == QOS
+    assert fake.methods().count("insertConfigurationModule") == (2 if deleted else 1)
+    assert deletes_of(fake) == ([1] if deleted else [])
+
+
+@pytest.mark.parametrize("sent", [True, False], ids=["refused", "never sent"])
+async def test_an_insert_known_to_have_stored_nothing_makes_no_module_the_runs_own(
+    sent: bool,  # noqa: FBT001 (a parameter of the test)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An insert refused with errors the Orchestrator states, or one that never left.
+
+    Neither can have stored a module, so the one found there is another writer's.
+    """
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+
+    async def unsendable(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("failed before anything was sent")
+
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012 (restoring raises as it exits, so the block holds the run it restores)
+        async with live.restoring(site):
+            with monkeypatch.context() as patched:
+                if sent:
+                    fake.refused_methods = {"configuration/insertConfigurationModule"}
+                else:
+                    patched.setattr(lab.client, "portal", unsendable)
+                with pytest.raises(VcoOperationError if sent else RuntimeError):
+                    await live.insert_module(site, copy.deepcopy(QOS), None)
+            fake.refused_methods = set()
+            # An administrator creates the module meanwhile.
+            fake.module(77, 12, "QOS", QOS)
+    assert str(caught.value) == NOT_INSERTED
+    assert 77 in fake.store.rows
+    assert deletes_of(fake) == []
+    assert fake.methods().count("insertConfigurationModule") == (1 if sent else 0)
+
+
+@pytest.mark.parametrize(
+    "deleted", [False, True], ids=["none found", "original deleted"]
+)
+async def test_a_module_no_newer_than_one_the_run_knows_is_not_the_one_an_unanswered_insert_left(  # noqa: E501 (a test's name)
+    deleted: bool,  # noqa: FBT001 (a parameter of the test)
+    backups: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An insert got no answer in the block, and the module there has a lower ID.
+
+    The run knows module 50: an earlier block found it, or this block did and
+    deleted it. A module the unanswered insert stored would have a higher ID
+    than 50, so module 40 is another writer's, whatever the block sent.
+    """
+    fake = replaceable_lab()
+    del fake.store.rows[1]
+    fake.module(50, 10, "QOS", QOS)  # the QoS module of edge 5, under a high ID
+    lab = await opened(fake, monkeypatch)
+    known = lab.edge_site(lab.layouts[0], Name.QOS)
+    site = known if deleted else lab.edge_site(lab.layouts[2], Name.QOS)
+    theirs = {**QOS, "added": 1}
+    if not deleted:
+        async with live.restoring(known):
+            pass  # a block that is closed again found module 50
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012 (restoring raises as it exits, so the block holds the run it restores)
+        async with live.restoring(site):
+            if deleted:
+                await live.delete_module(site, 50)
+            fake.before = insert_not_answered
+            with pytest.raises(httpx.ReadTimeout):
+                await live.insert_module(site, copy.deepcopy(QOS), None)
+            fake.before = None
+            fake.module(40, site.configuration_id, "QOS", theirs)
+    if deleted:
+        (backup,) = backups.iterdir()
+        refusal = f"{ANOTHER_MODULE}; the original QOS module is saved at {backup}"
+    else:
+        refusal = NOT_INSERTED
+    assert str(caught.value) == refusal
+    assert fake.data(40) == theirs
+    assert deletes_of(fake) == ([50] if deleted else [])
+    assert "updateConfigurationModule" not in fake.methods()
+
+
+async def test_a_later_block_does_not_take_a_module_for_an_earlier_blocks_unanswered_insert(  # noqa: E501 (a test's name)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The record of an insert that got no answer goes with its block."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    async with live.restoring(site):
+        fake.before = insert_not_answered
+        with pytest.raises(httpx.ReadTimeout):
+            await live.insert_module(site, copy.deepcopy(QOS), None)
+        fake.before = None
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012 (restoring raises as it exits, so the block holds the run it restores)
+        async with live.restoring(site) as original:
+            assert original is None
+            # An administrator creates the module while the later block is open.
+            fake.module(77, 12, "QOS", QOS)
+    assert str(caught.value) == NOT_INSERTED
+    assert 77 in fake.store.rows
+    assert deletes_of(fake) == []
+
+
+async def test_an_insert_cancelled_once_it_was_sent_is_recorded_as_one_that_got_no_answer(  # noqa: E501 (a test's name)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    stores = ModuleStore.__call__
+
+    def stores_then_cancels(
+        self: ModuleStore, request: httpx.Request
+    ) -> httpx.Response:
+        answer = stores(self, request)
+        if json.loads(request.content)["method"].endswith("insertConfigurationModule"):
+            raise asyncio.CancelledError
+        return answer
+
+    async with live.restoring(site):
+        with monkeypatch.context() as patched:
+            patched.setattr(ModuleStore, "__call__", stores_then_cancels)
+            with pytest.raises(asyncio.CancelledError):
+                await live.insert_module(site, copy.deepcopy(QOS), None)
+        (added,) = set(fake.store.rows) - {1, 2, 3}
+        assert run.inserted == {}
+        assert [block[0] for block in run.unanswered_inserts] == [site]
+    assert run.unanswered_inserts == []
+    assert set(fake.store.rows) == {1, 2, 3}
+    assert deletes_of(fake) == [added]
+
+
+async def test_a_second_module_that_was_there_when_the_block_opened_is_not_the_one_an_unanswered_insert_left(  # noqa: E501 (a test's name)
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An edge with two QoS modules, the second newer than every module the run knows.
+
+    The block finds the first. The test deletes that one, and its insert gets
+    no answer: the module the restore then reads is the second, which was
+    there before the block sent anything.
+    """
+    fake = replaceable_lab()
+    theirs = {**QOS, "added": 1}
+    fake.module(77, 10, "QOS", theirs)
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012 (restoring raises as it exits, so the block holds the run it restores)
+        async with live.restoring(site) as original:
+            assert original is not None
+            assert original.module_id == 1
+            await live.delete_module(site, 1)
+            fake.before = insert_not_answered
+            with pytest.raises(httpx.ReadTimeout):
+                await live.insert_module(site, copy.deepcopy(QOS), None)
+            fake.before = None
+    (backup,) = backups.iterdir()
+    assert str(caught.value) == (
+        f"{ANOTHER_MODULE}; the original QOS module is saved at {backup}"
+    )
+    assert fake.data(77) == theirs
+    assert "updateConfigurationModule" not in fake.methods()
+
+
+def status(code: int) -> httpx.Response:
+    return httpx.Response(code, text="secret-lab-name says no")
+
+
+def answered(**body: Any) -> httpx.Response:
+    return httpx.Response(200, json=make_jsonrpc_response(**body))
+
+
+type InsertEnd = tuple[
+    Callable[[], BaseException | httpx.Response], type[BaseException]
+]
+"""How an insert ends, nothing stored: what the fake lab raises or answers, and what
+the client then raises.
+"""
+
+UNANSWERED: dict[str, InsertEnd] = {
+    "ReadTimeout": (lambda: httpx.ReadTimeout("no answer"), httpx.ReadTimeout),
+    "ReadError": (lambda: httpx.ReadError("cut off"), httpx.ReadError),
+    "WriteTimeout": (lambda: httpx.WriteTimeout("slow"), httpx.WriteTimeout),
+    "WriteError": (lambda: httpx.WriteError("cut off"), httpx.WriteError),
+    "RemoteProtocolError": (
+        lambda: httpx.RemoteProtocolError("closed mid-answer"),
+        httpx.RemoteProtocolError,
+    ),
+    "CloseError": (lambda: httpx.CloseError("on closing"), httpx.CloseError),
+    "a cancellation": (asyncio.CancelledError, asyncio.CancelledError),
+    "an interrupt": (KeyboardInterrupt, KeyboardInterrupt),
+    "HTTP 500": (lambda: status(500), VcoHttpError),
+    "HTTP 503": (lambda: status(503), VcoHttpError),
+    "a result that cannot be read": (
+        lambda: answered(result={"unexpected": 1}),
+        ValidationError,
+    ),
+    "no result": (answered, VcoEmptyResultError),
+}
+"""Ends of an insert after which no answer says what became of it."""
+
+PLAIN_ERROR: dict[str, Any] = {"code": -32603, "message": "secret-lab-name has one"}
+"""An error of the Orchestrator with no list of codes."""
+
+ANSWERED: dict[str, InsertEnd] = {
+    "ConnectError": (lambda: httpx.ConnectError("refused"), httpx.ConnectError),
+    "ConnectTimeout": (lambda: httpx.ConnectTimeout("slow"), httpx.ConnectTimeout),
+    "PoolTimeout": (lambda: httpx.PoolTimeout("no connection"), httpx.PoolTimeout),
+    "HTTP 400": (lambda: status(400), VcoHttpError),
+    "HTTP 401": (lambda: status(401), VcoHttpError),
+    "an error with codes": (lambda: answered(error=REFUSAL), VcoOperationError),
+    "an error without codes": (
+        lambda: answered(error=PLAIN_ERROR),
+        VcoOperationError,
+    ),
+    "a result that states an error": (
+        lambda: answered(result={"error": "secret-lab-name has one", "rows": 0}),
+        ValidationError,
+    ),
+}
+"""Ends of an insert that say it was not transmitted, or that it failed."""
+
+
+async def insert_that_ends(fake: FakeLab, site: live.Site, end: InsertEnd) -> None:
+    """Send an insert to *site* that ends as *end*, with nothing stored."""
+    made, raised = end
+    failure = made()
+
+    def fails(method: str) -> None:
+        if method == INSERT and isinstance(failure, BaseException):
+            raise failure
+
+    fake.before = fails
+    fake.insert_response = failure if isinstance(failure, httpx.Response) else None
+    with pytest.raises(raised):
+        await live.insert_module(site, copy.deepcopy(QOS), None)
+    fake.before = fake.insert_response = None
+
+
+@pytest.mark.parametrize("how", list(UNANSWERED))
+async def test_an_insert_that_no_answer_says_the_end_of_is_recorded(
+    how: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    async with live.restoring(site):
+        await insert_that_ends(fake, site, UNANSWERED[how])
+        assert [block[0] for block in run.unanswered_inserts] == [site]
+    assert fake.methods().count("insertConfigurationModule") == 1
+
+
+@pytest.mark.parametrize("how", list(ANSWERED))
+async def test_an_insert_that_was_not_transmitted_or_was_answered_as_failed_is_not_recorded(  # noqa: E501 (a test's name)
+    how: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Such an insert stored nothing, so the module found afterwards is another's."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    run = live.run_of(lab.client)
+    theirs = {**QOS, "added": 1}
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012 (restoring raises as it exits, so the block holds the run it restores)
+        async with live.restoring(site):
+            await insert_that_ends(fake, site, ANSWERED[how])
+            assert run.unanswered_inserts == []
+            fake.module(77, 12, "QOS", theirs)  # another writer's, afterwards
+    assert str(caught.value) == NOT_INSERTED
+    assert fake.data(77) == theirs
+    assert deletes_of(fake) == []
+
+
+async def test_an_insert_answered_with_an_error_after_another_writers_module_arrived_leaves_it(  # noqa: E501 (a test's name)
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The error is the Orchestrator's answer to the collision: it arms nothing."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    theirs = {**QOS, "added": 1}
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012 (restoring raises as it exits, so the block holds the run it restores)
+        async with live.restoring(site):
+            fake.module(77, 12, "QOS", theirs)  # another writer's, first
+            await insert_that_ends(fake, site, ANSWERED["an error without codes"])
+    assert str(caught.value) == NOT_INSERTED
+    assert fake.data(77) == theirs
+    assert deletes_of(fake) == []
+
+
+async def test_a_module_in_place_of_the_one_found_is_left_where_the_run_did_not_delete_that_one(  # noqa: E501 (a test's name)
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An insert got no answer, and the run sent no delete of the module it found.
+
+    So the run did not take the original away: another writer replaced it.
+    """
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    theirs = {**QOS, "added": 1}
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012 (restoring raises as it exits, so the block holds the run it restores)
+        async with live.restoring(site):
+            await insert_that_ends(fake, site, UNANSWERED["ReadTimeout"])
+            # Someone replaces the module, in the UI, while the test runs:
+            del fake.store.rows[1]
+            fake.module(77, 10, "QOS", theirs)
+    (backup,) = backups.iterdir()
+    assert str(caught.value) == (
+        f"{ANOTHER_MODULE}; the original QOS module is saved at {backup}"
+    )
+    assert fake.data(77) == theirs
+    assert "updateConfigurationModule" not in fake.methods()
+
+
+async def test_a_second_module_an_unanswered_insert_left_beside_the_original_is_not_taken(  # noqa: E501 (a test's name)
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The test kept the original, and the Orchestrator lists the new module first."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[0], Name.QOS)
+    sent = {**QOS, "added": 1}
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012 (restoring raises as it exits, so the block holds the run it restores)
+        async with live.restoring(site):
+            fake.store.lose_answers = {
+                1
+            }  # the store's first write: stored, not answered
+            with pytest.raises(httpx.ReadTimeout):
+                await live.insert_module(site, sent, None)
+            (new,) = set(fake.store.rows) - {1, 2, 3}
+            fake.store.rows = {new: fake.store.rows.pop(new), **fake.store.rows}
+    (added,) = set(fake.store.rows) - {1, 2, 3}
+    (backup,) = backups.iterdir()
+    assert str(caught.value) == (
+        f"{ANOTHER_MODULE}; the original QOS module is saved at {backup}"
+    )
+    assert fake.data(added) == sent
     assert "updateConfigurationModule" not in fake.methods()
 
 

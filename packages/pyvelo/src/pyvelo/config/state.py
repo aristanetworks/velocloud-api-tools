@@ -53,6 +53,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
     new_edge_module,
 )
+from pyvelo.config.backhaul_check import check_backhaul_hubs, left_without_hub
 from pyvelo.config.errors import LayerNotSavedError, SaveValidationError
 from pyvelo.config.hub_steps import (
     HubStep,
@@ -62,6 +63,7 @@ from pyvelo.config.hub_steps import (
     role_disagreements,
 )
 from pyvelo.config.module_names import resolve_module_name
+from pyvelo.config.reference_mending import hub_list_members, hub_reference_mending
 from pyvelo.config.resolver import ResolverContext, ResolverRegistry
 from pyvelo.config.resolvers.hub import HubResolver
 from pyvelo.config.validation import ValidationError
@@ -177,17 +179,23 @@ class ConfigPlan:
       (``check_warnings``).
 
     A profile whose edit adds a hub to a segment's hub, bridge or backhaul
-    list, or removes one, has the role calls the save makes before it writes
-    the device settings (``steps``). ``render()`` shows them first, after the target
-    line, as a ``steps:`` line and a line for each, in the order they are
-    made:
+    list, or removes one, has the role calls the save makes right before it
+    writes the device settings (``steps``). ``render()`` shows them right
+    before the device settings block, as a ``steps:`` line and a line for
+    each, in the order they are made:
 
+        QOS: none
+        firewall: none
         steps:
           disable backhaul for Hub-B on segment Global Segment
           enable hub for Hub-A on segment Global Segment
+        deviceSettings: update
 
-    A profile's device settings module is written first, then the others in
-    the order the configuration lists them, and ``modules`` is in that order.
+    ``modules`` is in the write order. The device settings are written first,
+    and the role steps right before them; in a save that removes a hub from a
+    list (a plan with a ``disable`` step) they are written last, after the
+    other modules, so that a rule stops using a hub before the hub loses its
+    role. The other modules are in the order the configuration lists them.
 
     Paths are in the names the VCO uses. A value is JSON, cut to 80 characters;
     the two values of a "~" line are cut where they first differ. A secret
@@ -250,7 +258,15 @@ class ConfigPlan:
         """The plan as text to show before a save, in the format above."""
         lines = [m.render() for m in self.modules]
         if self.steps:
-            lines = ["steps:", *(f"  {step.render()}" for step in self.steps), *lines]
+            at = next(
+                (
+                    i
+                    for i, m in enumerate(self.modules)
+                    if m.name == ConfigurationModuleName.DEVICE_SETTINGS
+                ),
+                0,
+            )
+            lines[at:at] = ["steps:", *(f"  {step.render()}" for step in self.steps)]
         lines.extend(
             f"warning: {w.message}"
             for w in (*self.segment_warnings, *self.check_warnings)
@@ -532,11 +548,12 @@ class StateLock(asyncio.Lock):
 
     A task that holds the lock and asks for it again would wait for itself
     without end. Here ``acquire`` raises ``RuntimeError`` at once instead, so
-    ``ConfigPipeline.apply`` and ``save``, which take the lock themselves, fail
-    loudly when called inside an ``async with state.lock:`` block.
+    ``ConfigPipeline.apply``, ``assign_segment``, ``revert`` and ``save``, which
+    take the lock themselves, fail loudly when called inside an
+    ``async with state.lock:`` block.
 
     The check sees only the calling task. A task that holds the lock and waits,
-    inside the block, for another task that calls ``apply`` or ``save`` still
+    inside the block, for another task that calls one of them still
     deadlocks: that task waits for the lock, and nothing here can tell.
     """
 
@@ -578,9 +595,11 @@ class ConfigState:
     ``WriteNotAppliedError`` with the module as stored (``error.module``):
     the edits to that module are gone, and ``error.lost_edits`` lists them;
     ``error.redo_patch()`` is the patch that redoes them (``error.not_redone()``
-    lists those it leaves out). Objects taken from the state before a save
-    belong to the modules it replaced, and are detached: an edit through one
-    raises ``DetachedObjectError``, at once or at the next :meth:`plan`.
+    lists those it leaves out). :meth:`revert_module` puts a module back as
+    read the same way, from the snapshot, which takes back every edit to it.
+    Objects taken from the state before a save or a revert belong to the
+    modules it replaced, and are detached: an edit through one raises
+    ``DetachedObjectError``, at once or at the next :meth:`plan`.
 
     After a save that raised ``WriteOutcomeUnknownError``, or failed with any
     other error once an insert was sent, the state keeps the new module as it
@@ -607,18 +626,20 @@ class ConfigState:
     lock: StateLock = field(
         default_factory=StateLock, init=False, repr=False, compare=False
     )
-    """Held by ``ConfigPipeline.apply`` and ``save`` for the whole call, so that
-    they run one after the other. Code that edits the state by assignment from
-    another task may hold it around the edit (``async with state.lock:``).
-    ``apply`` and ``save`` called by the task that holds it raise
-    ``RuntimeError``. Do not wait, inside the block, for another task that calls
-    them: that task waits for the lock."""
+    """Held by ``ConfigPipeline.apply``, ``assign_segment``, ``revert`` and ``save``
+    for the whole call, so that they run one after the other. Code that edits
+    the state by assignment from another task may hold it around the edit
+    (``async with state.lock:``). Those four called by the task that holds it
+    raise ``RuntimeError``. Do not wait, inside the block, for another task that
+    calls them: that task waits for the lock."""
     unconfirmed_inserts: set[str] = field(
         default_factory=set, init=False, repr=False, compare=False
     )
     """The new modules an insert was sent for whose answer was not read: the VCO
     may hold them. The next save reads the configuration before it inserts one
-    of them."""
+    of them. ``ConfigPipeline.revert`` of one reads the configuration too, and
+    deletes the module it finds there when it holds exactly what this state's
+    module holds (``revert_module`` refuses it: it sends nothing)."""
     _made_into_unset: list[tuple[AnyStoredModule, bool]] = field(
         default_factory=list, repr=False
     )
@@ -754,7 +775,9 @@ class ConfigState:
     def replace_module(self, old: AnyStoredModule, new: AnyStoredModule) -> None:
         """Put *new* where *old* is in the target config.
 
-        *new* is the module as the VCO stored it.
+        *new* is the module as the VCO stored it; :meth:`revert_module` puts
+        the module as read back the same way, with *new* a copy of the
+        snapshot's.
 
         An edge module is bound to the profile layer. The snapshot takes a
         copy of *new*, and a later :meth:`plan` starts from *new*, so it does
@@ -802,6 +825,14 @@ class ConfigState:
                     snapshot.modules[at] = stored
         self._made_into_unset = [e for e in self._made_into_unset if e[0] is not old]
         # Last: the steps above work on *old* as a live module.
+        self._detach(old)
+
+    def _detach(self, old: AnyStoredModule) -> None:
+        """Mark *old*, a module the state no longer holds, and its objects detached.
+
+        It is recorded so that the next :meth:`plan` finds an in-place change
+        of a list or dict they hold.
+        """
         data = old.data
         refs = ref_only_values(data) if isinstance(data, VcoModel) else {}
         nodes = old.mark_detached()
@@ -822,6 +853,53 @@ class ConfigState:
             )
         )
 
+    def revert_module(self, name: ConfigurationModuleName | str) -> None:
+        """Put the target config's module *name* back as the VCO last gave it.
+
+        That is the module as loaded, or as the last save or write error left
+        it, from the snapshot (``snapshot_for_target``); every edit to it since
+        is gone. A module this state created is removed (:meth:`drop_module`),
+        and a name the target config has no module of changes nothing. No
+        other module is touched. The module taken out is replaced as
+        :meth:`replace_module` replaces it, or removed, and either way objects
+        taken from it before are detached. An intent-level name works.
+
+        It sends nothing, so it raises ``ValueError`` for a new module whose
+        insert may have reached the VCO (its name is in
+        ``unconfirmed_inserts``): ``ConfigPipeline.revert`` reads the
+        configuration for it and deletes it on the VCO. It also raises
+        ``ValueError`` for an unknown *name* and for a state with no snapshot
+        of the module (``take_snapshot`` was not called).
+        """
+        module = self.find_module(name)
+        if module is None:
+            return
+        if module.is_new:
+            if module.name in self.unconfirmed_inserts:
+                raise ValueError(
+                    f"{module.name}: an insert of this module may have reached the "
+                    "VCO (a save failed after it was sent), so its edits are not "
+                    "taken back here, which sends nothing: the state would forget "
+                    "the module, and a later save could insert it a second time. "
+                    'Revert it with `await pipeline.revert(state, module="'
+                    f'{module.name}")`, which reads the configuration and deletes '
+                    "the module on the VCO when it is the one this state holds; or "
+                    "save again, which reads the configuration before it inserts; "
+                    "or load the state again"
+                )
+            self.drop_module(module)
+            self._detach(module)
+            return
+        snapshot = cast("_AnyConfiguration | None", self.snapshot_for_target())
+        found = None if snapshot is None else _find_module(snapshot, module.name)
+        if found is None:
+            raise ValueError(
+                f"{module.name}: this state holds no copy of the module as read "
+                "(take_snapshot() was not called when the state was built), so "
+                "its edits cannot be taken back. Load the state again"
+            )
+        self.replace_module(module, copy.deepcopy(found))
+
     def _check_detached(self) -> None:
         """Raise ``DetachedObjectError`` for in-place changes to a replaced module.
 
@@ -841,7 +919,8 @@ class ConfigState:
             return
         raise DetachedObjectError(
             "\n".join(
-                f"{name}: objects taken from the state before a save were changed "
+                f"{name}: objects taken from the state before a save or a revert "
+                "were changed "
                 f"in place at: {', '.join(paths)}. The state holds the module as "
                 "stored; take the objects from the state again and redo the change"
                 for name, paths in found
@@ -924,12 +1003,16 @@ class ConfigState:
     def plan(self, *, repair_defaults: bool = True) -> ConfigPlan:
         """Plan the write of every module of the target config, in order.
 
-        The order is the write order: ``deviceSettings`` first, for every
-        target, then the other modules in the order the configuration lists
-        them. Each module is planned relative to the raw data it was read
-        from. An edge module also reconciles its segments with the profile's
-        module of the same name. Raises ``LossyFieldError`` if an edit cannot
-        be written.
+        The order is the write order. The device settings are written first,
+        and the role steps right before them; in a save that removes a hub
+        from a list (a plan with a ``disable`` step) they are written last,
+        after the other modules, so that a rule stops using a hub before the
+        hub loses its role. The other modules are in the order the
+        configuration lists them, for every target (an edge has no steps).
+        The checks below run before that order is made. Each module is
+        planned relative to the raw data it was read from. An edge module
+        also reconciles its segments with the profile's module of the same
+        name. Raises ``LossyFieldError`` if an edit cannot be written.
 
         First, raises ``DetachedObjectError`` naming the paths if objects of a
         module :meth:`replace_module` replaced were changed in place; once for
@@ -968,6 +1051,12 @@ class ConfigState:
         checks of the hub lists come after the segment-set rule and before
         the reference check.
 
+        Right after the reference check, a QoS rule that backhauls to hubs and
+        names none raises ``BackhaulWithoutHubError``
+        (:func:`~pyvelo.config.backhaul_check.check_backhaul_hubs`), and
+        ``check_warnings`` has a ``backhaul_without_hub_kept`` warning for one
+        that named none as read.
+
         Raises ``ResolverNotLoadedError`` when a provider was set and the
         state's network services are not loaded (:meth:`plan_module`), or a
         hub was added and the state's hubs are not. A save, a dry run and
@@ -992,6 +1081,15 @@ class ConfigState:
         as_read = {p.name: p.as_read for p in plans}
         steps, hub_warnings = self._hub_steps(ordered, as_read)
         check_warnings = self._check_references(ordered, as_read)
+        check_warnings += check_backhaul_hubs(ordered, as_read)
+        if any(step.action == "disable" for step in steps):
+            # A rule stops using a hub before the hub loses its role.
+            plans = tuple(
+                sorted(
+                    plans,
+                    key=lambda p: p.name == ConfigurationModuleName.DEVICE_SETTINGS,
+                )
+            )
         return ConfigPlan(
             modules=plans,
             target=target,
@@ -1099,8 +1197,11 @@ class ConfigState:
         the values are looked up in are those of the target's modules as edited and, for
         an edge, the profile's modules as read that can provide a set (parsed here); the
         sets as read are those of the modules as read. Raises ``DanglingReferenceError``
-        for a value that is new, or was a member and no longer is; returns a
-        ``reference_kept`` warning for one that named nothing as read and does still.
+        for a value that is new, or was a member and no longer is, with the patches that
+        mend a hub reference (``hub_reference_mending``; the hub lists are those of the
+        target's device settings as edited, or for an edge of the profile's as read);
+        returns a ``reference_kept`` warning for one that named nothing as read and does
+        still.
         """
         level = self._level()
         profile_models = self._profile_as_read() if level is ConfigContext.EDGE else []
@@ -1120,8 +1221,27 @@ class ConfigState:
         )
         findings = check_references(targets, sets_now, sets_as_read)
         if findings.dangling:
+            edited_by_name = {name: edited for name, edited, _ in targets}
+            hub_lists = (
+                next(
+                    (m for m in profile_models if isinstance(m, DeviceSettingsData)),
+                    None,
+                )
+                if level is ConfigContext.EDGE
+                else edited_by_name.get(ConfigurationModuleName.DEVICE_SETTINGS)
+            )
+            only_hubs = left_without_hub(findings.dangling, edited_by_name)
             raise DanglingReferenceError(
-                findings.dangling, on_edge=level is ConfigContext.EDGE
+                findings.dangling,
+                on_edge=level is ConfigContext.EDGE,
+                mending=hub_reference_mending(
+                    findings.dangling,
+                    edited_by_name,
+                    hub_list_members(hub_lists),
+                    target_type=self.target_type,
+                    only_hubs=only_hubs,
+                ),
+                only_hubs=only_hubs,
             )
         return tuple(
             ValidationWarning(

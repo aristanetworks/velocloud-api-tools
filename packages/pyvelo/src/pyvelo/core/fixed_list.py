@@ -16,7 +16,7 @@ for owners: that is computed once per class (``holds_fixed_list``).
 import functools
 from collections.abc import Iterator
 
-from pyvelo.core.base import VcoModel, field_models, is_dict, is_list
+from pyvelo.core.base import VcoModel, is_dict, is_list
 from pyvelo.core.fields import FixedList, get_fixed_list
 from pyvelo.core.rebase import (
     KeyedList,
@@ -30,6 +30,7 @@ from pyvelo.core.rebase import (
     pair_items,
     wire_keys,
 )
+from pyvelo.core.walk import can_hold_field
 
 LIST_GONE = "the list is gone"
 LIST_BUILT = "a list built where there was none"
@@ -45,18 +46,7 @@ def holds_fixed_list(model_cls: type[VcoModel]) -> bool:
     class that can (through ``Annotated``, unions, ``list`` and ``dict``). It is
     computed from the declared field types, once per class.
     """
-    seen: set[type[VcoModel]] = set()
-    pending = [model_cls]
-    while pending:
-        current = pending.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        for field_info in current.model_fields.values():
-            if get_fixed_list(field_info) is not None:
-                return True
-            pending.extend(field_models(field_info))
-    return False
+    return can_hold_field(model_cls, lambda info: get_fixed_list(info) is not None)
 
 
 def _node_model(node: Node) -> type[VcoModel] | None:

@@ -388,6 +388,18 @@ def _is_owned_below(
     return _is_owned(rewrites, parent, parts[-1], below)
 
 
+def is_owned_path(
+    path: Path, model: type[VcoModel] | None, rewrites: Rewrites = _NO_REWRITES
+) -> bool:
+    """Whether *path*, from the top of data of *model*, ends at a key the VCO owns.
+
+    It is judged as the check judges a key: a field marked ``ServerOwned``, or
+    a path a pattern of ``rewrites.server_owned`` matches. A path whose last
+    part is an item of a list, not a key, is not owned.
+    """
+    return _is_owned_below(rewrites, Path(()), model, path)
+
+
 def _differences(
     path: Path, old: object, new: object, node: _CheckNode
 ) -> list[RawChange]:

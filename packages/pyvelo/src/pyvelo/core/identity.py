@@ -19,6 +19,7 @@ from typing import Annotated, Any, ClassVar, Literal, NewType, cast, override
 from pydantic import BeforeValidator, PlainSerializer
 
 from pyvelo.core.enums import ModelNumber, NetworkSegmentType
+from pyvelo.core.mending import backhaul_hub_mending
 
 
 class ResolutionError(KeyError):
@@ -632,26 +633,20 @@ class HubServiceNotFoundError(ResolutionError):
         # *hub* is the hub's name, else its logical ID.
         try:
             _ = uuid.UUID(self.hub)
-            key = "logicalId"
+            by_logical_id = True
         except ValueError:
-            key = "name"
-        add = {
-            "segments": {
-                self.segment: {
-                    "vpn": {
-                        "edgeToEdgeHub": {
-                            "vpnHubs": {"+": {"_op": "add", key: self.hub}}
-                        }
-                    }
-                }
-            }
-        }
+            by_logical_id = False
+        patch = backhaul_hub_mending(
+            self.segment, self.hub, by_logical_id=by_logical_id
+        ).patch
         return (
             f"{self.path} names the hub {self.hub!r}, which has no service for "
             f"this profile in the segment {self.segment!r}, so the row that "
             "goes with the rule cannot be added: the VCO would store a row "
             "that points at nothing. A hub gets its service when a save of "
             "the profile's device settings adds it to the segment's "
-            "Branch-to-Hub list, so save the hub first and the rule after. "
-            f"To add the hub to the list, send the patch {json.dumps(add)}."
+            "Branch-to-Hub list, and a rule's hub is in the segment's backhaul "
+            "list too, so save the hub first and the rule after. If the hub is "
+            f"in neither list yet, send the patch {json.dumps(patch)} to the "
+            "profile's device settings, and save."
         )

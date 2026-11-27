@@ -41,7 +41,7 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.state import ConfigState
-from pyvelo.core import add, delete
+from pyvelo.core import add, backhaul_hub_mending, delete
 from pyvelo.testing import MockVcoClient, make_module_json
 from refs_helpers import QOS_ID, segment_row
 from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
@@ -337,6 +337,15 @@ async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile() -> None:
     assert "This is an Edge" in str(error.value)
     assert f'"{GLOBAL[1]}": {{"vpn"' in str(error.value)
     assert f'"name": "{HUB_B.name}"' in str(error.value)
+    remove, member = error.value.mending
+    assert (remove.kind, remove.target_type, remove.module) == (
+        "remove_reference",
+        "edge",
+        QOS,
+    )
+    assert member == backhaul_hub_mending(GLOBAL[1], HUB_B.name, in_hub_list=True)
+    await patch(state, remove.module, remove.patch)
+    assert state.plan().warnings == ()
 
 
 async def test_an_edge_rule_naming_a_backhaul_hub_of_the_profile_is_accepted() -> None:

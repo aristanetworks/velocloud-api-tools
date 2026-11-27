@@ -130,8 +130,52 @@ must be a `dict`.
 
 `apply` changes `state` in place and returns that same object: `candidate =
 await pipeline.apply(state, ...)` gives no second state to fall back on
-(`candidate is state`). To try a patch and drop it, load the state again.
-`apply` is a coroutine: without `await` it applies nothing.
+(`candidate is state`). `apply` is a coroutine: without `await` it applies
+nothing.
+
+To take a module's edits back, `await pipeline.revert(state,
+module="firewall")` puts the module back as the VCO last gave it (as loaded,
+or as the last save or write error left it): every edit to it since is gone,
+not the last patch alone, however it was made, and a module the state created
+is removed. No other module is touched and nothing is cascaded: the next
+`plan()` judges what is left, so an edit elsewhere that relied on this module
+is refused there (`SegmentSetError`, `DanglingReferenceError`). Objects taken
+from the state before are detached, as after a save, and nothing is sent,
+except for a new module whose insert may have reached the VCO after a failed
+save (`state.unconfirmed_inserts`). For that one `revert` reads the
+configuration for a module of its name, as the next save would before it
+inserts. Of several rows of the name, only the last inserted (the highest ID)
+is looked at and deleted; an older one stays on the VCO. With none there, the
+module is removed and nothing else is sent. A stored module is deleted with
+`configuration/deleteConfigurationModule`, and then removed from the state,
+only when it holds exactly what this state's new module holds: nothing missing,
+nothing more, apart from the values the VCO itself assigns (such as a firewall
+rule's logical ID). Any other module of the name is not deleted, since that could
+remove another writer's module: `revert` raises `ValueError` and changes
+nothing. Such a module may be another writer's, one this state edited after
+the insert was sent, or one with values this state's lacks, so a VCO that adds
+values of its own to a module as it inserts it, at keys the library does not
+mark as the VCO's, makes `revert` refuse. You then
+save again (which goes on from the module it finds) or load the state again
+(which then holds that module as stored).
+A new module that plans nothing (its edits were taken out again) gives no
+change to tell the stored module by, so with a module of the name stored
+`revert` refuses too: load the state again, which then holds that module as
+stored. A module that cannot be planned (`LossyFieldError` and the like) is
+refused before anything is read: load the state again. A failed read (also one
+that does not parse, `WriteOutcomeUnknownError`) or delete, or a delete
+answered with an error or a row count of 0 (`VcoOperationError`), leaves the
+state as it was, and `revert` can be called again; an answer with no row count
+is taken as the delete done. `state.revert_module(name)` sends nothing, so it
+refuses such a module and names `pipeline.revert`.
+`revert` takes back edits, not what a save already did: a role step a save
+sent before it stopped (see "Hubs", "When a step fails") stays on the VCO, and
+a state whose device settings edits are taken back plans nothing that mends
+it, so after a `SaveStepError` save again instead.
+`revert` also raises `ValueError` for a state built without `take_snapshot()`,
+and, for a new module whose insert may have reached the VCO, on a pipeline
+with no client (`ConfigPipeline(client=None)`): it needs one to read and
+delete.
 
 A patch is strict and all or nothing:
 
@@ -573,9 +617,12 @@ firewall: update
   count. A value is shown as JSON, cut to 80 characters, and the two values of
   a `~` line are cut where they first differ. `SaveResult.plan` is the same
   plan, and `dry_run=True` reports it without writing.
-- The plan lists `deviceSettings` first, then the other modules in the order the
-  configuration lists them, for an edge as for a profile, and a save writes
-  them in that order.
+- The plan lists the modules in the order a save writes them. The device
+  settings are written first, and the role steps right before them; in a save
+  that removes a hub from a list (a plan with a `disable` step) they are written
+  last, after the other modules, so that a rule stops using a hub before the hub
+  loses its role. The other modules are in the order the configuration lists
+  them, for an edge as for a profile (an edge has no steps).
 - A profile's device settings, QoS and firewall modules hold the same
   segments, so `plan()` compares the three by `segmentId`. An edit that removes
   a segment from one raises `SegmentSetError` (from `pyvelo.config`), except
@@ -598,15 +645,91 @@ firewall: update
   `DanglingReferenceError` (from `pyvelo.config`), naming each value, its
   module and its path, for a value the edit adds, or one whose segment or hub
   the edit removes. An edge's values are checked against its profile's device
-  settings as read as well as its own. A value that named nothing as read, at
-  the same path, is left as it is: a `reference_kept` warning in
-  `ConfigPlan.check_warnings` (also in `ConfigPlan.warnings` and
-  `SaveResult.warnings`), and a `warning: <message>` line in `render()`.
-  `client.update_module` writes one module and does not run the check.
+  settings as read as well as its own. `apply` accepts an edit that leaves such
+  a value, so that two edits that are only right together go in either order;
+  `plan()`, `save` and a dry run refuse the state until it is mended. For a
+  hub, `error.mending` holds the patches that mend it, as `MendingPatch`
+  objects (from `pyvelo.config`) with seven fields: `kind`, `does` (one line
+  that says what the patch does), `target_type`, `module`, `patch`, `segment`
+  and `path`. A `remove_reference` patch takes the hub out of the rule that
+  names it; an `add_member` patch makes it a backhaul hub of the rule's
+  segment. The `remove_reference` patches come first, and the patches of one
+  kind together mend every hub reference of the error: send those of one kind.
+  No `remove_reference` patch is offered, for any reference of the error, when
+  those patches together would leave a rule that backhauls through hubs
+  (`routePolicy` `"backhaul"`, `routeCfg.type` `"edge"`) with no hub (each hub
+  the rule names is one of the references): such a rule backhauls nowhere (see
+  `BackhaulWithoutHubError` below). `error.only_hubs` then holds those
+  references, as `Reference` objects, and the message says so: make the hub a
+  backhaul hub again with the `add_member` patch; or first give the rule
+  another hub or change its `routePolicy`, and the next `plan()` offers the
+  `remove_reference` patch again, which mends the reference; or delete the
+  rule, which takes the reference with it. Emptying a rule that does not
+  backhaul through hubs withholds nothing: the removal patches are withheld,
+  all of them, only when one of them would leave a rule that backhauls through
+  hubs with no hub.
+  `module`, `patch`, `segment` and `path` are `apply`'s arguments
+  (`await pipeline.apply(state, module=m.module, patch=m.patch,
+  segment=m.segment, path=m.path)`), `target_type` says which configuration
+  the patch is for (`"edge"` or `"profile"`), and `dataclasses.asdict(m)` is a
+  JSON object; the message gives each patch as `send <JSON> to <module>`. On
+  an edge, the `add_member` patch is for the profile's device settings: load
+  the profile, apply it and save it, then load the Edge again and redo its edit
+  (the Edge state holds the profile as it was loaded). Or take the edits back
+  with `pipeline.revert(state, module=...)`. A value that named nothing as read, at the same path, is left as it is: a
+  `reference_kept` warning in `ConfigPlan.check_warnings` (also in
+  `ConfigPlan.warnings` and `SaveResult.warnings`), and a
+  `warning: <message>` line in `render()`. `client.update_module` writes one
+  module and does not run the check.
+- A QoS rule's route action (`edge2EdgeRouteAction`,
+  `edge2DataCenterRouteAction` or `edge2CloudRouteAction`, whatever the rule's
+  `routeType` says) whose `routePolicy` is `"backhaul"` and whose
+  `routeCfg.type` is `"edge"` sends its traffic to the hubs of its
+  `routeCfg.backhaulEdges`, and must name one: `backhaulEdgesAutoSelection`
+  does not stand in for it. With none, the VCO would store a rule that
+  backhauls nowhere. `plan()` checks every module of the target, right after
+  the references, and raises `BackhaulWithoutHubError` (from `pyvelo.config`)
+  for a route action the edits leave with no hub: a patch that deletes its
+  last hub, a rule added with none, a rule set to backhaul with none.
+  `error.places` names each route action, with its `module`, `path`,
+  `segment_name` and `rule_name`; the message gives the patches that mend the
+  first, with the module they go to, and says that the others are mended the
+  same way. `apply` accepts the edit, as for a reference. After
+  `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge2CloudRouteAction":
+  {"routeCfg": {"backhaulEdges": {"Hub-A": {"_op": "delete"}}}}}}}}}}` takes the
+  only hub out of the rule `Web`, the error begins:
+
+  ```text
+  1 backhaul rule(s) name no hub:
+    QOS segments[Guest].rules[Web].action.edge_to_cloud_route_action: rule 'Web' of segment 'Guest'
+  ```
+
+  Any one of these, sent to `QOS`, mends it: give the rule a hub that is a
+  backhaul hub of its segment (one of the segment's `vpn.backHaulEdges`), by
+  name or `edgeLogicalId`, with
+  `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge2CloudRouteAction":
+  {"routeCfg": {"backhaulEdges": {"+": {"_op": "add", "name": "Hub-B"}}}}}}}}}}`;
+  route it another way with `{"segments": {"Guest": {"rules": {"Web":
+  {"action": {"edge2CloudRouteAction": {"routePolicy": "gateway"}}}}}}}`
+  (`"auto"`, `"direct"` or `"gateway"`); or delete the rule with
+  `{"segments": {"Guest": {"rules": {"Web": {"_op": "delete"}}}}}`. A rule of
+  the segment's `defaults` cannot be deleted: when the first rule listed is one,
+  the message gives the first two ways only, and says why (and that a later
+  rule that is not a default rule can be deleted too); when the first rule
+  listed can be deleted, the default rules listed after it are named as rules
+  that cannot be deleted and take the first two ways only. Or take the
+  module's edits back with `pipeline.revert(state, module="QOS")`. A route
+  action that had no hub as read, at the same path (the same route action of
+  the same rule of the same segment), is left as it is: a
+  `backhaul_without_hub_kept` warning in `ConfigPlan.check_warnings` (also in
+  `ConfigPlan.warnings` and `SaveResult.warnings`), and a `warning: <message>`
+  line in `render()`.
 - A hub added to or removed from a profile segment's hub, bridge or backhaul
-  list has role steps (`ConfigPlan.steps`), which `render()` shows first and a
-  save sends before it writes the modules, and a hub row that the device
-  settings write carries. "Hubs", below, has all of it.
+  list has role steps (`ConfigPlan.steps`), which `render()` shows right before
+  the device settings block and a save sends right before it writes the device
+  settings, and a hub row that the device settings write carries. A save that
+  removes a hub writes the device settings, and so the steps, after the other
+  modules. "Hubs", below, has all of it.
 - A segment added to a profile module has an `added segments: Guest` line, and
   `get_field_changes()` lists it as one change at `segments["Guest"]`, from
   `MISSING` to the entry as written. A QoS segment that lacks template
@@ -823,8 +946,8 @@ a divergence you have understood, which gets an entry with its reason.
 A profile holds each of its segments in three modules: device settings, QoS and
 firewall. `pipeline.assign_segment(state, "Guest")` adds the entry the
 Orchestrator UI makes for a new segment to each of them that lacks it, in
-memory, and the next save writes them, device settings first, with its
-`deviceSettings:segment` row:
+memory, and the next save writes them, device settings first unless the same
+save removes a hub, with its `deviceSettings:segment` row:
 
 ```python
 state = await pipeline.load_profile("Branch profile", enterprise_id=1)
@@ -886,23 +1009,31 @@ result = await pipeline.save(state)
 - All or nothing: the assignment is first planned on copies of the modules, and
   an error leaves the state and `plan()` as they were. The call holds
   `state.lock`, as `apply` does.
-- The save writes the three modules, one request each, device settings first,
-  with the new `deviceSettings:segment` row and every other row as read, then
-  QoS, then firewall. Writing device settings can change the other two, so each
-  is read for its version and rebased when it changed (see "After a save"): your
-  edits go onto the module as it is then, together with the entry of the
-  assignment and the template `defaults` the write repairs, with the IDs they
-  were planned with. A module that holds a segment this save adds by then
-  (another writer assigned it) raises `ConfigConflictError`, with `error.sent`
-  False, which names every such segment, and sends nothing for that module.
-- A write that fails after device settings is stored leaves the profile with
-  the segment in device settings and not in the module that failed, and
-  `plan()` raises `SegmentSetError`, which names the segment and the modules
-  that lack it. For a write that lost the segment, a `ConfigConflictError` (the
-  usual case: the VCO answered with the module and nothing of the write stored)
-  or a `WriteNotAppliedError`, `error.redo_patch()` is the assignment again,
-  with the edits made to the entry inside it
-  (`{"segments": {"Guest": {"_op": "add", ...}}}`), and
+- The save writes the three modules, one request each. As a rule the device
+  settings come first, with the new `deviceSettings:segment` row and every
+  other row as read, then QoS, then firewall. Writing device settings can
+  change the other two, so each is read for its version and rebased when it
+  changed (see "After a save"): your edits go onto the module as it is then,
+  together with the entry of the assignment and the template `defaults` the
+  write repairs, with the IDs they were planned with. A module that holds a
+  segment this save adds by then (another writer assigned it) raises
+  `ConfigConflictError`, with `error.sent` False, which names every such
+  segment, and sends nothing for that module. In a save that also removes a hub
+  (see "Hubs") the order is the reverse: QoS and firewall first, not rebased,
+  then the role steps, then the device settings with the row.
+- A write that fails part way leaves the segment in the modules stored before
+  it and not in the others: with the device settings first, in device settings
+  and not in the module that failed; in a save that removes a hub, in QoS and
+  firewall and not in the device settings (when a step was sent, the save
+  raises `SaveStepError` from the write's error, which is the `error` below).
+  For a write that lost the segment, a `ConfigConflictError` (the usual case:
+  the VCO answered with the module and nothing of the write stored) or a
+  `WriteNotAppliedError`, the state holds that module as stored: for QoS or
+  firewall, `plan()` raises `SegmentSetError`, which names the segment and the
+  modules that lack it; for the device settings, with the segment stored in
+  the other two, `plan()` warns `segments_disagree` instead. Either way
+  `error.redo_patch()` is the assignment again, with the edits made to the
+  entry inside it (`{"segments": {"Guest": {"_op": "add", ...}}}`), and
   `apply(state, module=error.module_name, patch=error.redo_patch())` makes it,
   so that the next `save` writes the modules that are left. Template
   `defaults` that a write repaired and the VCO did not store are neither
@@ -973,10 +1104,17 @@ edit needs, then writes the module.
   backhaul, enable bridge; within one kind, the segments in the order of the
   module's `segments`, then the hubs in the order of their list. A hub removed
   from a segment's hub list gets no backhaul or bridge disable there: disabling
-  the hub clears its roles. `render()` shows them first, after the target line:
+  the hub clears its roles. `render()` shows them right before the device
+  settings block, where the save sends them. The device settings are written
+  first, and the role steps right before them; in a save that removes a hub
+  from a list (a plan with a `disable` step) they are written last, after the
+  other modules, so that a rule stops using a hub before the hub loses its
+  role. This plan removes Hub-A, so the device settings come last:
 
   ```text
   profile "Branch profile", configuration 100
+  QOS: none
+  firewall: none
   steps:
     disable hub for Hub-A on segment Global Segment
     enable hub for Hub-B on segment Global Segment
@@ -1011,7 +1149,9 @@ edit needs, then writes the module.
   lines in `render()`): `hub_list_as_read` for a rule that is broken the same
   way as read (the save leaves it), `hub_roles_disagree` for a hub whose roles
   as read do not match the lists it is in, `reference_kept` for a value that
-  names nothing as read and still does not, and `hub_in_use` (below). One module
+  names nothing as read and still does not, `backhaul_without_hub_kept` for a
+  rule that backhauls to hubs and named none as read, and `hub_in_use`
+  (below). One module
   alone cannot change these lists: `client.update_module` and `plan_module`
   raise `HubListError` for a payload that does.
 - **The save.** A save with steps does this, in order. It reads the version of
@@ -1022,12 +1162,17 @@ edit needs, then writes the module.
   write whose answer was lost, counts as written). It reads the hub services
   (two requests) and decides every step from them, which steps are in place and
   the ID each call takes, so that a refusal (a hub whose service the VCO holds
-  twice is a `HubListError`) comes before the first call. It sends each step
-  the VCO does not already have in place, reads the services again, and writes
-  the device settings with the hub rows the steps made, without reading the
-  version a second time. The write is the module as read with your edits and
-  `deviceSettings:vpn:edgeHub` (`edgeHubCluster` for a cluster) rows: a hub
-  added to the Branch-to-Hub list gets one, whose object is its service
+  twice is a `HubListError`, and so is a hub in use with
+  `on_hub_in_use="refuse"`, below) comes before the first write. Then it writes
+  the modules the plan lists before the device settings (in a save that removes
+  a hub, QoS and firewall: a rule that stops using the hub is stored before the
+  hub loses its role), sends each step the VCO does not already have in place,
+  reads the services again, writes the device settings with the hub rows the
+  steps made, without reading the version a second time, and then writes the
+  modules the plan lists after them. The device settings write is the module as
+  read with your edits and `deviceSettings:vpn:edgeHub` (`edgeHubCluster` for a
+  cluster) rows: a hub added to the Branch-to-Hub list gets one, whose object
+  is its service
   (`+ refs deviceSettings:vpn:edgeHub (Global Segment): <service ID>` in
   `ModuleWrite.plan`), and a hub removed from it loses its row. A row of a hub
   that stays is never removed, and a hub the VCO has no service for after its
@@ -1041,14 +1186,39 @@ edit needs, then writes the module.
   (`module_name` names it), `steps_done` and `steps_in_place` list the others,
   and `written` the modules stored; `save_progress(error)` gives the modules
   not written. A failure before any step was sent (the version read, the
-  services read, a write when every step was in place) propagates as it is, and
-  so does a cancellation. Nothing a step did is undone and the state keeps its
-  edits: a second `save(state)` plans the steps again, finds the ones sent in
-  place, sends the rest and writes the modules.
+  services read, a write of a module before the steps, a write when every step
+  was in place) propagates as it is, and so does a cancellation. Nothing a step
+  did is undone and the state keeps its edits: a second `save(state)` plans the
+  same order again, finds the steps sent in place, sends the rest and writes the
+  modules that are left. Do not take the device settings' edits back with
+  `revert` instead: it does not undo a step a save sent, so the hub keeps the
+  role change on the VCO (a removed hub has lost its service while the stored
+  lists still name it), and the reverted state plans nothing and warns of
+  nothing.
 - **The removal window.** Once a hub's disable has run, its service, its row
-  and the refs that point at it are gone, so if the module write then fails the
-  stored profile still lists the hub while the VCO drops it for every Edge,
-  until a second `save` finishes. The Orchestrator UI has the same window.
+  and the refs that point at it are gone. The profile's own rules are written
+  before the disable, so a rule of the profile that stops using the hub is
+  stored without it first, and the window holds no rule of the profile that
+  backhauls through a hub with no service. If the device settings write then
+  fails, the stored profile still lists the hub while the VCO drops it for
+  every Edge, until a second `save` finishes. The Orchestrator UI has the same
+  window. A hub swap in one save (one hub out, and a rule moved to another hub
+  that the same save makes a backhaul hub) opens a window of its own: the rule
+  is written before the new hub has its role, so a save that stops between the
+  two (a step that fails, the device settings write that fails) leaves a stored
+  rule that names a hub the stored backhaul list does not hold yet, until a
+  second `save` finishes. To have no such window, save the addition first (the
+  new hub in the backhaul list) and the removal, with the rule moved, after.
+- **A removal and an edit that needs the device settings first.** In a save
+  that removes a hub, QoS and firewall are written before the device settings.
+  A QoS or firewall edit that the VCO takes only after a device settings change
+  of the same save (a rule that turns conditional backhaul on, in the save that
+  turns it on for the segment) has that write refused by the VCO, first and
+  with nothing else written: save the device settings change on its own first,
+  then the rest. The same goes for a rule moved to a hub that the same save
+  makes a backhaul hub: the VCO takes the rule, but it is stored before the hub
+  has its role (see "The removal window"), so save the addition first when no
+  such window may open.
 - **A hub that rules use.** An Edge hub removed from a Branch-to-Hub list that
   edge QoS rules use loses its service to the role call, and with it the
   backhaul refs of those rules, which keep the hub in their data. The services
@@ -1064,12 +1234,17 @@ edit needs, then writes the module.
   points at it. A hub that is not saved there has no service: it is saved first
   and the rule after, in two saves, and `apply` raises `HubServiceNotFoundError`
   for a hub added to the lists in the same unsaved edit, with the patch that
-  adds it. An entry built by assignment without its `logicalId` raises the same
+  adds it to both lists. An entry built by assignment without its `logicalId` raises the same
   error at `plan()`. The rule's hub must be in the segment's `backHaulEdges`,
   and a value that names a segment or a hub the configuration does not have is a
-  `DanglingReferenceError` (see "What a save writes"), so a hub that a rule of
-  the profile still names cannot be taken out of `backHaulEdges`: remove the
-  rule's use in the same edit, or before.
+  `DanglingReferenceError` (see "What a save writes"). Taking a hub that a rule
+  of the profile still names out of `backHaulEdges`, and out of the rule, are
+  two edits that go in either order: `plan()` refuses the state until both
+  are made, and the error's `mending` holds the patch for each way to mend it
+  (no patch takes the last hub out of a rule that backhauls through hubs:
+  `error.only_hubs`).
+  A rule that backhauls to hubs must keep one: deleting its last hub is a
+  `BackhaulWithoutHubError` (see "What a save writes").
 - **Not supported.** Creating a hub, an Edge or a cluster, or a cluster's
   members; and role calls from an edge (an edge state has no steps: its QoS
   rules name the hubs of its profile).
@@ -1142,10 +1317,10 @@ the state continues from that module. Otherwise the save raises
 nothing was sent: `error.module` is the module as it is now, with your edits in
 `lost_edits` to redo on it. A module its configuration no longer holds raises it
 too, with `error.module` None: read the configuration again.
-A save with role steps makes this read before its first step instead
-(`client.check_module_version`), so that a module another writer changed stops
-it with nothing sent, and the device settings write that follows does not read
-again.
+A save with role steps makes this read of the device settings before its first
+write or step instead (`client.check_module_version`), so that a module another
+writer changed stops it with nothing sent, and the device settings write that
+follows the steps does not read again.
 
 A save of a profile that writes its device settings rebases the modules it
 writes after them. Writing device settings can change the profile's other
@@ -1163,10 +1338,13 @@ the module already holds every one of your changes, nothing is sent for it. A
 ref row your edit adds or removes (a QoS rule's backhaul hub) is derived again
 against the refs read, so a row already there is not added twice, and the hub's
 service is found in the device settings as that save stored them. The
-modules written before the device settings, and every module of an edge save,
-are not rebased: a changed version raises as above. The cost is one version
-read per module written after the device settings, and one full read of the
-module when its version changed.
+modules written before the device settings (QoS and firewall, in a save that
+removes a hub: see "Hubs"), and every module of an edge save, are not rebased:
+a changed version raises as above. A device settings write that changes such a
+module on the VCO after it was stored leaves the state with the module as it
+was stored, so the next write of it meets the changed version. The cost is one
+version read per module written after the device settings, and one full read of
+the module when its version changed.
 
 Which of the two a stale write raises depends on the VCO's conditional check
 of the version. With it on, the VCO refuses the write, and the save raises
@@ -1337,9 +1515,10 @@ The fix is an entry in the table of rewrites, `MODULE_REWRITES` in
 `pyvelo.client.module_check`, or a `ServerOwned` marker on the model's field.
 Until then every save of that value raises.
 
-Objects taken from the state before a save
+Objects taken from the state before a save or a `revert`
 (`seg = state.edge.firewall.segment("Global Segment")`) belong to the modules
-the save replaced, and are detached. Reading one is fine. An assignment to one
+the save or the `revert` replaced (or, for a module the state created, the
+`revert` removed), and are detached. Reading one is fine. An assignment to one
 raises `DetachedObjectError`, and an in-place edit to a list or dict it holds
 (`seg.outbound.insert(0, rule)`) is reported, once, by the next `plan()` or
 save. A device settings segment's `vrrp` is not one of the library's models
@@ -1347,7 +1526,12 @@ and has no such guard: an assignment to `vrrp.root` does not raise, and is
 reported by the next `plan()` or save like an in-place edit. Take the object
 from the state again and redo the edit. To reuse a detached object as a new
 item, put a deep copy of it in the state (`copy.deepcopy(rule)`): the copy is
-not detached.
+not detached. A detached object put back as it is makes its module refuse
+every patch (`merge_patch`, `apply`, `assign_segment`) with
+`DetachedObjectError`, which names where it sits (`paths`) and changes
+nothing, also for a patch that would not reach it: put a deep copy there, take
+the object from the state again, or take the module's edits back with
+`pipeline.revert(state, module=...)`.
 
 A write whose answer never arrived (a transport error after the request was
 sent, a cancelled save) may or may not be stored, and so may one that raised
@@ -1362,7 +1546,10 @@ insert carries no version, so the state remembers it
 A module of that name found there is taken as the insert's answer and checked
 against the plan like any write, and nothing is inserted again; with none
 there, the save inserts. A `dry_run` does not read: it plans the insert and
-adds a warning with the code `insert_unconfirmed`.
+adds a warning with the code `insert_unconfirmed`. To give up the module
+instead, `pipeline.revert(state, module=...)` reads the configuration in the
+same way and deletes the module it finds there when it holds exactly what this
+state's module holds (see `revert` above).
 
 Known limits:
 
@@ -1418,8 +1605,9 @@ Known limits:
 - A failed `apply` changes nothing. Patches and saves run one after another,
   though: a failure leaves earlier patches, and the remote writes of a save
   that stopped part way, applied; there is no transaction or rollback.
-- One state may be used from several tasks of one event loop. `apply` and
-  `save` hold `state.lock` for the whole call, so they run one after the other:
+- One state may be used from several tasks of one event loop. `apply`,
+  `assign_segment`, `revert` and `save` hold `state.lock` for the whole call,
+  so they run one after the other:
   an `apply` made while a save is writing waits and is then applied to the
   state as stored, and a second `save` writes only what still differs. An edit
   made by assigning to the models while a save is writing is not waited for.
@@ -1429,11 +1617,10 @@ Known limits:
   segment the edge only inherits) is no edit and needs no redo. The save stops
   at that module: the error's note names the modules written, and the next
   save writes the rest. To make such an edit safely, hold the lock around it
-  (`async with state.lock:`). `apply` and `save` take the lock themselves:
-  called inside that block by the same task they raise `RuntimeError`, so call
-  them after it. A task that holds the lock and waits, inside the block, for a
-  child task that calls `apply` or `save` waits without end: nothing detects
-  it.
+  (`async with state.lock:`). Those four take the lock themselves: called
+  inside that block by the same task they raise `RuntimeError`, so call them
+  after it. A task that holds the lock and waits, inside the block, for a child
+  task that calls one of them waits without end: nothing detects it.
 - The `override_consistency` validator is a traversal placeholder and currently
   reports no violations. Other registered validators cover specific structural
   or domain checks; they do not guarantee that every patch is valid for a live VCO.
@@ -1466,8 +1653,8 @@ Known limits:
 
 | Module | What it provides |
 |---|---|
-| `pyvelo.config` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the types a save hands back (`ModulePlan` in `ConfigPlan.modules`, `ModuleWrite` in `SaveResult.written`, `ConfigFieldChange` from `get_field_changes()`), the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, `StepOutcome` (in `SaveResult.steps`) and `HubStep` (in `ConfigPlan.steps`), the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`), diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `GroupOwnershipError` (an edit through one member of a coupled group), `ComposedModuleError` (`compare_effective` found a module the VCO composed as `null`), the comparison types `EffectiveComparison`, `EffectiveDifference` and `EffectiveCategory`, `LossyFieldError` and `ResolutionError`, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
-| `pyvelo.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save), `build_default_pipeline` |
+| `pyvelo.config` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the types a save hands back (`ModulePlan` in `ConfigPlan.modules`, `ModuleWrite` in `SaveResult.written`, `ConfigFieldChange` from `get_field_changes()`), the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, `StepOutcome` (in `SaveResult.steps`) and `HubStep` (in `ConfigPlan.steps`), the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`), `MendingPatch` (a patch that mends an error, as data: `kind`, `does`, `target_type`, and the `module`, `patch`, `segment` and `path` of the `apply` call that sends it), diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `GroupOwnershipError` (an edit through one member of a coupled group), `ComposedModuleError` (`compare_effective` found a module the VCO composed as `null`), the comparison types `EffectiveComparison`, `EffectiveDifference` and `EffectiveCategory`, `LossyFieldError` and `ResolutionError`, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
+| `pyvelo.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save, and revert), `build_default_pipeline` |
 | `pyvelo.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `StepOutcome`, `ConfigPlan`, `SaveProgress`, `save_progress`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo.config.helpers` | `load_config` (a YAML file validated against a model; `ConfigInputError` for a file it cannot use, a key given twice included), `confirm_save` (a yes or no prompt, which prints the plan it is given: `confirm_save(plan=preview.plan)`) |
 | `pyvelo.config.validators.*` | Structural built-ins (`key_uniqueness`, `override_consistency`, `required_fields`) + domain validators (firewall, device settings) |

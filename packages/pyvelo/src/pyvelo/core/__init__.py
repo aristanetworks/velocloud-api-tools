@@ -13,10 +13,13 @@ This package is split into these submodules:
   kinds, Default and field_kind
 - effective: Origin and Resolved, a value of the effective view, and effective_view and
   effective_dump, which compute and write the view
-- walk: walk_fields, the walk over the fields of a model and the models below it
-- references: the values that name a member of a set the configuration provides, and the
-  check of them
+- walk: walk_fields, the walk over the fields of a model and the models below it;
+  models_below, can_hold and can_hold_field, what a model class can hold
+- references: the values that name a member of a set the configuration provides, the
+  check of them, and the patch that takes one out of its list
 - secrets: hide_secrets, which shows a value without its secrets
+- mending: the patches that mend an error, as data, and the one that makes a hub a
+  backhaul hub
 
 This package exports the public names of those submodules; ``__all__`` lists them.
 """
@@ -168,6 +171,7 @@ from .layers import (
     layer_for,
     unwrap,
 )
+from .mending import MendingKind, MendingPatch, backhaul_hub_mending
 from .merge import item_selector, nest_patch, select_items
 from .owned import (
     ByFlag,
@@ -199,10 +203,11 @@ from .references import (
     provided,
     reference_text,
     references,
+    removal_patch,
     union,
 )
 from .secrets import hide_secrets
-from .walk import FieldSite, walk_fields
+from .walk import FieldSite, can_hold, can_hold_field, models_below, walk_fields
 
 __all__ = [
     "Additive",
@@ -282,6 +287,8 @@ __all__ = [
     "LinkName",
     "ListKind",
     "MemberOf",
+    "MendingKind",
+    "MendingPatch",
     "NameOf",
     "NetworkServiceIdentity",
     "NetworkServiceLogicalId",
@@ -336,7 +343,10 @@ __all__ = [
     "VcoTimestamp",
     "add",
     "at",
+    "backhaul_hub_mending",
     "bind_layers",
+    "can_hold",
+    "can_hold_field",
     "check_references",
     "check_time_is_never",
     "delete",
@@ -368,6 +378,7 @@ __all__ = [
     "layer_for",
     "list_kind",
     "missing_or",
+    "models_below",
     "move",
     "nest_patch",
     "position_of",
@@ -375,6 +386,7 @@ __all__ = [
     "python_name",
     "reference_text",
     "references",
+    "removal_patch",
     "select_items",
     "selector_of",
     "union",

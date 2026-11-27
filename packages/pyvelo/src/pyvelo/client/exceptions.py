@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, override
 
 from pydantic import MISSING
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from pyvelo.client.module_check import ModuleWrite
     from pyvelo.client.module_write import ModulePlan
     from pyvelo.client.schemas.configuration import ConfigurationModuleBase
+    from pyvelo.core.mending import MendingKind, MendingPatch
     from pyvelo.core.response_check import PlannedChange, ServerChange
 
 
@@ -400,53 +402,58 @@ class HubListError(VcoError):
         super().__init__(message)
 
 
-def _hub_advice(reference: Reference, *, on_edge: bool) -> str:
-    """What to do about the backhaul entry *reference*.
+def _sends(mending: Sequence[MendingPatch], kind: MendingKind) -> str:
+    """The patches of *mending* of *kind*, each as ``send <json> to <module>``."""
+    return "; ".join(
+        f"send {json.dumps(m.patch)} to {m.module}" for m in mending if m.kind == kind
+    )
 
-    Its hub is one the segment does not list. The answer is the patch that
-    makes it a hub of its segment, as the segment's own sentence.
 
-    The patch is for the segment of the reference and names the hub as its
-    entry does (its name, else its logical ID). It adds the hub to the
-    Branch-to-Hub list as well as to the backhaul list, because the UI's
-    rules refuse a backhaul hub that is no hub of the segment, and turns on
-    what a segment with hubs needs.
+def _mending_text(mending: Sequence[MendingPatch], *, on_edge: bool) -> str:
+    """The sentences of a ``DanglingReferenceError`` that give its *mending* patches.
+
+    A kind with no patch has no sentence. On an Edge, the hub lists are its
+    profile's, so the ``add_member`` patches go to the profile.
     """
-    name: object = getattr(reference.holder, "edge_name", None)
-    hub = (
-        {"_op": "add", "name": name}
-        if isinstance(name, str) and name
-        else {"_op": "add", "logicalId": str(reference.value)}
-    )
-    segment = reference.segment_name or "<segment name>"
-    patch = {
-        "segments": {
-            segment: {
-                "vpn": {
-                    "enabled": True,
-                    "edgeToEdgeHub": {"enabled": True, "vpnHubs": {"+": hub}},
-                    "backHaulEdges": {"+": hub},
-                }
-            }
-        }
-    }
     text = (
-        f" To make the hub a backhaul hub of the segment {segment!r}, send "
-        f"{json.dumps(patch)} to the device settings (`pipeline.apply(state, "
-        'module="deviceSettings", patch=...)`; in Python, the `add` helper '
-        "builds each entry). A backhaul hub is a hub of the segment too, so "
-        "the patch adds it to the Branch-to-Hub list and turns on what a "
-        "segment with hubs needs; leave out `edgeToEdgeHub` when the hub is "
-        "in that list already."
+        " The patches below mend the hub references, and `mending` holds them as "
+        "data: send those of one kind."
     )
-    if on_edge:
-        text += (
-            " This is an Edge, and the hub lists are its profile's: send the "
-            "patch to the profile's device settings (load the profile with "
-            "`pipeline.load_profile`, apply it there and save the profile), "
-            "not to the Edge's, and save the Edge after."
-        )
-    return text
+    removals = _sends(mending, "remove_reference")
+    if removals:
+        text += f" To take each hub out of the rule that names it: {removals}."
+    members = _sends(mending, "add_member")
+    if members:
+        text += f" To make each hub a backhaul hub of its segment: {members}."
+        if on_edge:
+            text += (
+                " This is an Edge, and the hub lists are its profile's: send that "
+                "patch to the profile's device settings (load the profile, apply "
+                "it there and save the profile), not to the Edge's; then load the "
+                "Edge again and redo its edit, since this Edge state holds the "
+                "profile as it was loaded."
+            )
+    return text + " Or take back every edit to a module with `revert`."
+
+
+def _only_hubs_text(
+    only_hubs: Sequence[Reference], mending: Sequence[MendingPatch]
+) -> str:
+    """The sentence of a ``DanglingReferenceError`` for its *only_hubs*."""
+    again = (
+        "with the patch above"
+        if any(m.kind == "add_member" for m in mending)
+        else "(one of the segment's `vpn.backHaulEdges`)"
+    )
+    return (
+        " No patch takes a hub out of the rule that names it: for "
+        f"{len(only_hubs)} of these references (`only_hubs` holds them) the hub "
+        "is the only hub of a rule that backhauls through hubs, or one of all "
+        "the hubs it names, and the rule would backhaul nowhere. Make the hub a "
+        f"backhaul hub again {again}; or first give the rule another hub or "
+        "change its `routePolicy`, and the next `plan()` offers the patch that "
+        "takes the hub out of the rule; or delete the rule."
+    )
 
 
 class DanglingReferenceError(VcoError):
@@ -460,22 +467,50 @@ class DanglingReferenceError(VcoError):
     references found, each with its module, path and value. A reference the
     configuration already held as it was read is not one of them.
     ``on_edge`` is whether the target is an Edge: the hub lists are its
-    profile's, and the advice says so.
+    profile's, and the message says so.
+
+    ``mending`` holds the patches that mend the references to a backhaul hub,
+    as data: for each, a ``remove_reference`` patch (the rule stops using the
+    hub) and an ``add_member`` patch (the hub becomes a backhaul hub of the
+    segment, in the profile's device settings). All ``remove_reference``
+    patches come first, then the ``add_member`` ones. The patches of one kind
+    together mend every hub reference of the error; a kind that cannot be
+    built for every one is left out whole. A reference to a segment gets no
+    patch.
+
+    ``only_hubs`` are the hub references whose rule, one that backhauls through
+    hubs (``routePolicy`` ``"backhaul"``, ``routeCfg.type`` ``"edge"``), would
+    be left with no hub if each were taken out of it: each is the only hub its
+    rule names, or one of all the hubs it names. No ``remove_reference`` patch
+    is offered then (for any reference), and the message says to make the hub
+    a backhaul hub again; or first to give the rule another hub or change its
+    ``routePolicy``, after which the next ``plan()`` offers the removal patch;
+    or to delete the rule.
     """
 
     references: tuple[Reference, ...]
     on_edge: bool
+    mending: tuple[MendingPatch, ...]
+    only_hubs: tuple[Reference, ...]
 
     def __init__(
-        self, references: Sequence[Reference], *, on_edge: bool = False
+        self,
+        references: Sequence[Reference],
+        *,
+        on_edge: bool = False,
+        mending: Sequence[MendingPatch] = (),
+        only_hubs: Sequence[Reference] = (),
     ) -> None:
         """The error for *references*, with a message that lists each and what to do.
 
-        The message says where a segment or a backhaul hub comes from and, for a hub,
-        gives the patch that makes it a hub of its segment.
+        The message says where a segment or a backhaul hub comes from and gives
+        each patch of *mending*, with the module it goes to, and what to do for
+        the references of *only_hubs*.
         """
         self.references = tuple(references)
         self.on_edge = on_edge
+        self.mending = tuple(mending)
+        self.only_hubs = tuple(only_hubs)
         lines = "\n".join(f"  {reference_text(r)}" for r in self.references)
         names = {r.set_name for r in self.references}
         sources: list[str] = []
@@ -500,12 +535,161 @@ class DanglingReferenceError(VcoError):
         )
         if sources:
             message += f" Where each comes from: {'; '.join(sources)}."
-        first_hub = next(
-            (r for r in self.references if r.set_name == "backhaul_hub"), None
-        )
-        if first_hub is not None:
-            message += _hub_advice(first_hub, on_edge=on_edge)
+        if self.mending:
+            message += _mending_text(self.mending, on_edge=on_edge)
+        if self.only_hubs:
+            message += _only_hubs_text(self.only_hubs, self.mending)
         super().__init__(message)
+
+
+@dataclass(frozen=True)
+class HublessBackhaul:
+    """A route action of a QoS rule that backhauls to hubs and names none.
+
+    One place a ``BackhaulWithoutHubError`` names.
+    """
+
+    module: str
+    """The module name on the wire: ``QOS``."""
+    path: Path
+    """The route action's path in python names, as ``Reference.path`` gives one.
+
+    For example, ``segments[Guest].rules[Web].action.edge_to_cloud_route_action``.
+    """
+    segment_name: str | None
+    """The name of the segment the rule is in, when the segment has one."""
+    rule_name: str
+    keys: tuple[str, ...] | None = field(default=None, compare=False)
+    """The keys a patch to the module gives to reach the route action.
+
+    Each step by its wire name and each item by the selector that names it
+    alone. ``None`` when an item on the way has no such selector.
+    """
+    deletable: bool = field(default=True, compare=False)
+    """Whether a patch can delete the rule.
+
+    False for one of a segment's default rules, a fixed list.
+    """
+
+
+def _nested(keys: Sequence[str], leaf: object) -> dict[str, object]:
+    """*leaf* under *keys*, the first key outermost."""
+    value = leaf
+    for key in reversed(keys):
+        value = {key: value}
+    return cast("dict[str, object]", value)
+
+
+def _backhaul_ways(places: Sequence[HublessBackhaul]) -> str:
+    """The sentences of a ``BackhaulWithoutHubError`` that say how to mend a rule.
+
+    The patches are those of the first place that has keys; the others are
+    mended the same way.
+    """
+    first = next((p for p in places if p.keys is not None), None)
+    if first is None or first.keys is None:
+        text = (
+            " To mend a rule, give it a hub (a backhaul hub of its segment), set "
+            'the route action\'s `routePolicy` to "auto", "direct" or "gateway", '
+            "or delete the rule (a rule that is not one of the segment's default "
+            "rules)."
+        )
+    else:
+        keys = first.keys
+        added = {"_op": "add", "name": "<hub name>"}
+        hub = _nested(keys, {"routeCfg": {"backhaulEdges": {"+": added}}})
+        policy = _nested(keys, {"routePolicy": "<auto, direct or gateway>"})
+        text = (
+            f" To mend the rule, send one of these patches to {first.module}: to "
+            "give the rule a hub (a backhaul hub of its segment: one of the "
+            "segment's `vpn.backHaulEdges` in the profile's device settings), "
+            f"{json.dumps(hub)}; to route it another way, {json.dumps(policy)}"
+        )
+        if first.deletable:
+            rule = _nested(keys[:-2], {"_op": "delete"})
+            text += f"; to delete the rule, {json.dumps(rule)}."
+        else:
+            text += (
+                ". The rule is one of the segment's default rules, which cannot "
+                "be deleted."
+            )
+    if len(places) > 1:
+        text += _others_text(places, first)
+    return text + " Or take back every edit to a module with `revert`."
+
+
+def _others_text(
+    places: Sequence[HublessBackhaul], first: HublessBackhaul | None
+) -> str:
+    """The sentence that says how the places after *first* are mended.
+
+    A default rule cannot be deleted, so the delete patch shown for *first*
+    is not offered for one; and when *first* is a default rule, a rule that
+    is not can be deleted as well.
+    """
+    others = [p for p in places if p is not first]
+    if first is None:
+        return " Each rule is mended in one of these ways."
+    if first.deletable:
+        fixed = [p for p in others if not p.deletable]
+        if not fixed:
+            return " The other rules are mended the same way."
+        # A rule with two route actions left with no hub is named once.
+        names = ", ".join(dict.fromkeys(_rule_text(p) for p in fixed))
+        return (
+            " The other rules are mended the same way, but these are default "
+            f"rules of their segment, which cannot be deleted: {names}; give "
+            "each a hub or route it another way."
+        )
+    text = " The other rules are mended the same way"
+    if any(p.deletable for p in others):
+        text += (
+            ", and one that is not a default rule can be deleted too, with "
+            '`{"_op": "delete"}` at the rule'
+        )
+    return text + "."
+
+
+def _rule_text(place: HublessBackhaul) -> str:
+    """``rule 'Web' of segment 'Guest'``, or without the segment when it has no name."""
+    text = f"rule {place.rule_name!r}"
+    if place.segment_name is not None:
+        text += f" of segment {place.segment_name!r}"
+    return text
+
+
+class BackhaulWithoutHubError(VcoError):
+    """Raised when a save would leave a QoS rule that backhauls to hubs and names none.
+
+    A route action of a rule (its Edge to Edge, Edge to data center or Edge to
+    cloud action) whose ``routePolicy`` is ``"backhaul"`` and whose
+    ``routeCfg.type`` is ``"edge"`` sends its traffic to the hubs of its
+    ``routeCfg.backhaulEdges``. With none, the VCO would store a rule that
+    backhauls nowhere. ``places`` are the route actions found, each with its
+    module, path, segment and rule. A route action that was so as the module
+    was read is not one of them (``ConfigState.plan()`` warns of it instead).
+    """
+
+    places: tuple[HublessBackhaul, ...]
+
+    def __init__(self, places: Sequence[HublessBackhaul]) -> None:
+        """The error for *places*, with a message that lists each and what to do.
+
+        The message gives the patches that mend the first, with the module
+        they go to.
+        """
+        self.places = tuple(places)
+        lines = "\n".join(
+            f"  {p.module} {p.path}: {_rule_text(p)}" for p in self.places
+        )
+        message = (
+            f"{len(self.places)} backhaul rule(s) name no hub:\n{lines}\n"
+            "Each sends its traffic by backhaul and names no hub to send it to: "
+            'its `routePolicy` is "backhaul", its `routeCfg.type` is "edge" and '
+            "its `routeCfg.backhaulEdges` is empty. The save is refused because "
+            "the VCO would store a rule that backhauls nowhere."
+        )
+        super().__init__(message + _backhaul_ways(self.places))
 
 
 class RefsNotLoadedError(VcoError):
@@ -1643,16 +1827,21 @@ class DetachedObjectError(VcoError):
 
     ``update_module`` raises it too, for a module an earlier write replaced.
 
-    After a save the state holds the module as the VCO stored it; after
+    After a save the state holds the module as the VCO stored it, and after
+    ``ConfigPipeline.revert`` the module as the VCO last gave it; after
     ``update_module`` the module it returned (or ``error.module``, after a
     write error) is that module. The object raising belongs to the module
-    that was there before. Take the object again from the module as stored.
-    ``paths`` are where in the module such edits were found, when they were
-    found by comparison; they may come from several modules, which the message
-    names, a line each. An assignment or ``merge_patch`` that raises names the
-    object and leaves them empty, and so does the refusal of ``update_module``
-    to write a module an earlier ``update_module`` replaced. Only
-    ``update_module`` marks the module it is given; ``write_module`` does not.
+    that was there before, which a write or a revert replaced. Take the object
+    again from the module the state holds now. ``paths`` are where in the
+    module such edits were found, when they were found by comparison; they may
+    come from several modules, which the message names, a line each. An
+    assignment or ``merge_patch`` through a replaced object names the object
+    and leaves them empty, and so does the refusal of ``update_module`` to
+    write a module an earlier ``update_module`` replaced. A ``merge_patch``,
+    ``apply`` or ``assign_segment`` refused because the model holds a replaced
+    object inside, put back as it is, names that object and sets ``paths`` to
+    where it sits. Only ``update_module`` marks the module it is given;
+    ``write_module`` does not.
     """
 
     paths: list[Path]

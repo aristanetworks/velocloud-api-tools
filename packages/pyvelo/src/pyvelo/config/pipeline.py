@@ -1,10 +1,11 @@
 """ConfigPipeline: the orchestration layer of a configuration workflow.
 
-The workflow is load → apply → save.
+The workflow is load → apply → save, and revert.
 """
 
+import contextlib
 import json
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol, TypeIs, cast, runtime_checkable
 
@@ -16,18 +17,29 @@ from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ComposedModuleError,
     DetachedObjectError,
+    FixedListError,
+    LossyFieldError,
     ModuleWriteError,
+    RefsNotLoadedError,
     UnboundError,
+    VcoOperationError,
+    WriteOutcomeUnknownError,
 )
 from pyvelo.client.hub_services import missing_services
 from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.models.configuration.ref_owners import ref_only_values
-from pyvelo.client.module_check import ModuleWrite
+from pyvelo.client.module_check import ModuleWrite, is_vco_assigned
 from pyvelo.client.module_write import ModulePlan, with_hub_rows
+from pyvelo.client.operations.configuration import (
+    check_found_insert,
+    find_named_module,
+)
 from pyvelo.client.protocol import VcoClientProtocol
 from pyvelo.client.schemas.configuration import (
     AnyStoredModule,
+    ConfigurationModuleBase,
+    DeleteConfigurationModule,
     DeviceSettingsConfigurationModule,
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -57,6 +69,7 @@ from pyvelo.config.effective import (
 from pyvelo.config.errors import SaveStepError, SaveValidationError
 from pyvelo.config.hub_calls import (
     HubServices,
+    PreparedStep,
     hub_rows,
     hubs_in_use,
     prepare_steps,
@@ -101,7 +114,7 @@ from pyvelo.config.state import (
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
 from pyvelo.config.validation_warning import ValidationWarning
-from pyvelo.core import PatchError, effective_dump
+from pyvelo.core import PatchError, RowsModifiedConfirmation, effective_dump
 from pyvelo.core.base import IdentityLookup, IdentityResolver, VcoModel, is_dict
 from pyvelo.core.fields import get_resolvable
 from pyvelo.core.identity import (
@@ -138,6 +151,35 @@ class _StepRun:
     """
     calling: bool = False
     """Whether a call was made, which may have reached the VCO."""
+    services: HubServices | None = None
+    """The hub services as read before the first step; None until then."""
+    prepared: tuple[PreparedStep, ...] = ()
+    """Every step with its decision (``prepare_steps``), made before any is sent."""
+
+    @contextlib.contextmanager
+    def guard(self) -> Generator[None]:
+        """Raise an error of the steps with what they did so far.
+
+        A ``SaveStepError`` propagates as it is. Any other ``Exception`` once
+        a step was sent is a ``SaveStepError``; before that, it and any other
+        error, a cancellation included, propagate as they are, with a
+        ``SaveProgress`` attached once a call was made or a write was found
+        stored.
+        """
+        try:
+            yield
+        except SaveStepError:
+            raise
+        except Exception as error:
+            if self.sent:
+                raise self.error(error) from error
+            if self.calling or self.done:
+                self.progress().attach(error)
+            raise
+        except BaseException as error:
+            if self.calling or self.done:
+                self.progress().attach(error)
+            raise
 
     def progress(self) -> SaveProgress:
         """The progress of a save that stopped in its steps.
@@ -221,6 +263,198 @@ def _configuration_id(module: DeviceSettingsConfigurationModule) -> int:
             "which the role calls need: load the profile again"
         )
     return module.configuration_id
+
+
+type _WritableModule = (
+    DeviceSettingsConfigurationModule
+    | QosConfigurationModule[Edge]
+    | QosConfigurationModule[Profile]
+    | WanConfigurationModule
+    | FirewallConfigurationModule[Edge]
+    | FirewallConfigurationModule[Profile]
+)
+
+_WRITABLE_MODULES = (
+    DeviceSettingsConfigurationModule,
+    QosConfigurationModule,
+    WanConfigurationModule,
+    FirewallConfigurationModule,
+)
+
+
+@dataclass
+class _Sending:
+    """The state of one save that sends: what it writes and what it stored so far."""
+
+    state: ConfigState
+    result: SaveResult
+    changed: list[ModulePlan]
+    """The plan of each changed module, in the order they are written."""
+    modules: list[_WritableModule]
+    """The module of each plan in *changed*.
+
+    Each write replaces only its own module, so these stay the state's.
+    """
+    dumps: list[object]
+    """What each module holds as planned, to find an edit made while a write was out."""
+    providers: list[dict[Path, object]]
+    """Each module's ``ref_only_values`` as planned: a provider is no part of a dump."""
+    done: list[ModuleWrite[Any]]
+    """The writes stored so far."""
+    device_settings_at: int
+    """The position of the device settings plan in *changed*.
+
+    ``len(changed)`` when the save does not write them. The modules before it
+    are written before the role steps, and it and the modules after it after
+    them.
+    """
+    failed: str | None = None
+    """The name of the module being written, until its write is stored."""
+    device_settings_stored: bool = False
+    """Whether a profile's device settings write is stored.
+
+    That write can change the modules after it.
+    """
+    stored_already: ModuleWrite[Any] | None = None
+    """The device settings write the version read found stored (its answer was lost)."""
+    run: _StepRun | None = None
+    """What the role steps did, once they are decided; None for a save without."""
+
+    def is_device_settings(self, mod: _WritableModule) -> bool:
+        """Whether *mod* is a profile's device settings module."""
+        return (
+            self.state.target_type == "profile"
+            and mod.name == ConfigurationModuleName.DEVICE_SETTINGS
+        )
+
+    def progress_of(self, error: BaseException) -> SaveProgress:
+        """The progress of this save, attached to *error*.
+
+        The writes stored, the module being written and the modules after it.
+        """
+        stored = {write.name for write in self.done}
+        progress = SaveProgress(
+            completed=tuple(self.done),
+            failed=self.failed,
+            pending=tuple(
+                m.name
+                for m in self.modules
+                if m.name not in stored and m.name != self.failed
+            ),
+        )
+        progress.attach(error)
+        return progress
+
+    def store_write(self, at: int, write: ModuleWrite[Any]) -> None:
+        """Count *write* of the module at *at* as stored.
+
+        Also put the module as stored in the state.
+
+        Raises ``DetachedObjectError`` for an edit made while it was written.
+        """
+        mod = self.modules[at]
+        insert = self.changed[at].operation == "insert"
+        # Stored: it counts as written even if the state cannot take it back.
+        self.done.append(write)
+        self.failed = None
+        if self.is_device_settings(mod):
+            self.device_settings_stored = True
+        paths = list(
+            dict.fromkeys(
+                change.path
+                for change in raw_changes(self.dumps[at], _dump(mod), type(mod))
+            )
+        )
+        # A provider is no part of a dump: compare it by itself.
+        paths.extend(
+            Path(("data", *path.parts))
+            for path in ref_only_changes(self.providers[at], ref_only_values(mod.data))
+        )
+        try:
+            self.state.replace_module(mod, write.module)
+        except BaseException:
+            # The insert is stored but the state still plans it: the
+            # next save reads before it inserts again.
+            if insert:
+                self.state.unconfirmed_inserts.add(mod.name)
+            raise
+        name = ConfigurationModuleName(write.name)
+        self.result.server_changes[name] = write.server_changes
+        self.result.left_out[name] = write.left_out
+        self.result.written = tuple(self.done)
+        if paths:
+            error = DetachedObjectError(
+                f"{mod.name}: the module was edited while this save was writing "
+                f"it, at: {', '.join(paths)}. The write is stored without those "
+                "edits and the state holds the module as stored; take the objects "
+                "from the state again and redo them. A path that is a placeholder "
+                "a lookup added (segment(name), for a segment the edge only "
+                "inherits) is no edit and needs no redo. To edit a state from "
+                "another task while a save may run, use apply, or hold state.lock "
+                "around the edit",
+                paths,
+            )
+            note = _written_note(self.done)
+            if later := self.modules[at + 1 :]:
+                note += (
+                    "; the save stopped here, so these are not written: "
+                    + ", ".join(m.name for m in later)
+                    + ". The next save writes them"
+                )
+            error.add_note(note)
+            raise error
+
+    def put_stored(self, mod: _WritableModule, error: ModuleWriteError) -> bool:
+        """Put the module *error* carries in the state in place of *mod*.
+
+        Say whether it did.
+
+        The module is of the class of *mod* (``write_module`` checks it), or
+        None when it could not be read: then the state keeps *mod*. It is
+        also kept when the state no longer holds *mod*, so that the write
+        error is not hidden behind the ValueError of ``replace_module``.
+        """
+        stored = error.module
+        if isinstance(stored, type(mod)) and self.state.find_module(mod.name) is mod:
+            self.state.replace_module(mod, cast("AnyStoredModule", stored))
+            return True
+        return False
+
+
+@dataclass(frozen=True)
+class _Edit:
+    """One ``apply`` call's patch to a module, and what its trial and merge need."""
+
+    state: ConfigState
+    mod: _WritableModule
+    data: VcoModel
+    """The module's typed data, which the merge changes."""
+    nested: dict[str, object]
+    """The patch, nested under its address (``nest_patch``)."""
+    edge: bool
+    """Whether the target is an edge."""
+    profile_rules: bool
+    """Whether the profile's segment rules apply to the module."""
+    inherited: frozenset[str]
+    """On an edge, the segments the module only inherits; else empty."""
+    unserved: frozenset[Path]
+    """The QoS entries that lacked their hub service as read; else empty."""
+
+    def patch_for(
+        self, data: VcoModel, prepared: ProfileSegmentPatch | None
+    ) -> Mapping[str, object]:
+        """The patch to merge into *data*, the module's data or a copy of it.
+
+        The prepared profile patch, else on an edge the patch with the edge's
+        segment rules applied (``_prepare_segments``), else the nested patch.
+        """
+        if prepared is not None:
+            return prepared.patch
+        if self.edge:
+            return _prepare_segments(
+                data, self.nested, self.state.resolvers, self.inherited
+            )
+        return self.nested
 
 
 class ConfigPipeline:
@@ -415,7 +649,7 @@ class ConfigPipeline:
 
         return state
 
-    async def apply(  # noqa: C901, PLR0912 (existing: split it when it next changes)
+    async def apply(
         self,
         state: ConfigState,
         *,
@@ -557,12 +791,29 @@ class ConfigPipeline:
 
         All or nothing: a patch that raises (``PatchError``, including one for
         a module a save does not write, ``LossyFieldError`` for a patch that a
-        save could not write, or a resolver's ``ResolutionError`` or
-        ``LookupError``) leaves the state, and ``plan()``, as they were: no
-        placeholder entries, and a module this call created is removed.
+        save could not write, a resolver's ``ResolutionError`` or
+        ``LookupError``, or ``DetachedObjectError`` for a module that holds an
+        object a write replaced, put back as it is, which is refused whole
+        before the patch is read, naming where the object sits) leaves the
+        state, and ``plan()``, as they were: no placeholder entries, and a
+        module this call created is removed.
         ``LossyFieldError`` is raised also when an earlier assignment to the
         models had already made the module unwritable; its paths name that
         field.
+
+        **What apply does not check.** The rules that span modules are checked
+        by ``ConfigState.plan()``, not here: the segments of a profile's three
+        modules (``SegmentSetError``), a segment's hub lists (``HubListError``),
+        the references (``DanglingReferenceError``: a value that names a
+        segment or a backhaul hub the configuration lacks), and a QoS rule that
+        backhauls through hubs and names none (``BackhaulWithoutHubError``).
+        An edit that leaves
+        one of them broken is accepted, so that two patches that are only right
+        together go in either order: a hub out of a segment's lists, and out of
+        the rule that uses it. ``plan()``, ``save`` and a dry run refuse the
+        state until it is mended, by another patch
+        (``DanglingReferenceError.mending`` holds them as data) or by taking
+        the module's edits back (:meth:`revert`).
 
         MISSING fields on the patch target are preserved as MISSING so callers
         downstream (reconciler, YAML export) can distinguish "unset" from
@@ -578,104 +829,42 @@ class ConfigPipeline:
         Raises ``ValueError`` for an unknown *module*.
         """
         async with state.lock:
-            internal_name = _resolve_module_name(module)
-            existing = state.find_module(internal_name)
-            if existing is None:
-                _refuse_segment_ops_to_a_missing_module(
-                    state, str(internal_name), patch, segment, path
-                )
-            mod = (
-                existing
-                if existing is not None
-                else state.module(internal_name, create=True)
-            )
-            edge = state.target_type == "edge"
-            if not isinstance(mod, _WRITABLE_MODULES):
-                if existing is None:
-                    state.drop_module(mod)
-                raise PatchError(
-                    f"{mod.name}: a save does not write this module (it writes "
-                    "device settings, QoS, WAN and firewall modules), so a "
-                    "patch to it is not applied. Make the change in the VCO",
-                    Path(()),
-                    "address",
-                )
+            mod, created = _patched_module(state, module, patch, segment, path)
             try:
-                data = mod.data
-                nested = nest_patch(type(data), patch, segment=segment, path=path)
-                segments = nested.get("segments")
-                profile_rules = (
-                    not edge
-                    and isinstance(data, _SegmentLayer)
-                    and str(mod.name) in PROFILE_SEGMENT_MODULES
-                )
-                prepared: ProfileSegmentPatch | None = None
-                loaded: set[type] = set()
-                unserved = (
-                    frozenset(missing_services(data))
-                    if isinstance(mod, QosConfigurationModule)
-                    else frozenset[Path]()
-                )
-                if profile_rules and holds_segment_ops(nested):
-                    prepared = await self._prepare_profile_segments(
-                        state, mod, nested, loaded
-                    )
-                inherited = (
-                    state.inherited_segment_ids(mod)
-                    if edge and _is_object(segments)
-                    else frozenset()
-                )
-                while True:
-                    try:
-                        if prepared is not None:
-                            _try_assigning(state, mod, prepared, unserved)
-                        else:
-                            trial = data.model_copy(deep=True)
-                            _ = trial.merge_patch(
-                                _prepare_segments(
-                                    trial, nested, state.resolvers, inherited
-                                )
-                                if edge
-                                else nested,
-                                resolvers=state.resolvers,
-                            )
-                            if profile_rules:
-                                check_profile_segments(
-                                    data,
-                                    trial,
-                                    mod,
-                                    _device_settings_as_read(state),
-                                    (),
-                                )
-                            if isinstance(mod, QosConfigurationModule):
-                                state.fill_hub_services(trial, skip=unserved)
-                            _ = state.plan_module(mod, trial)
-                        break
-                    except ResolverNotLoadedError as error:
-                        # The trial worked on a copy: loading and trying again
-                        # leaves the state as it was.
-                        await self.load_resolvers(state, _to_load(error, loaded))
+                mod.data.check_nothing_detached("apply")
+                edit = _edit_of(state, mod, patch, segment, path)
+                prepared = await self._trial(edit)
             except BaseException:
-                if existing is None:
+                if created:
                     state.drop_module(mod)
                 raise
-            if prepared is not None:
-                modules = segment_modules(state)
-                for assignment in prepared.assignments:
-                    apply_assignment(modules, assignment)
-            _ = data.merge_patch(
-                prepared.patch
-                if prepared is not None
-                else _prepare_segments(data, nested, state.resolvers, inherited)
-                if edge
-                else nested,
-                resolvers=state.resolvers,
-            )
-            if isinstance(mod, QosConfigurationModule):
-                # Cannot fail after the trial passed: the hub table and the
-                # segments are the trial's, and the patch is the same.
-                state.fill_hub_services(data, skip=unserved)
+            _merge(edit, prepared)
             return state
+
+    async def _trial(self, edit: _Edit) -> ProfileSegmentPatch | None:
+        """Try the patch of *edit* on copies until it passes; the prepared patch.
+
+        On a profile target, a patch with segment operations is prepared first
+        (``prepare_profile_segments``); None when it needs no preparing. Each
+        attempt is ``_try_once``; a resolver an attempt asks for is loaded, once
+        per type in this call, and the attempt is made again. Nothing of the
+        state but the resolvers changes, and whatever else fails raises.
+        """
+        loaded: set[type] = set()
+        prepared: ProfileSegmentPatch | None = None
+        if edit.profile_rules and holds_segment_ops(edit.nested):
+            prepared = await self._prepare_profile_segments(
+                edit.state, edit.mod, edit.nested, loaded
+            )
+        while True:
+            try:
+                _try_once(edit, prepared)
+            except ResolverNotLoadedError as error:
+                # The trial worked on a copy: loading and trying again
+                # leaves the state as it was.
+                await self.load_resolvers(edit.state, _to_load(error, loaded))
+            else:
+                return prepared
 
     async def _prepare_profile_segments(
         self,
@@ -713,11 +902,11 @@ class ConfigPipeline:
         segment (``new_segment_entry``), and a QoS entry the profile already
         has that lacks some of the template's four ``defaults`` gets those. A
         segment that one or two of the modules have already is completed. The
-        next ``save`` writes the modules, device settings first, with the
-        ``deviceSettings:segment`` row the segment needs; ``plan()`` and
-        ``dry_run`` show it. An entry nobody edits afterwards is no change from
-        the template, and one that is edited (``apply``, or assignment to the
-        models) is.
+        next ``save`` writes the modules, device settings first unless the same
+        save removes a hub, with the ``deviceSettings:segment`` row the segment
+        needs; ``plan()`` and ``dry_run`` show it. An entry nobody edits
+        afterwards is no change from the template, and one that is edited
+        (``apply``, or assignment to the models) is.
 
         *name* is resolved strictly by the state's segment resolver: any case
         of the enterprise's name, and ``ResolutionError``, with suggestions,
@@ -766,6 +955,126 @@ class ConfigPipeline:
             apply_assignment(modules, assignment)
             return state
 
+    async def revert(self, state: ConfigState, *, module: str) -> ConfigState:
+        """Take back every edit to *module* of *state*.
+
+        This is done in memory. The one exception is a new module whose insert
+        may be stored, which is deleted on the VCO when it is this state's.
+
+        The module is put back as the VCO last gave it: as loaded, or, after a
+        save or a write error that left the module as stored, that one. Every
+        edit to it since is gone, however it was made: a patch, an assignment
+        to the models, an intent, a segment assignment's entry in this module,
+        a placeholder. A module this state created is removed, and a module
+        the target lacks changes nothing.
+
+        No other module is touched and nothing is cascaded, so an edit
+        elsewhere that relied on this module is judged by the next ``plan()``:
+        ``SegmentSetError`` for a segment now in two modules of three,
+        ``DanglingReferenceError`` for a rule whose hub is gone again. Objects
+        taken from the state before belong to the module taken out and are
+        detached, as after a save. Nothing is sent, except for a new module
+        whose insert may have reached the VCO (``state.unconfirmed_inserts``):
+        the module is planned, and the configuration is read for a module of
+        its name, as the repeated insert of a save reads it. Of several rows of
+        the name, only the last inserted (the highest ID) is looked at and
+        deleted; an older one stays on the VCO. With none there, the module is
+        removed and nothing else is sent. A stored module is deleted
+        (``configuration/deleteConfigurationModule``) only when it holds
+        exactly what this state's new module holds: nothing the plan inserts
+        is missing or different, and nothing more, apart from the values the
+        VCO itself assigns (such as a firewall rule's logical ID). The module
+        is then removed. Either way its name leaves
+        ``state.unconfirmed_inserts``.
+
+        Anything else is refused with ``ValueError``, with nothing deleted and
+        nothing changed. That covers another writer's module, a module this
+        state edited after the insert was sent, and a stored module holding
+        values the state's lacks, so a VCO that adds values of its own to a
+        module as it inserts it, at keys the library does not mark as the
+        VCO's, makes ``revert`` refuse. The way on is to save
+        again or to load the state again. It also refuses a new module that
+        plans nothing when a module of the name is stored, since there is no
+        change to tell the two apart by; load the state again then. A module
+        that cannot be planned (``LossyFieldError`` and the like, as the cause)
+        is refused before anything is read; load the state again. A read that
+        does not parse (``WriteOutcomeUnknownError``), any other error of the
+        read or the delete, and a delete answered with an error or a row
+        count of 0 (``VcoOperationError``; an answer with no count is taken as
+        done) all propagate and leave the state as it was, so ``revert`` can
+        be called again. The layer a state does not save is not reverted.
+
+        It takes back edits, not what a save already did on the VCO: a role
+        step a save sent before it stopped (``SaveStepError``) stays, and a
+        state whose device settings edits are taken back plans nothing that
+        mends it. After a ``SaveStepError``, save again instead.
+
+        Returns *state*, changed in place. Holds ``state.lock`` for the whole
+        call, the read and the delete too, as :meth:`apply` does, and raises
+        ``RuntimeError`` when the calling task holds it already. Raises
+        ``ValueError`` for an unknown *module*, for a state with no snapshot
+        (``take_snapshot`` was not called), and for a new module whose insert
+        may have reached the VCO when this pipeline has no client to read and
+        delete with.
+        """
+        async with state.lock:
+            name = _resolve_module_name(module)
+            held = state.find_module(name)
+            if (
+                held is not None
+                and held.is_new
+                and held.name in state.unconfirmed_inserts
+            ):
+                await self._delete_inserted(state, held)
+                state.unconfirmed_inserts.discard(held.name)
+            state.revert_module(name)
+            return state
+
+    async def _delete_inserted(
+        self, state: ConfigState, module: AnyStoredModule
+    ) -> None:
+        """Delete new *module* on the VCO, where an insert of it may be stored.
+
+        The module is planned first (``_plan_to_compare``). Then the
+        configuration is read for a module of its name as the repeated insert
+        of a save reads it (``find_named_module``). With none there, nothing
+        else is sent. One that holds exactly what *module* holds
+        (``_require_the_states``) is deleted. The state is not changed.
+
+        Raises ``ValueError`` for a pipeline with no client, for a module that
+        cannot be planned (nothing sent), and, with only the read sent, for a
+        module found that is not this state's; an error of the read or of the
+        delete propagates, and so does ``VcoOperationError`` for an answer that
+        says the delete failed (``_check_deleted``).
+        """
+        client = self._client
+        if client is None:
+            raise ValueError(
+                f"{module.name}: an insert of this module may have reached the VCO "
+                "(a save failed after it was sent), and this pipeline has no "
+                "client to read the configuration and delete the module with, so "
+                "its edits are not taken back: the state would forget the module, "
+                "and a later save could insert it a second time. Revert it through "
+                "a pipeline with a client, which reads the configuration and "
+                "deletes the module it finds there; or save again, which reads the "
+                "configuration before it inserts; or load the state again"
+            )
+        plan = _plan_to_compare(state, module)
+        enterprise_id = state.resolver_context.enterprise_id
+        found = await find_named_module(
+            client, module, plan, enterprise_id=enterprise_id
+        )
+        if found is None:
+            return
+        _require_the_states(module, plan, found)
+        answer = await client.delete_configuration_module(
+            DeleteConfigurationModule(
+                id_=found.id_,
+                enterprise_id=MISSING if enterprise_id is None else enterprise_id,
+            )
+        )
+        _check_deleted(answer, found.id_)
+
     async def _resolve_segment(
         self, state: ConfigState, name: str, loaded: set[type]
     ) -> SegmentIdentity:
@@ -786,7 +1095,7 @@ class ConfigPipeline:
             except ResolverNotLoadedError as error:
                 await self.load_resolvers(state, _to_load(error, loaded))
 
-    async def save(  # noqa: C901 (existing: split it when it next changes)
+    async def save(
         self,
         state: ConfigState,
         *,
@@ -799,13 +1108,16 @@ class ConfigPipeline:
 
         1. Plan the write of every module (:meth:`ConfigState.plan`), and
            raise ``TypeError`` if a changed module is not one a save writes
-           (device settings, QoS, WAN, firewall), also for ``dry_run``. A
-           profile's device settings module is planned, and written, first.
-           A profile's three modules (device settings, QoS and firewall) hold
-           the same segments, so the plan raises ``SegmentSetError`` for an
-           edit that removes a segment from one, or adds it to some and not
-           all, and carries a ``segments_disagree`` warning for a profile
-           whose modules disagree as read.
+           (device settings, QoS, WAN, firewall), also for ``dry_run``. The
+           plan is in the write order: the device settings are written first,
+           and the role steps right before them; in a save that removes a hub
+           from a list (a plan with a ``disable`` step) they are written last,
+           after the other modules, so that a rule stops using a hub before
+           the hub loses its role. A profile's three modules (device settings,
+           QoS and firewall) hold the same segments, so the plan raises
+           ``SegmentSetError`` for an edit that removes a segment from one, or
+           adds it to some and not all, and carries a ``segments_disagree``
+           warning for a profile whose modules disagree as read.
            *repair_defaults* is false to leave the template ``defaults`` a
            profile QoS segment lacks out of the write; the plan warns of them
            either way (``defaults_repaired``).
@@ -821,9 +1133,11 @@ class ConfigPipeline:
            after a profile's device settings is rebased
            (``write_module(..., rebase=True)``): the device settings write can change it
            too, so its version is read first, and a changed one makes the save read the
-           module and apply your edits to it. Only a path you edited that the other
-           change also reached raises ``ConfigConflictError``; what changed beside your
-           edits is in ``SaveResult.server_changes``, each with ``merged`` true. Per
+           module and apply your edits to it; one written before them (QoS and
+           firewall, in a save that removes a hub) is not. Only a path you
+           edited that the other change also reached raises
+           ``ConfigConflictError``; what changed beside your edits is in
+           ``SaveResult.server_changes``, each with ``merged`` true. Per
            module, ``SaveResult.left_out`` holds the planned changes the VCO stores its
            own way (a field it owns, a default it adds back where the plan removed it):
            neither applied nor lost, each with the value read, the value sent and the
@@ -838,17 +1152,20 @@ class ConfigPipeline:
 
         A profile whose edit adds a hub to a segment's hub, bridge or backhaul
         list, or removes one, has role steps (``ConfigPlan.steps``), which a
-        write of the modules cannot do. The save sends them before step 3, in
-        the UI's order: it reads the device settings module's version (a module
-        another writer changed stops the save here, with nothing sent, and the
-        state holds the module as stored, as after a refused write), reads the
-        hub services, decides every step (in place or not, and the ID its call
+        write of the modules cannot do. The save sends them in step 3, right
+        before the device settings write, in the UI's order. Before its first
+        write it reads the device settings module's version (a module another
+        writer changed stops the save here, with nothing sent, and the state
+        holds the module as stored, as after a refused write), reads the hub
+        services and decides every step (in place or not, and the ID its call
         takes), so that a refusal such as a hub whose service the VCO holds
-        twice comes before the first call, sends each step not already in
+        twice, or ``hub_in_use`` with ``"refuse"``, comes before the first
+        request that changes anything. Then it writes the modules the plan
+        lists before the device settings, sends each step not already in
         place, reads the services again, and writes the device settings with
         the hub rows the steps made (a hub added to a Branch-to-Hub list has
         its row, one removed from it loses its row), without a second version
-        read.
+        read, and then the modules after them.
 
         An Edge hub removed from a Branch-to-Hub list that edge QoS rules use
         (a ``deviceSettings:backHaulEdge`` row of an Edge's QoS module) loses
@@ -862,12 +1179,13 @@ class ConfigPipeline:
         same way.
 
         ``SaveResult.steps`` has an outcome per step: ``"sent"`` or
-        ``"in_place"``. An error before any step was sent propagates as it is.
-        Once one was, or when the call of one fails, an ``Exception`` (also
-        that of a module write) is raised as ``SaveStepError``, from the VCO's
-        error: nothing is undone, the state keeps its edits, and a second
-        ``save`` plans the steps again, skips those now in place and sends the
-        rest. A cancellation propagates as it is.
+        ``"in_place"``. An error before any step was sent propagates as it is,
+        also that of a module written before the steps. Once one was, or when
+        the call of one fails, an ``Exception`` (also that of a module write)
+        is raised as ``SaveStepError``, from the VCO's error: nothing is
+        undone, the state keeps its edits, and a second ``save`` plans the
+        steps again, skips those now in place and sends the rest. A
+        cancellation propagates as it is.
 
         A provider you set (a DNS or authentication provider) goes with a ref
         row, which needs the enterprise's network services: the first plan
@@ -939,12 +1257,7 @@ class ConfigPipeline:
         that block, for another task that calls ``apply`` or ``save``,
         which would wait for the lock without end.
         """
-        if on_hub_in_use not in ("warn", "refuse"):
-            raise ValueError(  # pyright: ignore[reportUnreachable]  # a caller may pass any string
-                f"on_hub_in_use is {on_hub_in_use!r}; give 'warn' to remove a "
-                "hub that edge QoS rules use and say so in the result's "
-                "warnings, or 'refuse' to stop before any step"
-            )
+        _check_on_hub_in_use(on_hub_in_use)
         async with state.lock:
             plan = await self._plan_loading(state, repair_defaults=repair_defaults)
             result = SaveResult(
@@ -954,51 +1267,75 @@ class ConfigPipeline:
             if not plan.changed and not plan.steps:
                 return result
 
-            for module_plan in plan.changed:
-                _ = _require_writable(state.module(module_plan.name))
-
-            for module_plan in plan.changed:
-                name = ConfigurationModuleName(module_plan.name)
-                if module_plan.operation == "insert":
-                    result.modules_inserted.append(name)
-                else:
-                    result.modules_updated.append(name)
-
-            # Run write-time validators
-            if validate:
-                validation = self._validators.run(
-                    state,
-                    phase="write",
-                    modules=[ConfigurationModuleName(m.name) for m in plan.changed],
-                )
-                if not validation.is_valid:
-                    if not dry_run:
-                        raise SaveValidationError(validation.errors)
-                    result.validation_errors = validation.errors
-                    return result
-                for warn in validation.warnings:
-                    result.warnings.append(_validation_error_to_warning(warn))
-
-            if dry_run:
-                result.warnings.extend(
-                    ValidationWarning(
-                        path=module_plan.name,
-                        message=(
-                            "an earlier insert of this module may have reached the "
-                            "VCO; the save reads the configuration first, and takes a "
-                            "module of this name it finds there as the insert's answer"
-                        ),
-                        code="insert_unconfirmed",
-                    )
-                    for module_plan in plan.changed
-                    if module_plan.name in state.unconfirmed_inserts
-                )
-                if plan.steps:
-                    result.steps = await self._dry_steps(
-                        state, plan, result.warnings, on_hub_in_use
-                    )
+            _list_writes(state, plan, result)
+            if validate and not self._validate_writes(
+                state, plan, result, dry_run=dry_run
+            ):
                 return result
+            if dry_run:
+                return await self._dry_result(state, plan, result, on_hub_in_use)
             return await self._send(state, plan, result, on_hub_in_use)
+
+    def _validate_writes(
+        self,
+        state: ConfigState,
+        plan: ConfigPlan,
+        result: SaveResult,
+        *,
+        dry_run: bool,
+    ) -> bool:
+        """Run the write-time validators on the modules *plan* changes.
+
+        Say whether the save goes on.
+
+        Their warnings are added to *result*. An error raises
+        ``SaveValidationError``, or, for *dry_run*, is put in
+        ``result.validation_errors``, and the save stops there.
+        """
+        validation = self._validators.run(
+            state,
+            phase="write",
+            modules=[ConfigurationModuleName(m.name) for m in plan.changed],
+        )
+        if not validation.is_valid:
+            if not dry_run:
+                raise SaveValidationError(validation.errors)
+            result.validation_errors = validation.errors
+            return False
+        for warn in validation.warnings:
+            result.warnings.append(_validation_error_to_warning(warn))
+        return True
+
+    async def _dry_result(
+        self,
+        state: ConfigState,
+        plan: ConfigPlan,
+        result: SaveResult,
+        on_hub_in_use: Literal["warn", "refuse"],
+    ) -> SaveResult:
+        """*result* of a dry run, which sends nothing.
+
+        It warns of each insert that may have reached the VCO, and says what
+        the save would do with each step (:meth:`_dry_steps`).
+        """
+        result.warnings.extend(
+            ValidationWarning(
+                path=module_plan.name,
+                message=(
+                    "an earlier insert of this module may have reached the "
+                    "VCO; the save reads the configuration first, and takes a "
+                    "module of this name it finds there as the insert's answer"
+                ),
+                code="insert_unconfirmed",
+            )
+            for module_plan in plan.changed
+            if module_plan.name in state.unconfirmed_inserts
+        )
+        if plan.steps:
+            result.steps = await self._dry_steps(
+                state, plan, result.warnings, on_hub_in_use
+            )
+        return result
 
     async def _dry_steps(
         self,
@@ -1035,52 +1372,107 @@ class ConfigPipeline:
             )
         )
 
-    async def _run_steps(  # noqa: C901, PLR0913 (existing: split it when it next changes)
+    async def _check_steps_version(self, sending: _Sending) -> None:
+        """Read the version of the device settings, before any step is sent.
+
+        Another writer's change stops the save here: the ``ModuleWriteError``
+        propagates as it is, with the module as stored put in the state, as
+        a write refused for a stale version does. A write found stored (one
+        whose answer was lost) is done before the steps
+        (``sending.stored_already``); an error of storing it gets the save's
+        progress.
+        """
+        state = sending.state
+        module = _profile_device_settings(state)
+        at = sending.device_settings_at
+        try:
+            sending.stored_already = await self.client.check_module_version(
+                module,
+                sending.changed[at],
+                enterprise_id=state.resolver_context.enterprise_id,
+            )
+        except ModuleWriteError as error:
+            # As a write refused for a stale version does: the state holds
+            # the module as stored, so that a second save does not meet
+            # the same conflict. No step was sent, so it propagates as it is.
+            _ = sending.put_stored(sending.modules[at], error)
+            raise
+        if sending.stored_already is not None:
+            # A write whose answer was lost: it is done, before the steps.
+            try:
+                sending.store_write(at, sending.stored_already)
+            except BaseException as error:
+                _ = sending.progress_of(error)
+                raise
+
+    async def _decide_steps(
         self,
-        state: ConfigState,
+        sending: _Sending,
         plan: ConfigPlan,
-        changed: list[ModulePlan],
-        done: list[ModuleWrite[Any]],
-        *,
-        device_settings_stored: bool,
         on_hub_in_use: Literal["warn", "refuse"],
     ) -> _StepRun:
-        """Send the role steps of *plan*.
-
-        Then have the device settings plan in *changed* carry the rows they made.
+        """Decide every role step of *plan*; sends nothing.
 
         Reads the hub services, adds the ``hub_in_use`` warnings to the run
-        (``HubListError`` with *on_hub_in_use* ``"refuse"``, before any step),
-        decides every step with ``prepare_steps`` (a refusal comes before the
-        first call), sends each step not in place, in order, reads the services
-        again and puts the hub rows the steps made in the device settings plan
-        (``with_hub_rows``), at its place in *changed*, unless
-        *device_settings_stored* (its write was found stored and is in *done*:
-        it is not written again). Returns what the steps did. An ``Exception``
-        once a step was sent, or in the call of one, is a ``SaveStepError``;
-        any other error, a cancellation included, propagates as it is. A
-        ``SaveProgress`` is attached to the error once a call was made or a
-        write was found stored; an error before either has none.
+        (``HubListError`` with *on_hub_in_use* ``"refuse"``) and decides every
+        step with ``prepare_steps``, so that a refusal comes before the first
+        call. Returns the run, with the services and the decisions, for
+        :meth:`_send_steps`. An error has a ``SaveProgress`` attached once a
+        write was found stored (``_StepRun.guard``).
         """
-        enterprise_id = state.resolver_context.enterprise_id
-        module = _profile_device_settings(state)
+        module = _profile_device_settings(sending.state)
         configuration_id = _configuration_id(module)
-        position = next(i for i, p in enumerate(changed) if p.name == module.name)
-        run = _StepRun(tuple(p.name for p in changed), done)
-        try:
+        run = _StepRun(tuple(p.name for p in sending.changed), sending.done)
+        with run.guard():
             services = await read_services(
-                self.client, enterprise_id, qos_usage=_leaves_a_hub_list(plan.steps)
+                self.client,
+                sending.state.resolver_context.enterprise_id,
+                qos_usage=_leaves_a_hub_list(plan.steps),
             )
+            run.services = services
             run.warnings = _hubs_in_use_warnings(
                 plan.steps, services, module, on_hub_in_use
             )
             # Decided, with each call's ID, before the first call is sent.
-            for prepared in prepare_steps(
+            run.prepared = prepare_steps(
                 plan.steps,
                 services,
                 configuration_id=configuration_id,
                 module_id=module.id_,
-            ):
+            )
+        return run
+
+    async def _send_steps(self, sending: _Sending, plan: ConfigPlan) -> None:
+        """Send each role step of *plan* not in place, as decided.
+
+        Then have the device settings plan in ``sending.changed`` carry the
+        rows they made.
+
+        Sends the steps in order, reads the services again and puts the hub
+        rows the steps made in the device settings plan (``with_hub_rows``),
+        at its place in ``sending.changed``, unless its write was found stored
+        (``sending.stored_already``: it is not written again). An
+        ``Exception`` once a step was sent, or in the call of one, is a
+        ``SaveStepError``; any other error, a cancellation included,
+        propagates as it is. A ``SaveProgress`` is attached to the error once
+        a call was made or a write was found stored (``_StepRun.guard``).
+
+        The decisions in ``sending.run`` were made against the device settings
+        module and the configuration ID it looks up again here, so nothing
+        between deciding and sending the steps may replace the device settings
+        module. The writes made in between (the modules the plan lists before
+        the device settings) each replace only their own module.
+        """
+        run = sending.run
+        services = None if run is None else run.services
+        if run is None or services is None:
+            raise RuntimeError("the steps of a save are sent once they are decided")
+        enterprise_id = sending.state.resolver_context.enterprise_id
+        module = _profile_device_settings(sending.state)
+        configuration_id = _configuration_id(module)
+        position = sending.device_settings_at
+        with run.guard():
+            for prepared in run.prepared:
                 step = prepared.step
                 if prepared.in_place:
                     run.in_place.append(step)
@@ -1102,7 +1494,7 @@ class ConfigPipeline:
                 run.sent.append(step)
                 run.outcomes.append(StepOutcome(step, "sent"))
             services = await read_services(self.client, enterprise_id, qos_usage=False)
-            if not device_settings_stored:
+            if sending.stored_already is None:
                 added, removed = hub_rows(
                     module.raw_refs,
                     plan.steps,
@@ -1112,37 +1504,28 @@ class ConfigPipeline:
                     now=module.data,
                 )
                 if added or removed:
-                    changed[position] = with_hub_rows(
-                        changed[position],
+                    sending.changed[position] = with_hub_rows(
+                        sending.changed[position],
                         added=added,
                         removed=removed,
                         segments={s.segment_object_id: s.segment for s in plan.steps},
                     )
-        except SaveStepError:
-            raise
-        except Exception as error:
-            if run.sent:
-                raise run.error(error) from error
-            if run.calling or run.done:
-                run.progress().attach(error)
-            raise
-        except BaseException as error:
-            if run.calling or run.done:
-                run.progress().attach(error)
-            raise
-        return run
 
-    async def _send(  # noqa: C901, PLR0915 (existing: split it when it next changes)
+    async def _send(
         self,
         state: ConfigState,
         plan: ConfigPlan,
         result: SaveResult,
         on_hub_in_use: Literal["warn", "refuse"],
     ) -> SaveResult:
-        """Send the role steps of *plan*, then write each changed module.
+        """Write each changed module of *plan* in order, with its role steps.
 
-        The steps are sent if it has any. The modules are written in order, and each
-        module as stored is put in *state*.
+        The modules are written in the plan's order, and each module as stored
+        is put in *state*. The device settings are written first, and the role
+        steps right before them; in a save that removes a hub from a list (a
+        plan with a ``disable`` step) they are written last, after the other
+        modules, so that a rule stops using a hub before the hub loses its
+        role.
 
         Raises ``TypeError`` before the first request when a changed module is
         not one a save writes. A ``ModuleWriteError`` puts the module as
@@ -1159,190 +1542,104 @@ class ConfigPipeline:
         with a ``DetachedObjectError`` whose note also names the modules not
         written.
 
-        The steps come first (:meth:`_run_steps`), and the device settings
-        write that follows carries the rows they made and reads no version
-        (``version_checked``). Once a step was sent, an ``Exception`` of a
-        module write is raised as a ``SaveStepError``, from that error, and
-        its ``SaveProgress`` is that of the write.
+        Every check comes before the first write: the version read of the
+        device settings (:meth:`_check_steps_version`), and the services read,
+        the ``hub_in_use`` refusal and the decision of every step
+        (:meth:`_decide_steps`). Then the modules the plan lists before the
+        device settings are written, the steps are sent (:meth:`_send_steps`),
+        and the device settings write that follows carries the rows they made
+        and reads no version (``version_checked``). An error of a write before
+        the steps propagates as it is. Once a step was sent, an ``Exception``
+        of a module write is raised as a ``SaveStepError``, from that error,
+        and its ``SaveProgress`` is that of the write.
         """
-        enterprise_id = state.resolver_context.enterprise_id
         changed = list(plan.changed)
-        # Each write replaces only its own module, so these stay the state's.
         modules = [_require_writable(state.module(p.name)) for p in changed]
-        # What each module holds as planned, to find an edit made while a write was out.
-        dumps = [_dump(mod) for mod in modules]
-        providers = [ref_only_values(mod.data) for mod in modules]
-        done: list[ModuleWrite[Any]] = []
-        failed: str | None = None
-        position = 0
-        # A profile's device settings write can change the modules after it.
-        device_settings_stored = False
-
-        def is_device_settings(mod: _WritableModule) -> bool:
-            return (
-                state.target_type == "profile"
-                and mod.name == ConfigurationModuleName.DEVICE_SETTINGS
-            )
-
-        def progress_of(error: BaseException) -> SaveProgress:
-            """The progress of this save, attached to *error*.
-
-            The writes stored, the module being written and the modules after it.
-            """
-            stored = {write.name for write in done}
-            progress = SaveProgress(
-                completed=tuple(done),
-                failed=failed,
-                pending=tuple(
-                    m.name for m in modules if m.name not in stored and m.name != failed
+        sending = _Sending(
+            state=state,
+            result=result,
+            changed=changed,
+            modules=modules,
+            dumps=[_dump(mod) for mod in modules],
+            providers=[ref_only_values(mod.data) for mod in modules],
+            done=[],
+            device_settings_at=next(
+                (
+                    i
+                    for i, p in enumerate(changed)
+                    if p.name == ConfigurationModuleName.DEVICE_SETTINGS
                 ),
-            )
-            progress.attach(error)
-            return progress
+                len(changed),
+            ),
+        )
+        if not plan.steps:
+            await self._write_modules(sending, range(len(changed)))
+            return result
+        # Every check comes before the first write.
+        await self._check_steps_version(sending)
+        run = await self._decide_steps(sending, plan, on_hub_in_use)
+        sending.run = run
+        result.warnings.extend(run.warnings)
+        at = sending.device_settings_at
+        await self._write_modules(sending, range(at))
+        await self._send_steps(sending, plan)
+        result.steps = tuple(run.outcomes)
+        await self._write_modules(sending, range(at, len(changed)))
+        return result
 
-        def store_write(at: int, write: ModuleWrite[Any]) -> None:
-            """Count *write* of the module at *at* as stored.
+    async def _write_modules(self, sending: _Sending, positions: range) -> None:
+        """Write the changed modules at *positions*, in order.
 
-            Also put the module as stored in the state.
+        Each module as stored is put in the state (``_Sending.store_write``).
+        A device settings write the version read found stored is not written
+        again.
 
-            Raises ``DetachedObjectError`` for an edit made while it was written.
-            """
-            nonlocal failed, device_settings_stored
-            mod = modules[at]
-            insert = changed[at].operation == "insert"
-            # Stored: it counts as written even if the state cannot take it back.
-            done.append(write)
-            failed = None
-            if is_device_settings(mod):
-                device_settings_stored = True
-            paths = list(
-                dict.fromkeys(
-                    change.path
-                    for change in raw_changes(dumps[at], _dump(mod), type(mod))
-                )
-            )
-            # A provider is no part of a dump: compare it by itself.
-            paths.extend(
-                Path(("data", *path.parts))
-                for path in ref_only_changes(providers[at], ref_only_values(mod.data))
-            )
-            try:
-                state.replace_module(mod, write.module)
-            except BaseException:
-                # The insert is stored but the state still plans it: the
-                # next save reads before it inserts again.
-                if insert:
-                    state.unconfirmed_inserts.add(mod.name)
-                raise
-            name = ConfigurationModuleName(write.name)
-            result.server_changes[name] = write.server_changes
-            result.left_out[name] = write.left_out
-            result.written = tuple(done)
-            if paths:
-                error = DetachedObjectError(
-                    f"{mod.name}: the module was edited while this save was writing "
-                    f"it, at: {', '.join(paths)}. The write is stored without those "
-                    "edits and the state holds the module as stored; take the objects "
-                    "from the state again and redo them. A path that is a placeholder "
-                    "a lookup added (segment(name), for a segment the edge only "
-                    "inherits) is no edit and needs no redo. To edit a state from "
-                    "another task while a save may run, use apply, or hold state.lock "
-                    "around the edit",
-                    paths,
-                )
-                note = _written_note(done)
-                if later := modules[at + 1 :]:
-                    note += (
-                        "; the save stopped here, so these are not written: "
-                        + ", ".join(m.name for m in later)
-                        + ". The next save writes them"
-                    )
-                error.add_note(note)
-                raise error
-
-        def put_stored(mod: _WritableModule, error: ModuleWriteError) -> bool:
-            """Put the module *error* carries in the state in place of *mod*.
-
-            Say whether it did.
-
-            The module is of the class of *mod* (``write_module`` checks it), or
-            None when it could not be read: then the state keeps *mod*. It is
-            also kept when the state no longer holds *mod*, so that the write
-            error is not hidden behind the ValueError of ``replace_module``.
-            """
-            stored = error.module
-            if isinstance(stored, type(mod)) and state.find_module(mod.name) is mod:
-                state.replace_module(mod, cast("AnyStoredModule", stored))
-                return True
-            return False
-
-        run: _StepRun | None = None
-        stored_already: ModuleWrite[Any] | None = None
-        device_settings_at = -1
-        if plan.steps:
-            module = _profile_device_settings(state)
-            device_settings_at = next(
-                i for i, p in enumerate(changed) if p.name == module.name
-            )
-            # Before anything is sent: another writer's change stops the save here.
-            try:
-                stored_already = await self.client.check_module_version(
-                    module, changed[device_settings_at], enterprise_id=enterprise_id
-                )
-            except ModuleWriteError as error:
-                # As a write refused for a stale version does: the state holds
-                # the module as stored, so that a second save does not meet
-                # the same conflict. No step was sent, so it propagates as it is.
-                _ = put_stored(modules[device_settings_at], error)
-                raise
-            if stored_already is not None:
-                # A write whose answer was lost: it is done, before the steps.
-                try:
-                    store_write(device_settings_at, stored_already)
-                except BaseException as error:
-                    _ = progress_of(error)
-                    raise
-            run = await self._run_steps(
-                state,
-                plan,
-                changed,
-                done,
-                device_settings_stored=stored_already is not None,
-                on_hub_in_use=on_hub_in_use,
-            )
-            result.steps = tuple(run.outcomes)
-            result.warnings.extend(run.warnings)
+        A ``ModuleWriteError`` puts the module as stored in the state, when it
+        carries one, and gets the writes before it as ``completed``. An insert
+        that fails in any way but with the module as stored is recorded in
+        ``state.unconfirmed_inserts``. Every error gets the save's
+        ``SaveProgress``; once a step was sent, an ``Exception`` is raised as
+        a ``SaveStepError``, from that error, with the same progress.
+        """
+        state = sending.state
+        run = sending.run
+        position = positions.start
         try:
-            for position, (module_plan, mod) in enumerate(
-                zip(changed, modules, strict=True)
-            ):
-                if position == device_settings_at and stored_already is not None:
+            for position in positions:
+                if (
+                    position == sending.device_settings_at
+                    and sending.stored_already is not None
+                ):
                     continue
-                failed = mod.name
+                mod = sending.modules[position]
+                module_plan = sending.changed[position]
+                sending.failed = mod.name
                 insert = module_plan.operation == "insert"
                 try:
                     write = await _write_module(
                         self.client,
                         mod,
                         module_plan,
-                        enterprise_id=enterprise_id,
+                        enterprise_id=state.resolver_context.enterprise_id,
                         if_absent=insert and mod.name in state.unconfirmed_inserts,
-                        rebase=device_settings_stored,
+                        rebase=sending.device_settings_stored,
                         # The steps' read of the version holds for this write.
-                        version_checked=run is not None and is_device_settings(mod),
+                        version_checked=(
+                            run is not None and sending.is_device_settings(mod)
+                        ),
                         resolvers=state.resolvers,
                         # The module the state holds now: after the device
                         # settings write, the one stored.
                         profile_device_settings=(
                             _profile_device_settings(state)
-                            if device_settings_stored
+                            if sending.device_settings_stored
                             else None
                         ),
                     )
                 except ModuleWriteError as error:
-                    if not put_stored(mod, error) and insert:
+                    if not sending.put_stored(mod, error) and insert:
                         state.unconfirmed_inserts.add(mod.name)
-                    error.completed = tuple(done)
+                    error.completed = tuple(sending.done)
                     raise
                 except BaseException:
                     # An insert may have reached the VCO: a transport error, a
@@ -1351,22 +1648,21 @@ class ConfigPipeline:
                     if insert:
                         state.unconfirmed_inserts.add(mod.name)
                     raise
-                store_write(position, write)
+                sending.store_write(position, write)
         except BaseException as error:
-            progress = progress_of(error)
+            progress = sending.progress_of(error)
             if isinstance(error, Exception) and run is not None and run.sent:
                 # A step was sent and nothing undoes it: say what was done.
                 step_error = SaveStepError(
                     f"{type(error).__name__}: {error}",
-                    module_name=modules[position].name,
+                    module_name=sending.modules[position].name,
                     steps_done=run.sent,
                     steps_in_place=run.in_place,
-                    written=[write.name for write in done],
+                    written=[write.name for write in sending.done],
                 )
                 progress.attach(step_error)
                 raise step_error from error
             raise
-        return result
 
     async def compare_effective(  # noqa: C901 (existing: split it when it next changes)
         self, state: ConfigState, *, modules: Sequence[str] | None = None
@@ -2218,21 +2514,123 @@ def _try_assigning(
     assign_on_trial(state, modules, prepared.assignments, edit)
 
 
-type _WritableModule = (
-    DeviceSettingsConfigurationModule
-    | QosConfigurationModule[Edge]
-    | QosConfigurationModule[Profile]
-    | WanConfigurationModule
-    | FirewallConfigurationModule[Edge]
-    | FirewallConfigurationModule[Profile]
-)
+def _patched_module(
+    state: ConfigState,
+    module: str,
+    patch: object,
+    segment: str | None,
+    path: str | None,
+) -> tuple[_WritableModule, bool]:
+    """The module of *state* that ``apply``'s patch goes to, and whether this made it.
 
-_WRITABLE_MODULES = (
-    DeviceSettingsConfigurationModule,
-    QosConfigurationModule,
-    WanConfigurationModule,
-    FirewallConfigurationModule,
-)
+    A ``firewall`` or ``QOS`` module that an edge lacks is created empty.
+    Segment operations to a module a profile lacks raise ``PatchError``
+    (``_refuse_segment_ops_to_a_missing_module``), and so does a module a
+    save does not write, after a module made here is dropped again.
+    """
+    internal_name = _resolve_module_name(module)
+    existing = state.find_module(internal_name)
+    if existing is None:
+        _refuse_segment_ops_to_a_missing_module(
+            state, str(internal_name), patch, segment, path
+        )
+    mod = existing if existing is not None else state.module(internal_name, create=True)
+    if not isinstance(mod, _WRITABLE_MODULES):
+        if existing is None:
+            state.drop_module(mod)
+        raise PatchError(
+            f"{mod.name}: a save does not write this module (it writes "
+            "device settings, QoS, WAN and firewall modules), so a "
+            "patch to it is not applied. Make the change in the VCO",
+            Path(()),
+            "address",
+        )
+    return mod, existing is None
+
+
+def _edit_of(
+    state: ConfigState,
+    mod: _WritableModule,
+    patch: object,
+    segment: str | None,
+    path: str | None,
+) -> _Edit:
+    """The ``_Edit`` of *patch* at its address to *mod* of *state*.
+
+    Raises ``PatchError`` for an address the class of the module's data does
+    not have (``nest_patch``).
+    """
+    data = mod.data
+    nested = nest_patch(type(data), patch, segment=segment, path=path)
+    edge = state.target_type == "edge"
+    profile_rules = (
+        not edge
+        and isinstance(data, _SegmentLayer)
+        and str(mod.name) in PROFILE_SEGMENT_MODULES
+    )
+    unserved = (
+        frozenset(missing_services(data))
+        if isinstance(mod, QosConfigurationModule)
+        else frozenset[Path]()
+    )
+    inherited = (
+        state.inherited_segment_ids(mod)
+        if edge and _is_object(nested.get("segments"))
+        else frozenset[str]()
+    )
+    return _Edit(
+        state=state,
+        mod=mod,
+        data=data,
+        nested=nested,
+        edge=edge,
+        profile_rules=profile_rules,
+        inherited=inherited,
+        unserved=unserved,
+    )
+
+
+def _try_once(edit: _Edit, prepared: ProfileSegmentPatch | None) -> None:
+    """Try the patch of *edit* once, on copies.
+
+    With *prepared*, on copies of the three profile modules
+    (``_try_assigning``). Else the patch is merged into a copy of the
+    module's data, checked against the profile's segment rules where they
+    apply, given its hub services on QoS, and planned as a save would.
+    Nothing of the state changes, and whatever fails raises.
+    """
+    if prepared is not None:
+        _try_assigning(edit.state, edit.mod, prepared, edit.unserved)
+        return
+    state = edit.state
+    trial = edit.data.model_copy(deep=True)
+    _ = trial.merge_patch(edit.patch_for(trial, None), resolvers=state.resolvers)
+    if edit.profile_rules:
+        check_profile_segments(
+            edit.data, trial, edit.mod, _device_settings_as_read(state), ()
+        )
+    if isinstance(edit.mod, QosConfigurationModule):
+        state.fill_hub_services(trial, skip=edit.unserved)
+    _ = state.plan_module(edit.mod, trial)
+
+
+def _merge(edit: _Edit, prepared: ProfileSegmentPatch | None) -> None:
+    """Make the edit that passed its trial.
+
+    The assignments, the merge into the module's data, and the hub services.
+    """
+    state = edit.state
+    if prepared is not None:
+        modules = segment_modules(state)
+        for assignment in prepared.assignments:
+            apply_assignment(modules, assignment)
+    _ = edit.data.merge_patch(
+        edit.patch_for(edit.data, prepared), resolvers=state.resolvers
+    )
+    if isinstance(edit.mod, QosConfigurationModule):
+        # Cannot fail after the trial passed: the hub table and the
+        # segments are the trial's, and the patch is the same.
+        state.fill_hub_services(edit.data, skip=edit.unserved)
 
 
 def _qos_rules_json(
@@ -2295,9 +2693,36 @@ def _require_writable(mod: AnyStoredModule) -> _WritableModule:
         raise TypeError(
             f"{mod.name}: this state has an edit to a {type(mod).__name__}, which a "
             "save does not write (it writes device settings, QoS, WAN and firewall "
-            "modules). Load the state again to drop that edit; nothing was sent"
+            f"modules). Take the edit back with revert (module {mod.name}), or "
+            "load the state again; nothing was sent"
         )
     return mod
+
+
+def _check_on_hub_in_use(on_hub_in_use: Literal["warn", "refuse"]) -> None:
+    """``ValueError`` for an *on_hub_in_use* not ``"warn"`` or ``"refuse"``."""
+    if on_hub_in_use not in ("warn", "refuse"):
+        raise ValueError(  # pyright: ignore[reportUnreachable]  # a caller may pass any string
+            f"on_hub_in_use is {on_hub_in_use!r}; give 'warn' to remove a "
+            "hub that edge QoS rules use and say so in the result's "
+            "warnings, or 'refuse' to stop before any step"
+        )
+
+
+def _list_writes(state: ConfigState, plan: ConfigPlan, result: SaveResult) -> None:
+    """Put the modules *plan* writes in *result*, as updated or inserted.
+
+    Raises ``TypeError`` first if a changed module is not one a save writes.
+    """
+    for module_plan in plan.changed:
+        _ = _require_writable(state.module(module_plan.name))
+
+    for module_plan in plan.changed:
+        name = ConfigurationModuleName(module_plan.name)
+        if module_plan.operation == "insert":
+            result.modules_inserted.append(name)
+        else:
+            result.modules_updated.append(name)
 
 
 def _validation_error_to_warning(err: ValidatorError) -> ValidationWarning:
@@ -2349,3 +2774,119 @@ async def _write_module(  # noqa: PLR0913 (existing: split it when it next chang
         resolvers=resolvers,
         profile_device_settings=profile_device_settings,
     )
+
+
+_SHOWN_PATHS: Final = 3
+"""How many paths a refusal of a module found by name names."""
+
+_PLAN_ERRORS: Final = (
+    LossyFieldError,
+    FixedListError,
+    RefsNotLoadedError,
+    ResolutionError,
+)
+"""What ``ConfigState.plan_module`` raises for the module's own content."""
+
+
+def _plan_to_compare(state: ConfigState, module: AnyStoredModule) -> ModulePlan:
+    """The plan of *module*, to compare a module the VCO holds with.
+
+    Raises ``ValueError``, from the plan's error, when the module's own content
+    cannot be planned; ``ResolverNotLoadedError`` (a resolver the state has not
+    loaded) and any other error propagate.
+    """
+    try:
+        return state.plan_module(module)
+    except _PLAN_ERRORS as error:
+        if isinstance(error, ResolverNotLoadedError):
+            raise
+        raise ValueError(
+            f"{module.name}: an insert of this module may have reached the VCO, "
+            f"and this state's module cannot be planned ({error}), so it cannot "
+            "be compared with a module the VCO may hold. Nothing was read or "
+            "deleted. To go on, load the state again, which then holds the "
+            "module as the VCO stores it, or none"
+        ) from error
+
+
+def _require_the_states(
+    module: AnyStoredModule, plan: ModulePlan, found: ConfigurationModuleBase
+) -> None:
+    """Raise ``ValueError`` unless *found* holds exactly what *module* holds.
+
+    That is, *plan* is an insert, nothing it inserts is missing or different
+    in *found*, and the check reports no server change but values the VCO
+    assigns itself (``is_vco_assigned``, such as a firewall rule's logical
+    ID): nothing more.
+    """
+    if plan.operation != "insert":
+        raise ValueError(
+            f"{module.name}: the VCO holds a module of this name (module "
+            f"{found.id_}), and this state's module holds nothing a save would "
+            "insert, so it cannot be told whether the stored module is the one "
+            "this state sent, and it was not deleted. To go on, load the state "
+            "again, which then holds that module as stored"
+        )
+    try:
+        write = check_found_insert(module, plan, found)
+    except ModuleWriteError as error:
+        raise ValueError(
+            _not_this_states(module.name, found.id_, _how_it_differs(error))
+        ) from error
+    more = [c for c in write.server_changes if not is_vco_assigned(module, plan, c)]
+    if more:
+        paths = [str(change.path) for change in more]
+        raise ValueError(
+            _not_this_states(
+                module.name, found.id_, f"it also holds {_some_paths(paths)}"
+            )
+        )
+
+
+def _not_this_states(name: str, module_id: int, what: str) -> str:
+    """The refusal to delete module *module_id*, which is not this state's."""
+    return (
+        f"{name}: the VCO holds a module of this name (module {module_id}) that "
+        f"is not the one this state holds ({what}), so it was not deleted: "
+        "deleting it could remove another writer's module. To go on, save again, "
+        "which reads the configuration before it inserts and goes on from the "
+        "module it finds there, or load the state again, which then holds that "
+        "module as stored"
+    )
+
+
+def _some_paths(paths: Sequence[str]) -> str:
+    """The first few of *paths*, each once, and how many more there are."""
+    distinct = list(dict.fromkeys(paths))
+    more = len(distinct) - _SHOWN_PATHS
+    tail = f" and {more} more" if more > 0 else ""
+    return f"{', '.join(distinct[:_SHOWN_PATHS])}{tail}"
+
+
+def _how_it_differs(error: ModuleWriteError) -> str:
+    """In a few words, why the module *error* was raised for is not this state's."""
+    if isinstance(error, WriteOutcomeUnknownError):
+        return error.detail
+    paths = [str(change.path) for change in error.lost_edits]
+    if not paths:
+        return "it does not hold what this state's module holds"
+    return f"it differs at {_some_paths(paths)}"
+
+
+def _check_deleted(answer: RowsModifiedConfirmation, module_id: int) -> None:
+    """Raise ``VcoOperationError`` when *answer* says the delete of *module_id* failed.
+
+    It failed when the answer carries an error, or gives a row count of 0: the
+    read before the delete found the module. An answer with no row count is
+    taken as the delete done. Calling ``revert`` again reads the configuration
+    again and goes on from what it holds.
+    """
+    if answer.error:
+        raise VcoOperationError("delete configuration module", answer.error)
+    if answer.rows == 0:
+        raise VcoOperationError(
+            "delete configuration module",
+            f"no row was deleted, though the configuration held module "
+            f"{module_id} when it was read just before; revert again, which "
+            "reads the configuration first",
+        )

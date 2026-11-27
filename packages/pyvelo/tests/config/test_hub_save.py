@@ -629,6 +629,33 @@ async def test_a_qos_write_after_a_step_and_the_device_settings_fails_as_a_save_
     assert state.plan().steps == ()
 
 
+async def test_a_save_that_removes_one_hub_and_adds_another_writes_qos_first() -> None:
+    ds = ds_with_vpn(GLOBAL, hubs=(HUB_B,))
+    state = await profile_of([ds, ds_entry(GUEST)], service_row(HUB_B, "hub"))
+    await edit(state, "hub", remove_hub(HUB_B.name))
+    await edit(state, "hub", add_hub(HUB_A.name))
+    rule = {"rules": {"+": {"_op": "add", **backhaul_rule("Web")}}}
+    _ = await ConfigPipeline(client=None).apply(
+        state, module="QOS", patch={"segments": {GLOBAL[1]: rule}}
+    )
+    pipeline, store = hub_pipeline(state, vpn_check=True)
+
+    result = await pipeline.save(state)
+
+    wanted = (
+        UPDATE,
+        call_name("disable", "hub", HUB_B),
+        call_name("enable", "hub", HUB_A),
+    )
+    assert [m for m in methods(store) if m in wanted] == [
+        UPDATE,
+        call_name("disable", "hub", HUB_B),
+        call_name("enable", "hub", HUB_A),
+        UPDATE,
+    ]
+    assert [w.name for w in result.written] == ["QOS", DS]
+
+
 async def test_a_conflict_of_the_module_write_after_a_step_is_the_cause() -> None:
     state = await two_lists_state()
     pipeline, store = hub_pipeline(state, vpn_check=True)
@@ -803,8 +830,19 @@ async def test_a_failure_of_the_second_services_read_is_a_save_step_error() -> N
     assert failed.value.step is None
     assert failed.value.module_name is None
     assert [s.role for s in failed.value.steps_done] == ["hub", "backhaul"]
-    assert "after its steps" in str(failed.value)
+    assert "after its steps, before it wrote the device settings" in str(failed.value)
     assert UPDATE not in methods(store)
+
+
+def test_a_step_error_with_the_device_settings_stored_does_not_say_before() -> None:
+    # The version read found the device settings write stored before the steps.
+    error = SaveStepError(
+        "VcoError: the VCO is gone",
+        steps_done=[step_of("enable", "hub", HUB_A, added=True)],
+        written=[DS],
+    )
+
+    assert "the save stopped after its steps, at a request that failed" in str(error)
 
 
 async def test_a_cancellation_of_a_step_propagates_unchanged() -> None:
