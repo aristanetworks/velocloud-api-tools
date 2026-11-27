@@ -142,8 +142,14 @@ from pyvelo.core.base import (
 from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.layers import Edge, Layered, Profile
 from pyvelo.core.merge import nested_under
-from pyvelo.core.names import ChangeNames, named_path, named_value
+from pyvelo.core.names import (
+    ChangeNames,
+    attribute_name_keys,
+    named_path,
+    named_value,
+)
 from pyvelo.core.owned import UnflaggedInUse, unflagged_in_use_at
+from pyvelo.core.patch import PatchError
 from pyvelo.core.rebase import (
     ItemMove,
     ItemPart,
@@ -1472,6 +1478,70 @@ def _check_fixed_lists(
             )
 
 
+_KEYS_SHOWN = 3
+"""How many keys the refusal of a mapping's keys names; it counts the rest."""
+
+
+def _check_mapping_keys(
+    module: ConfigurationModuleBase, name: str, payload: dict[str, Any]
+) -> None:
+    """Refuse a mapping *payload* that adds a field's attribute name as a key.
+
+    A mapping given as a module's data is sent as it is. Where a class of the
+    module's data declares a field and writes it under another key, the
+    attribute name is a key the VCO does not know: it would be stored beside
+    the field, or dropped, and the field left out or left as it was, and a
+    read back through the models, which take either name, would not show it.
+    A dump of the data has such keys unless it is made with ``by_alias=True``.
+    A key the data as read already has at that field is the VCO's and is left
+    alone. Raises ``PatchError`` of kind ``unknown_field`` at the first such
+    key; nothing is looked for where the data is no model.
+    """
+    found = attribute_name_keys(payload, _document_model(None, module), module.raw_data)
+    if found:
+        raise PatchError(
+            _mapping_keys_message(name, found), found[0][0], "unknown_field"
+        )
+
+
+def _mapping_keys_message(name: str, found: Sequence[tuple[Path, str]]) -> str:
+    """What ``_check_mapping_keys`` says of the keys *found* in the data of *name*.
+
+    It names the first few, each of the first two with the VCO's key, and
+    counts the rest.
+    """
+    first = found[:_KEYS_SHOWN]
+    keys = ", ".join(
+        f"{path} (the VCO's key is {wire})" if index < _KEYS_SHOWN - 1 else str(path)
+        for index, (path, wire) in enumerate(first)
+    )
+    if len(found) > _KEYS_SHOWN:
+        keys += f" and {len(found) - _KEYS_SHOWN} more"
+    if any(isinstance(part, int) for path, _ in first for part in path.parts):
+        keys += "; an item is named by its position in the list given"
+    if len(found) == 1:
+        has = "a key that is the python name of a field"
+        sent = (
+            "a key it does not know, and the field itself would be left out, or "
+            "left as it was"
+        )
+    else:
+        has = f"{len(found)} keys, each the python name of a field"
+        sent = (
+            "keys it does not know, and the fields themselves would be left "
+            "out, or left as they were"
+        )
+    return (
+        f"{python_module_name(name)}: the data given is a mapping, which is "
+        f"sent to the VCO as it is, and it has {has} whose key in the VCO's "
+        f"JSON is another: {keys}. The VCO would be sent {sent}. "
+        "Give the model itself (module.data), or its dump by the VCO's keys "
+        '(model_dump(mode="json", by_alias=True)), or make the change with a '
+        "patch (merge_patch on the model, or apply through the pipeline), "
+        "which takes a field by either name"
+    )
+
+
 def _plan_level(
     module: ConfigurationModuleBase, current: object, level: ConfigContext | None
 ) -> ConfigContext | None:
@@ -1723,11 +1793,25 @@ def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its c
     that shares nothing with the caller's objects. A mapping has no owners to
     compare, so it changes no ref row; a deviceSettings or QOS module with
     segments still sends its refs as read.
+    A mapping is the JSON to send, as it is: its keys are the VCO's, and one
+    made from a model is ``model_dump(mode="json", by_alias=True)``. Raises
+    ``PatchError`` of kind ``unknown_field`` for a mapping that adds, to the
+    data as read, a key that is a field's attribute name where the VCO's key
+    is another (``rule_logical_id`` for ``ruleLogicalId``; a dump made without
+    ``by_alias=True`` has them at every depth). The VCO would be sent a key it
+    does not know, the field itself would be left out or left as it was, and
+    a read back through the models, which take either name, would not show
+    it. The error is at the first such key and its message names a few and
+    says what to give instead: the model, its dump by the VCO's keys, or a
+    patch. A key the data as read has at that field is left alone, and
+    nothing is looked for below a key no model declares or where the data is
+    no model. A model given as *data* is always dumped by the VCO's keys.
     """
     name = str(_attribute(module, "name"))
     current = data if data is not None else _attribute(module, "data")
     if isinstance(current, Mapping):
         current = _plain_json(cast("Mapping[str, object]", current))
+        _check_mapping_keys(module, name, current)
     level = _plan_level(module, current, level)
 
     raw = module.raw_data

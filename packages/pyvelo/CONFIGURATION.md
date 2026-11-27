@@ -448,7 +448,10 @@ either name, so a JSON-mode dump of either form is a patch value. The rows of
 other results (a composite module, `GetApplicationsResult`, `CustomApp`,
 `GetEnterpriseEdgeListItem`, `PrivateNetwork`) are dumps in the VCO's keys that
 hold such models: without `by_alias` their own keys are the VCO's and the held
-model's are attribute names, so pass `by_alias` to get one form.
+model's are attribute names, so pass `by_alias` to get one form. A mapping
+given to `plan_module` as a module's data is the JSON to send, so it is the
+dump with `by_alias=True`: one that adds a field's attribute name as a key is
+refused (`PatchError`, kind `unknown_field`), with what to give instead.
 
 The `segments` lists have rules of their own:
 
