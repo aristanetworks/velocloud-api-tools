@@ -258,7 +258,7 @@ async def test_the_redo_of_a_lost_added_segment_assigns_it_again(
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         patch={"segments": {"Guest": add({"rules": [rule("Box"), rule("Video")]})}},
     )
     planned = planned_guest(state, QOS)

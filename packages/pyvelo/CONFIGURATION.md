@@ -1040,7 +1040,9 @@ result = await pipeline.save(state)
 
   ```python
   await pipeline.apply(
-      state, module="qos", patch={"segments": {"Guest": add({"rules": [rule]})}}
+      state,
+      module="business_policy",
+      patch={"segments": {"Guest": add({"rules": [rule]})}},
   )
   await pipeline.apply(
       state,

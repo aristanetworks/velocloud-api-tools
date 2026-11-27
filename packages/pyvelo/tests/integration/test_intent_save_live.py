@@ -3109,7 +3109,7 @@ async def _clear_rule(
         case.profile_id, enterprise_id=lab.enterprise_id
     )
     _ = await pipeline.apply(
-        state, module="qos", patch=_rule_patch(case, name, delete())
+        state, module="business_policy", patch=_rule_patch(case, name, delete())
     )
     _ = await _save(pipeline, state)
     check(
@@ -3179,11 +3179,11 @@ async def test_a_rule_backhauls_to_the_hub(
         }
         added.pop("rule_logical_id", None)
         _ = await pipeline.apply(
-            state, module="qos", patch=_rule_patch(case, rule, add(added))
+            state, module="business_policy", patch=_rule_patch(case, rule, add(added))
         )
         _ = await pipeline.apply(
             state,
-            module="qos",
+            module="business_policy",
             patch=_rule_patch(
                 case,
                 rule,
@@ -3229,7 +3229,7 @@ async def test_a_rule_backhauls_to_the_hub(
 
         # The rule's use goes first, then the hub.
         _ = await pipeline.apply(
-            state, module="qos", patch=_rule_patch(case, rule, delete())
+            state, module="business_policy", patch=_rule_patch(case, rule, delete())
         )
         _ = await _save(pipeline, state)
         qos = await sites[Name.QOS].read_present()

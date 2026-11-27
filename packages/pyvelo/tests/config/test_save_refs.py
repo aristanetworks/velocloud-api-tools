@@ -893,7 +893,7 @@ async def test_a_later_qos_save_is_rebased_onto_what_the_device_settings_write_l
     assert [str(n) for n in first.modules_updated] == ["deviceSettings"]
     assert "QOS" in state.rebase_on_write
     assert "deviceSettings" not in state.rebase_on_write
-    _ = await pipeline.revert(state, module="qos")
+    _ = await pipeline.revert(state, module="business_policy")
     assert "QOS" in state.rebase_on_write
     client.store.requests.clear()
     rate_limit(state.profile.qos).value = 5

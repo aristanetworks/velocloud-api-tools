@@ -309,7 +309,7 @@ async def test_refused_reorder_and_edit_list_both(*, conditional_check: bool) ->
     pipeline = ConfigPipeline(client)
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment=SEGMENT,
         path="rules",
         patch={"d": move(first=True), "b": {"action": {"route_type": "edge2Cloud"}}},

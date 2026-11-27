@@ -1300,7 +1300,7 @@ async def test_qos_alone_can_be_compared() -> None:
     assert params["modules"] == ["QOS"]
 
     # The user-facing name is accepted, and asks for the wire name.
-    comparison = await pipeline.compare_effective(state, modules=["qos"])
+    comparison = await pipeline.compare_effective(state, modules=["business_policy"])
     assert {e.module for e in comparison.entries} == {"QOS"}
     assert composed_calls(client)[-1]["modules"] == ["QOS"]
 

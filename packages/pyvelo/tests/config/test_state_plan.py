@@ -291,7 +291,7 @@ async def test_missing_edge_module_is_inserted_from_an_empty_layer() -> None:
     assert state.plan().changed == ()  # reading it plans nothing
     await ConfigPipeline(client).apply(
         state,
-        module="qos",
+        module="business_policy",
         patch={
             "service_rate_limit": {
                 "enabled": True,

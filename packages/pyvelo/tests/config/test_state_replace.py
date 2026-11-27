@@ -324,7 +324,7 @@ def test_dropped_objects_cost_nothing() -> None:
 
     # An inserted module: module(create=True) holds what it made until it is replaced.
     state = make_state(modules=False)
-    made = state.module("qos", create=True)
+    made = state.module("business_policy", create=True)
     made_ref = weakref.ref(made)
     state.replace_module(made, as_stored(made, {"segments": []}))
     del made
@@ -367,14 +367,14 @@ def test_replace_of_a_module_that_is_not_in_the_state_raises() -> None:
 
 def test_an_inserted_module_is_replaced_and_no_longer_new() -> None:
     state = make_state()
-    made = state.module("qos", create=True)
+    made = state.module("business_policy", create=True)
     assert made.is_new
     new = as_stored(made, {"segments": []})
 
     state.replace_module(made, new)
 
-    assert state.module("qos") is new
-    assert state.module("qos").is_new is False
+    assert state.module("business_policy") is new
+    assert state.module("business_policy").is_new is False
     with pytest.raises(ValueError, match="read from the VCO"):
         state.drop_module(new)
     snapshot = state.snapshot_for_target()

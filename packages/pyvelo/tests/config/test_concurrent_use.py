@@ -120,7 +120,7 @@ async def test_two_saves_at_once_insert_a_new_module_once() -> None:
     pipeline = ConfigPipeline(client)
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment="Global Segment",
         path="rules",
         patch={"voice": add({"match": {"dport_low": 5060}, "action": QOS_ACTION})},

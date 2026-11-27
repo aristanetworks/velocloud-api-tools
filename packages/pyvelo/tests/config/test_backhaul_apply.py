@@ -68,7 +68,7 @@ async def test_a_hub_named_in_a_profile_rule_gets_its_service() -> None:
 
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment=GLOBAL[1],
         path="rules",
         patch=hub_in_rule(HUB_A.name),
@@ -95,7 +95,7 @@ async def test_a_hub_named_in_an_edge_rule_gets_the_profiles_service() -> None:
 
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment=GLOBAL[1],
         path="rules",
         patch=hub_in_rule(HUB_A.name),
@@ -122,7 +122,7 @@ async def test_a_hub_and_its_rule_in_one_save_is_refused() -> None:
     with pytest.raises(HubServiceNotFoundError) as error:
         _ = await pipeline.apply(
             state,
-            module="qos",
+            module="business_policy",
             segment=GLOBAL[1],
             path="rules",
             patch=hub_in_rule(HUB_B.name),
@@ -143,7 +143,7 @@ async def test_a_hub_and_its_rule_in_one_save_is_refused() -> None:
 async def test_the_patch_the_error_gives_makes_the_hub_usable_by_the_rule() -> None:
     state = await a_profile()  # Hub-B is in neither list of the Global Segment
     pipeline, _ = hub_pipeline(state, vpn_check=True)
-    rule = {"module": "qos", "segment": GLOBAL[1], "path": "rules"}
+    rule = {"module": "business_policy", "segment": GLOBAL[1], "path": "rules"}
     with pytest.raises(HubServiceNotFoundError) as error:
         _ = await pipeline.apply(state, patch=hub_in_rule(HUB_B.name), **rule)
     patch = backhaul_hub_mending(GLOBAL[1], HUB_B.name).patch
@@ -165,7 +165,7 @@ async def test_an_edge_rule_on_a_hub_the_profile_has_no_service_for_is_refused()
     with pytest.raises(HubServiceNotFoundError) as error:
         _ = await pipeline.apply(
             state,
-            module="qos",
+            module="business_policy",
             segment=GLOBAL[1],
             path="rules",
             patch=hub_in_rule(HUB_B.name),
@@ -191,7 +191,7 @@ async def test_an_edge_rule_on_a_new_qos_module_inserts_its_backhaul_row() -> No
 
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment=GLOBAL[1],
         path="rules",
         patch={"+": add(rule)},
@@ -216,7 +216,7 @@ async def test_an_edge_rule_on_a_new_qos_module_inserts_its_backhaul_row() -> No
         "ref": BACKHAUL_REF,
         "segmentObjectId": GLOBAL[3],
     }
-    module = state.module("qos")
+    module = state.module("business_policy")
     assert not module.is_new
     (stored_id,) = [
         i
@@ -264,7 +264,7 @@ async def test_a_segment_added_with_a_rule_on_a_hub_it_has_no_service_for_is_ref
 
     with pytest.raises(HubServiceNotFoundError) as error:
         _ = await pipeline.apply(
-            state, module="qos", patch={"segments": {"+": add(guest)}}
+            state, module="business_policy", patch={"segments": {"+": add(guest)}}
         )
 
     assert (error.value.hub, error.value.segment) == (HUB_A.name, GUEST[1])
@@ -289,7 +289,7 @@ async def test_an_entry_that_lacked_its_service_as_read_does_not_stop_another_ed
 
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment=GLOBAL[1],
         path="rules",
         patch=hub_in_rule(HUB_A.name),

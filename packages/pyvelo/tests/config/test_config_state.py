@@ -164,7 +164,7 @@ class TestGetFieldChanges:
         state, edge_config = self._state_with_snapshot()
         edge_config.firewall.data.firewall_enabled.set_local(False)
         # Only ask about a different module - should be empty
-        assert state.get_field_changes(module_name="qos") == []
+        assert state.get_field_changes(module_name="business_policy") == []
         # Ask about the actual mutated module - should be non-empty
         assert state.get_field_changes(module_name="firewall")
 

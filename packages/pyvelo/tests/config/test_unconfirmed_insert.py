@@ -49,7 +49,7 @@ async def with_a_new_qos_rule(
     pipeline = ConfigPipeline(client)
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment="Global Segment",
         path="rules",
         patch={"voice": add({"match": {"dport_low": 5060}, "action": QOS_ACTION})},
@@ -79,7 +79,7 @@ async def test_an_insert_whose_answer_was_lost_is_not_sent_again() -> None:
     with pytest.raises(httpx.ReadTimeout):
         _ = await pipeline.save(state)
 
-    assert state.module("qos").is_new
+    assert state.module("business_policy").is_new
     assert state.unconfirmed_inserts == {"QOS"}
     (stored_id,) = edge_qos_rows(client)
 
@@ -88,7 +88,7 @@ async def test_an_insert_whose_answer_was_lost_is_not_sent_again() -> None:
     assert methods(client.store) == ["insertConfigurationModule", "getConfiguration"]
     assert edge_qos_rows(client) == [stored_id]
     assert result.modules_inserted == [QOS]
-    module = state.module("qos")
+    module = state.module("business_policy")
     assert (module.is_new, module.id_) == (False, stored_id)
     assert module.version == client.store.rows[stored_id]["version"]
     assert state.unconfirmed_inserts == set()
@@ -116,7 +116,7 @@ async def test_an_insert_that_was_not_stored_is_sent_again_after_a_read() -> Non
         "getConfiguration",
     ]
     (stored_id,) = edge_qos_rows(client)
-    assert state.module("qos").id_ == stored_id
+    assert state.module("business_policy").id_ == stored_id
     assert state.unconfirmed_inserts == set()
 
 
@@ -147,7 +147,7 @@ async def test_an_insert_the_vco_counted_that_cannot_be_read_back_is_unconfirmed
     (stored_id,) = edge_qos_rows(client)
     assert (exc.value.answer, exc.value.module_id) == ("counted", stored_id)
     assert exc.value.module is None
-    assert state.module("qos").is_new
+    assert state.module("business_policy").is_new
     assert state.unconfirmed_inserts == {"QOS"}
 
     _ = await pipeline.save(state)
@@ -158,7 +158,7 @@ async def test_an_insert_the_vco_counted_that_cannot_be_read_back_is_unconfirmed
         "getConfiguration",
     ]
     assert edge_qos_rows(client) == [stored_id]
-    assert state.module("qos").id_ == stored_id
+    assert state.module("business_policy").id_ == stored_id
     assert state.unconfirmed_inserts == set()
 
 
@@ -179,7 +179,7 @@ async def test_edits_made_after_the_lost_answer_are_lost_edits_of_the_next_save(
     assert paths(exc.value.lost_edits) == ["serviceRateLimit"]
     assert methods(client.store) == ["insertConfigurationModule", "getConfiguration"]
     (stored_id,) = edge_qos_rows(client)
-    module = state.module("qos")
+    module = state.module("business_policy")
     assert (module.is_new, module.id_) == (False, stored_id)
     assert state.unconfirmed_inserts == set()
     assert state.plan().changed == ()
@@ -297,7 +297,7 @@ async def test_a_save_cancelled_while_an_insert_is_out_marks_it_unconfirmed() ->
         _ = await saving
 
     assert state.unconfirmed_inserts == {"QOS"}
-    assert state.module("qos").is_new
+    assert state.module("business_policy").is_new
     assert not state.lock.locked()
 
     client.release.set()
@@ -310,7 +310,7 @@ async def test_a_save_cancelled_while_an_insert_is_out_marks_it_unconfirmed() ->
     ]
     assert result.modules_inserted == [QOS]
     (stored_id,) = edge_qos_rows(client)
-    assert state.module("qos").id_ == stored_id
+    assert state.module("business_policy").id_ == stored_id
     assert state.unconfirmed_inserts == set()
 
 
@@ -324,7 +324,7 @@ class RemovesTheModuleDuringTheWrite(MockVcoClient):
         self, request: InsertConfigurationModule, *, level: ConfigContext | None = None
     ) -> InsertConfigurationModuleResult | AnyStoredModule:
         stored = await super().insert_configuration_module(request, level=level)
-        self.state.drop_module(self.state.module("qos"))
+        self.state.drop_module(self.state.module("business_policy"))
         return stored
 
     @override

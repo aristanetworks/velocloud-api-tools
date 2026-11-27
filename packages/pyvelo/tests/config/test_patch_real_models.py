@@ -257,7 +257,7 @@ async def test_qos_rule_add_change_delete_move() -> None:
     async def apply(patch: dict[str, object]) -> ConfigState:
         state = make_state({"QOS": raw}, {"QOS": qos()})
         return await ConfigPipeline(None).apply(
-            state, module="qos", segment=SEGMENT, path="rules", patch=patch
+            state, module="business_policy", segment=SEGMENT, path="rules", patch=patch
         )
 
     state = await apply(patch)
@@ -300,7 +300,7 @@ async def test_rename_a_qos_rule() -> None:
     state = make_state({"QOS": raw}, {"QOS": qos()})
     _ = await ConfigPipeline(None).apply(
         state,
-        module="qos",
+        module="business_policy",
         segment=SEGMENT,
         path="rules",
         patch={"old": {"name": "new"}},
@@ -1011,7 +1011,7 @@ async def test_validation_messages_on_the_real_models_use_python_names() -> None
     with pytest.raises(PatchError) as exc:
         _ = await ConfigPipeline(None).apply(
             state,
-            module="qos",
+            module="business_policy",
             segment=SEGMENT,
             path="rules",
             patch={"x": add({"match": {}, "action": {"qos": {"type_": "fast"}}})},

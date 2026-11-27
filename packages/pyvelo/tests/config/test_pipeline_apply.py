@@ -1212,7 +1212,7 @@ def _profile_segment_names(state: ConfigState) -> list[list[str]]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("module", ["firewall", "qos", "device_settings"])
+@pytest.mark.parametrize("module", ["firewall", "business_policy", "device_settings"])
 async def test_profile_target_refuses_a_segment_delete(module: str) -> None:
     # An add assigns the segment (test_profile_segment_patches.py). A delete of
     # a segment that all three modules have removes it from all three.
@@ -1340,7 +1340,7 @@ async def test_profile_target_refuses_a_descriptor_rewritten_into_anothers_id() 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("module", ["firewall", "qos", "device_settings"])
+@pytest.mark.parametrize("module", ["firewall", "business_policy", "device_settings"])
 async def test_profile_target_refuses_an_empty_segments_list_in_each_module(
     module: str,
 ) -> None:
