@@ -889,6 +889,22 @@ def _dropped(server_changes: Sequence[ServerChange]) -> frozenset[tuple[Path, st
     )
 
 
+@dataclass(frozen=True)
+class _Redo:
+    """What the redo of a write error's lost edits is built from.
+
+    The module as stored, its data, the plan that was written, and the part
+    that names each stored item by its path. ``stored_parts`` is the error's,
+    copied: the redo adds the items of a segment of which nothing is stored,
+    named as the plan names them.
+    """
+
+    data: VcoModel
+    module: ConfigurationModuleBase
+    plan: ModulePlan
+    stored_parts: dict[Path, ItemPart]
+
+
 class ModuleWriteError(VcoError):
     """A module write that is not known to be stored as planned.
 
@@ -1271,15 +1287,48 @@ class ModuleWriteError(VcoError):
         """
         return self._redo(include_clashes=include_clashes)[1]
 
-    def _redo(  # noqa: C901, PLR0912 (existing: split it when it next changes)
+    def _redo(
         self, *, include_clashes: bool
     ) -> tuple[dict[str, object], tuple[PlannedChange, ...]]:
         """The patch that redoes the lost edits, and the lost edits it leaves out."""
         plan, module = self.plan, self.module
         data: object = None if module is None else getattr(module, "data", None)
-        if plan is None or not isinstance(data, VcoModel):
+        if plan is None or module is None or not isinstance(data, VcoModel):
             return {}, self.lost_edits
-        stored_parts = dict(self.stored_parts)
+        redo = _Redo(data, module, plan, dict(self.stored_parts))
+        changes, owner, added, left_out, provider_edits = self._redo_changes(
+            redo, include_clashes=include_clashes
+        )
+        patch, unwritten = patch_of(
+            changes, type(redo.data), stored_parts=redo.stored_parts
+        )
+        left_out.update(id(owner[id(change)]) for change in unwritten)
+        for selector in added:
+            # The segment is assigned again, with the plan's edits inside it.
+            segments = cast("dict[str, Any]", patch.setdefault("segments", {}))
+            body = cast("dict[str, Any]", segments.setdefault(selector, {}))
+            body["_op"] = "add"
+        left_out.update(self._redo_providers(redo, patch, provider_edits))
+        return patch, tuple(edit for edit in self.lost_edits if id(edit) in left_out)
+
+    def _redo_changes(
+        self, redo: _Redo, *, include_clashes: bool
+    ) -> tuple[
+        list[RawChange],
+        dict[int, PlannedChange],
+        list[str],
+        set[int],
+        dict[Path, list[PlannedChange]],
+    ]:
+        """The changes that redo the lost data edits, and what goes with them.
+
+        Each change's lost edit by the change's ``id``; the selectors of the
+        segments to add again; the ``id`` of each lost edit left out so far;
+        and the lost refs entries of each ``RefOnly`` field, by its owner.
+        The items of a segment of which nothing is stored are added to
+        ``redo.stored_parts``, named as the plan names them.
+        """
+        plan, stored_parts = redo.plan, redo.stored_parts
         changes: list[RawChange] = []
         owner: dict[int, PlannedChange] = {}
         added: list[str] = []  # the selectors of the segments to add again
@@ -1300,15 +1349,9 @@ class ModuleWriteError(VcoError):
             ):
                 if is_added:
                     added.append(selector_of(cast("Key", edit.path.parts[1])))
-                for change in _changes_below(plan, edit.path):
+                for change in _unstored_segment_changes(plan, edit.path, stored_parts):
                     owner[id(change)] = edit
                     changes.append(change)
-                    # Nothing of the segment is stored: its items are named as
-                    # the plan names them.
-                    for n, part in enumerate(change.path.parts, 1):
-                        if not isinstance(part, str):
-                            path = Path(change.path.parts[:n])
-                            _ = stored_parts.setdefault(path, part)
             else:
                 # An item the plan added is added again, never set: the item
                 # stored under its name, or at its place, is another writer's.
@@ -1321,13 +1364,19 @@ class ModuleWriteError(VcoError):
                 )
                 owner[id(change)] = edit
                 changes.append(change)
-        patch, unwritten = patch_of(changes, type(data), stored_parts=stored_parts)
-        left_out.update(id(owner[id(change)]) for change in unwritten)
-        for selector in added:
-            # The segment is assigned again, with the plan's edits inside it.
-            segments = cast("dict[str, Any]", patch.setdefault("segments", {}))
-            body = cast("dict[str, Any]", segments.setdefault(selector, {}))
-            body["_op"] = "add"
+        return changes, owner, added, left_out, provider_edits
+
+    def _redo_providers(
+        self,
+        redo: _Redo,
+        patch: dict[str, object],
+        provider_edits: Mapping[Path, Sequence[PlannedChange]],
+    ) -> set[int]:
+        """Set again in *patch* each ``RefOnly`` field whose refs entries were lost.
+
+        The ``id`` of each lost refs entry whose field it cannot set.
+        """
+        left_out: set[int] = set()
         for path, edits in provider_edits.items():
             stored_adds = [
                 edit
@@ -1338,15 +1387,9 @@ class ModuleWriteError(VcoError):
                 and edit.intended is not MISSING
             ]
             value = _provider_value([*edits, *stored_adds])
-            if (
-                value is MISSING
-                or module is None
-                or not _set_provider(
-                    patch, data, module, plan, stored_parts, edits, value
-                )
-            ):
+            if value is MISSING or not _set_provider(redo, patch, edits, value):
                 left_out.update(id(edit) for edit in edits)
-        return patch, tuple(edit for edit in self.lost_edits if id(edit) in left_out)
+        return left_out
 
 
 def _changes_below(plan: ModulePlan, path: Path) -> list[RawChange]:
@@ -1357,6 +1400,24 @@ def _changes_below(plan: ModulePlan, path: Path) -> list[RawChange]:
         for change in plan.changes
         if len(change.path.parts) > depth and change.path.parts[:depth] == path.parts
     ]
+
+
+def _unstored_segment_changes(
+    plan: ModulePlan, path: Path, stored_parts: dict[Path, ItemPart]
+) -> list[RawChange]:
+    """The changes of *plan* below *path*, a segment of which nothing is stored.
+
+    Each item their paths name is added to *stored_parts* where it has no
+    part, named as the plan names it.
+    """
+    changes = _changes_below(plan, path)
+    for change in changes:
+        # Nothing of the segment is stored: its items are named as the plan
+        # names them.
+        for n, part in enumerate(change.path.parts, 1):
+            if not isinstance(part, str):
+                _ = stored_parts.setdefault(Path(change.path.parts[:n]), part)
+    return changes
 
 
 def _is_added_segment(plan: ModulePlan, edit: PlannedChange) -> bool:
@@ -1483,18 +1544,13 @@ def _same_logical_id(left: object, right: object) -> bool:
     )
 
 
-def _stored_segment(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
-    data: VcoModel,
-    module: ConfigurationModuleBase,
-    plan: ModulePlan,
-    stored_parts: Mapping[Path, ItemPart],
-    item: ItemPart,
-    object_ids: Sequence[int],
+def _stored_segment(
+    redo: _Redo, item: ItemPart, object_ids: Sequence[int]
 ) -> ItemPart | None:
     """The part that names the segment the edits were made to.
 
-    It is the part in the ``segments`` of *module* as stored; None when it
-    cannot be proved.
+    It is the part in the ``segments`` of ``redo.module`` as stored; None when
+    it cannot be proved.
 
     The check records it for an item it walked (a data edit in the segment).
     Otherwise the segment is found by identity, never by name: another segment
@@ -1506,16 +1562,16 @@ def _stored_segment(  # noqa: PLR0913, PLR0917 (existing: split it when it next 
     segment named *item*. Exactly one entry must match, and a key must name it
     alone.
     """
-    found = stored_parts.get(Path(("segments", item)))
+    found = redo.stored_parts.get(Path(("segments", item)))
     if found is not None:
         return found
-    node = node_child(type(data), "segments")
-    stored = _json_field(module.raw_data, "segments")
+    node = node_child(type(redo.data), "segments")
+    stored = _json_field(redo.module.raw_data, "segments")
     if not isinstance(node, KeyedList) or not is_list(stored):
         return None
     rows = [
         row
-        for row in _json_objects(_json_field(module.raw_refs, _SEGMENT_REF))
+        for row in _json_objects(_json_field(redo.module.raw_refs, _SEGMENT_REF))
         if row.get("enterpriseObjectId") in object_ids
     ]
     by_id = {_json_field(row, "data", "segmentId") for row in rows} - {None}
@@ -1530,7 +1586,7 @@ def _stored_segment(  # noqa: PLR0913, PLR0917 (existing: split it when it next 
         if not rows and isinstance(item, Key):
             logical_ids = [
                 _json_field(entry, "segment", "segmentLogicalId")
-                for entry in _json_objects(_json_field(plan.data, "segments"))
+                for entry in _json_objects(_json_field(redo.plan.data, "segments"))
                 if _json_field(entry, "segment", "name") == item.value
             ]
         matches = [
@@ -1564,12 +1620,9 @@ def _field_spellings(
     return None
 
 
-def _set_provider(  # noqa: PLR0913, PLR0917 (existing: split it when it next changes)
+def _set_provider(
+    redo: _Redo,
     patch: dict[str, object],
-    data: VcoModel,
-    module: ConfigurationModuleBase,
-    plan: ModulePlan,
-    stored_parts: Mapping[Path, ItemPart],
     edits: Sequence[PlannedChange],
     value: object,
 ) -> bool:
@@ -1597,9 +1650,9 @@ def _set_provider(  # noqa: PLR0913, PLR0917 (existing: split it when it next ch
     segment, *names = owner.parts[1:]
     if isinstance(segment, str) or not all(isinstance(name, str) for name in names):
         return False
-    models = field_models(type(data).model_fields["segments"])
+    models = field_models(type(redo.data).model_fields["segments"])
     fields = _field_spellings(models, cast("list[str]", names))
-    part = _stored_segment(data, module, plan, stored_parts, segment, object_ids)
+    part = _stored_segment(redo, segment, object_ids)
     if fields is None or part is None:
         return False
     node = _child(patch, ("segments",))
