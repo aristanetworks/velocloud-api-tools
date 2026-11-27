@@ -1321,34 +1321,17 @@ async def admit_hub(
     return run.hub
 
 
-def run_of(client: VcoClient) -> LiveRun:  # noqa: C901 (existing: split it when it next changes)
-    """The run of *client*, made on the first call.
+def _guarded_update(
+    run: LiveRun, update: Callable[..., Awaitable[AnyStoredModule | None]]
+) -> Callable[..., Awaitable[AnyStoredModule | None]]:
+    """*update*, the client's module update, checked before it is sent.
 
-    That call also puts the guard on the client.
+    ``LiveRun.check_update`` checks it.
 
-    The guard is on the client's own methods, so a test that forgets every
-    helper is refused too. It covers every portal call the client makes
-    (``portal``, ``portal_list``, ``portal_paginated`` and
-    ``portal_paginated_list``): a read passes, and a write passes only from
-    ``update_configuration_module`` or ``insert_configuration_module`` (inside
-    a ``restoring`` block, to a module that block covers), from
-    ``delete_module``, or from a role call of the hub ``admit_hub`` admitted
-    (inside a ``restoring`` block on the device settings module of a marked
-    profile). A refused write carries its codes alone: the
-    Orchestrator's validation text quotes the names of what it refuses, and a
-    refused write in a test would put them in the test output.
-
-    It does not cover a second client a test builds itself, nor the websocket
-    calls of a client (remote diagnostics).
+    An update that passes may send its method (``_sends``), and ``run.seen``
+    then holds the module as the Orchestrator answered, or ``_UNKNOWN``. A
+    refusal of the Orchestrator carries its codes alone.
     """
-    run = _RUNS.get(client)
-    if run is not None:
-        return run
-    run = LiveRun()
-    _RUNS[client] = run
-    update = client.update_configuration_module
-    insert = client.insert_configuration_module
-    paginated = client.portal_paginated
 
     async def guarded_update(
         request: UpdateConfigurationModule, *, level: ConfigContext | None = None
@@ -1376,6 +1359,24 @@ def run_of(client: VcoClient) -> LiveRun:  # noqa: C901 (existing: split it when
         )
         return stored
 
+    return guarded_update
+
+
+def _guarded_insert(
+    run: LiveRun,
+    insert: Callable[..., Awaitable[InsertConfigurationModuleResult | AnyStoredModule]],
+) -> Callable[..., Awaitable[InsertConfigurationModuleResult | AnyStoredModule]]:
+    """*insert*, the client's module insert, checked before it is sent.
+
+    ``LiveRun.check_replace`` checks it.
+
+    An insert that passes may send its method (``_sends``); the module it made
+    is then one the run inserted (``run.inserted``, for the block open on its
+    configuration and name), and ``run.seen`` holds it as the Orchestrator
+    answered, or ``_UNKNOWN``. A refusal of the Orchestrator carries its codes
+    alone.
+    """
+
     async def guarded_insert(
         request: InsertConfigurationModule, *, level: ConfigContext | None = None
     ) -> InsertConfigurationModuleResult | AnyStoredModule:
@@ -1395,6 +1396,17 @@ def run_of(client: VcoClient) -> LiveRun:  # noqa: C901 (existing: split it when
         )
         return inserted
 
+    return guarded_insert
+
+
+def _checked_pages(
+    paginated: Callable[..., AsyncGenerator[list[Any]]],
+) -> Callable[..., AsyncGenerator[list[Any]]]:
+    """*paginated*, the client's ``portal_paginated``, with ``check_call`` before it.
+
+    It is a generator, so the check runs when the first page is asked for.
+    """
+
     async def guarded_paginated[T: BaseModel](
         method: str, request: PaginatedVcoModel, item_type: type[T]
     ) -> AsyncGenerator[list[T]]:
@@ -1403,12 +1415,44 @@ def run_of(client: VcoClient) -> LiveRun:  # noqa: C901 (existing: split it when
             async for page in pages:
                 yield page
 
+    return guarded_paginated
+
+
+def run_of(client: VcoClient) -> LiveRun:
+    """The run of *client*, made on the first call.
+
+    That call also puts the guard on the client.
+
+    The guard is on the client's own methods, so a test that forgets every
+    helper is refused too. It covers every portal call the client makes
+    (``portal``, ``portal_list``, ``portal_paginated`` and
+    ``portal_paginated_list``): a read passes, and a write passes only from
+    ``update_configuration_module`` or ``insert_configuration_module`` (inside
+    a ``restoring`` block, to a module that block covers), from
+    ``delete_module``, or from a role call of the hub ``admit_hub`` admitted
+    (inside a ``restoring`` block on the device settings module of a marked
+    profile). A refused write carries its codes alone: the
+    Orchestrator's validation text quotes the names of what it refuses, and a
+    refused write in a test would put them in the test output.
+
+    It does not cover a second client a test builds itself, nor the websocket
+    calls of a client (remote diagnostics).
+    """
+    run = _RUNS.get(client)
+    if run is not None:
+        return run
+    run = LiveRun()
+    _RUNS[client] = run
     # Instance attributes, which shadow the methods: a spy a test puts over them
     # (``monkeypatch.setattr``) wraps these.
     attributes = vars(client)
-    attributes["update_configuration_module"] = guarded_update
-    attributes["insert_configuration_module"] = guarded_insert
-    attributes["portal_paginated"] = guarded_paginated
+    attributes["update_configuration_module"] = _guarded_update(
+        run, client.update_configuration_module
+    )
+    attributes["insert_configuration_module"] = _guarded_insert(
+        run, client.insert_configuration_module
+    )
+    attributes["portal_paginated"] = _checked_pages(client.portal_paginated)
     for name, (method, kind) in ROLE_CALLS.items():
         attributes[name] = _guarded_role_call(run, getattr(client, name), method, kind)
     for name in ("portal", "portal_list", "portal_paginated_list"):
