@@ -39,7 +39,15 @@ import datetime as dt
 import functools
 import sys
 import types
-from collections.abc import Callable, Collection, Hashable, Iterable, Iterator, Mapping
+from collections.abc import (
+    Callable,
+    Collection,
+    Hashable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
@@ -98,6 +106,8 @@ from .owned import Owned, unwrap
 
 if TYPE_CHECKING:
     from pydantic.fields import FieldInfo
+
+    from .rebase import Path
 
 type JsonObject = dict[str, object]
 """A JSON object: a merge patch, a compact dump, a pydantic context, ..."""
@@ -998,24 +1008,49 @@ class VcoModel(BaseModel):
         keeps the value *stored* has at the same place. Without it a document
         that holds a mask is refused. Raises ``NamedDocumentError``: of kind
         ``vco_key`` or ``masked_secret`` as ``vco_document`` does, and of kind
-        ``invalid_value`` for a document that does not validate, each place by
-        its attribute names. No pydantic error is chained to that one: its
-        ``errors()`` hold the input, which after the restore holds the stored
-        secrets.
+        ``invalid_value`` for a document that does not validate, each place as
+        *data* has it (``named_place``). No pydantic error is chained to that
+        one: its ``errors()`` hold the input, which after the restore holds
+        the stored secrets.
         """
         from .documents import NamedDocumentError  # noqa: PLC0415 (documents imports this module, through rebase)
-        from .merge import validation_lines  # noqa: PLC0415 (merge imports this module)
+        from .merge import placed_lines  # noqa: PLC0415 (merge imports this module)
         from .rebase import Path  # noqa: PLC0415 (rebase imports this module)
 
         document = cls.vco_document(data, stored=stored)
         try:
             return cls.model_validate(document, context=context)
         except ValidationError as exc:
-            lines = validation_lines(exc, (cls,))
-        # Raised outside the ``except`` block, so the pydantic error is neither
-        # the cause nor the context of this one.
+            # Where each error is and what it says; its input is left behind.
+            errors = [
+                (error["loc"], error["msg"]) for error in exc.errors(include_url=False)
+            ]
+        # The places are named and the refusal raised outside the ``except``
+        # block, so the pydantic error is neither the cause nor the context of
+        # this one, nor of anything ``named_place`` raises.
+        lines = placed_lines((cls.named_place(loc), text) for loc, text in errors)
         message = _INVALID_DOCUMENT.format(model=cls.__name__, lines=lines)
         raise NamedDocumentError(message, Path(()), "invalid_value")
+
+    @classmethod
+    def named_place(cls, loc: Sequence[int | str]) -> Path:
+        """Where a named document of this class has what validation places at *loc*.
+
+        *loc* is the ``loc`` of one error of the ``ValidationError`` that
+        ``model_validate`` raises for a document of this class: a place in the
+        VCO's form. The result is the same place as ``named_dump`` writes it
+        and ``named_validate`` reads it, which is how ``named_validate`` names
+        each value it refuses: every field by its attribute name, an item by
+        its position (``python_place``).
+
+        A class whose named document is not its ``model_dump`` renamed field
+        by field overrides this beside ``named_dump`` and ``vco_document``, so
+        that the three agree: a configuration does, for the rows of its
+        ``modules``.
+        """
+        from .merge import python_place  # noqa: PLC0415 (merge imports this module)
+
+        return python_place(loc, (cls,))
 
     @classmethod
     def compact_load(cls, data: Mapping[str, object]) -> Self:

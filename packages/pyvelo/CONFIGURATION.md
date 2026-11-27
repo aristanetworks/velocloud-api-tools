@@ -877,18 +877,23 @@ no stored item, or several whose secrets differ. So:
   attribute names and with every secret masked. `named_validate` reads each
   row by the class its `name` has, and `stored=` is the configuration the
   document was dumped from: the masks of a row take their values from the
-  stored row of the same name, wherever either row is in its list. A mask is
-  refused (`masked_secret`) in a row whose name the stored configuration
-  lacks, which is new, and in a row whose name several rows have, in the
-  document or in `stored`, because the name then does not say which stored
-  row is its own; write the secrets of such a row in full. A refusal in a row
-  has its path from the document down, the row by its position
+  stored row of the same name, wherever either row is in its list. Where
+  several rows have one name, in the document or in `stored` (a repeated
+  insert leaves such rows), a row's stored row is the one of that name with
+  its `id_`. There the ID is the row's identity: leave it as it was dumped,
+  because a row given the `id_` of another stored row of its name keeps that
+  row's secrets. A mask is refused (`masked_secret`) in a row that has no
+  stored row: one whose name the stored configuration lacks; and among
+  several rows of one name, one that gives no `id_`, one whose `id_` no
+  stored row of the name has, and each of two rows that give the same `id_`.
+  Such a row is a new one; write its secrets in full (in a device settings
+  row the `data` of each ref row is one). A refusal in a row has its path
+  from the document down, the row by its position
   (`modules[#0].data.segments[#0].bgp.neighbors[#0].md5_password`). A value
-  that validation refuses in a row is listed differently from one in a model
-  read alone: after the row's position comes its module name, and below that
-  the VCO's keys
-  (`modules[#0].deviceSettings.data.segments[#0].bgp.neighbors[#0].neighborAS:
-  Input should be a valid string`).
+  that validation refuses in a row is listed at its place in the document in
+  the same way, by attribute names
+  (`modules[#0].data.segments[#0].bgp.neighbors[#0].neighbor_as: Input should
+  be a valid string`).
 
 ## What a save writes
 

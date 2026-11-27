@@ -190,9 +190,9 @@ def test_a_value_that_is_not_json_is_refused_inside_a_list() -> None:
 
 
 def test_no_model_has_a_field_named_as_a_method_of_the_named_pair() -> None:
-    # The three are attributes of every model: a field of the name would hide
+    # The four are attributes of every model: a field of the name would hide
     # the method, or be hidden by it.
-    methods = {"named_dump", "named_validate", "vco_document"}
+    methods = {"named_dump", "named_validate", "vco_document", "named_place"}
     classes = model_classes()
     assert len(classes) > 900
     for cls in classes:

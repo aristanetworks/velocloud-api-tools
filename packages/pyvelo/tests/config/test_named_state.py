@@ -3,7 +3,8 @@
 A configuration's ``named_dump`` holds each row of ``modules`` as that row's
 own named dump: attribute names, every secret masked. ``named_validate`` reads
 the document back row by row, each by the class its ``name`` has, with the
-row of that name in ``stored`` giving the masks their values. A module row
+row of that name in ``stored`` giving the masks their values (among several
+rows of one name, the row of its ID). A module row
 keeps the JSON it was validated from, and a save starts from that, so the
 rows read back must keep it in the VCO's keys with the complete secrets: here
 a state rebuilt through the named pair plans and sends, byte for byte, what a
@@ -449,6 +450,15 @@ NO_PLACE: Final = (
     "({why}). The mask would be written to the VCO as the secret. Give the model "
     "this document was dumped from as `stored`, or write the secret in full."
 )
+NO_ROW: Final = (
+    'holds the mask "***", and `stored` has no module row to keep its value from '
+    "({why}). The mask would be written to the VCO as the secret. A row keeps the "
+    "secrets of the stored row of its `name`, and where several rows have that "
+    "name, of the one with its `id_`. Leave the `name` and the `id_` of a row as "
+    "they were dumped, or write every secret of the row in full (in a device "
+    "settings row, the `data` of each ref row is one)."
+)
+"""What refuses a mask in a row that has no stored row, where `stored` was given."""
 PASSWORD: Final = "modules[#{row}].data.segments[#0].bgp.neighbors[#0].md5_password"
 """Where the neighbour's password is in a document, in its row at ``row``."""
 
@@ -483,7 +493,7 @@ async def test_a_mask_in_a_row_the_stored_configuration_lacks_is_refused() -> No
     error = refusal_of(type(config), named, stored)
     assert error.kind == "masked_secret"
     assert error.path == PASSWORD.format(row=0)
-    assert error.message == NO_PLACE.format(
+    assert error.message == NO_ROW.format(
         why="`stored` has no module row named `deviceSettings`: the row is new"
     )
     without = config.model_copy(update={"modules": MISSING})
@@ -509,10 +519,10 @@ async def test_a_mask_in_a_row_whose_name_the_document_has_twice_is_refused() ->
     error = refusal_of(type(config), named, config)
     assert error.kind == "masked_secret"
     assert error.path == PASSWORD.format(row=0)
-    assert error.message == NO_PLACE.format(
+    assert error.message == NO_ROW.format(
         why=(
-            "2 module rows of the document are named `deviceSettings`, so the name "
-            "does not say which stored row this one is"
+            "2 `deviceSettings` rows of the document have the `id_` 10, so the "
+            "`id_` does not tell them apart"
         )
     )
 
@@ -525,12 +535,23 @@ async def test_a_mask_in_a_row_whose_name_stored_has_twice_is_refused() -> None:
     error = refusal_of(type(config), named, stored)
     assert error.kind == "masked_secret"
     assert error.path == PASSWORD.format(row=0)
-    assert error.message == NO_PLACE.format(
+    assert error.message == NO_ROW.format(
         why=(
-            "2 module rows of `stored` are named `deviceSettings`, so the name does "
-            "not say which stored row this one is"
+            "2 `deviceSettings` rows of `stored` have the `id_` 10, so the `id_` "
+            "does not tell them apart"
         )
     )
+
+
+async def test_another_refusal_in_a_row_with_no_stored_row_keeps_its_own_text() -> None:
+    config, named = await with_a_password()
+    row = named["modules"][0]
+    row["configurationId"] = row.pop("configuration_id")
+    stored = config.model_copy(update={"modules": MISSING})
+    error = refusal_of(type(config), named, stored)
+    assert error.kind == "vco_key"
+    assert error.path == "modules[#0].configuration_id"
+    assert "`configurationId` is the VCO's key for `configuration_id`" in error.message
 
 
 async def test_rows_of_one_name_without_a_mask_are_read_as_given() -> None:
@@ -542,6 +563,182 @@ async def test_rows_of_one_name_without_a_mask_are_read_as_given() -> None:
     document = document_of(config, named)
     assert json.dumps(document["modules"][-1]) == json.dumps(document["modules"][-2])
     assert "configurationId" in document["modules"][-1]
+
+
+# --- Rows of one name: its ID says which stored row a row is -----------------
+
+OTHER: Final = "OTHER-md5-made-up"
+"""The password in the second device settings row of ``with_two_rows``."""
+OTHER_ID: Final = 77
+"""The ID of that row."""
+FIRST_ID: Final = 10
+"""The ID of the device settings row the fixture profile has."""
+
+
+async def with_two_rows(
+    *, other_first: bool = False
+) -> tuple[EnterpriseConfigurationProfile, dict[str, Any]]:
+    """A profile with two device settings rows, and its named dump.
+
+    What a repeated insert leaves: the second row is the first one with the ID
+    ``OTHER_ID`` and the password ``OTHER``. It is the last row, or the first.
+    """
+    config, _ = await with_a_password()
+    wire = wire_of(config)
+    other = copy.deepcopy(wire["modules"][0])
+    assert other["id"] == FIRST_ID
+    other["id"] = OTHER_ID
+    other["data"]["segments"][0]["bgp"]["neighbors"][0]["md5Password"] = OTHER
+    wire["modules"].insert(0 if other_first else len(wire["modules"]), other)
+    twice = type(config).model_validate(wire)
+    return twice, named_of(twice)
+
+
+def passwords_sent_by(config: Config) -> list[tuple[int, object]]:
+    """Each device settings row's ID, with the password a save of it starts from."""
+    sent: list[tuple[int, object]] = []
+    for row in rows_of(config):
+        if isinstance(row, DeviceSettingsConfigurationModule):
+            raw: Any = row.raw_data
+            (neighbor,) = raw["segments"][0]["bgp"]["neighbors"]
+            sent.append((row.id_, neighbor["md5Password"]))
+    return sent
+
+
+def device_settings_of(named: dict[str, Any]) -> list[dict[str, Any]]:
+    """The device settings rows of a named configuration, in its order."""
+    return [row for row in named["modules"] if row["name"] == "deviceSettings"]
+
+
+def in_full(row: dict[str, Any], password: str) -> None:
+    """Write every secret of the named device settings *row* in full."""
+    neighbor_of(row)["md5_password"] = password
+    for ref_rows in row["refs"].values():
+        for ref_row in ref_rows if isinstance(ref_rows, list) else [ref_rows]:
+            ref_row["data"] = {}
+
+
+@pytest.mark.parametrize("other_first", [False, True])
+async def test_two_rows_of_one_name_are_read_back_each_with_its_own_secret(
+    *, other_first: bool
+) -> None:
+    config, named = await with_two_rows(other_first=other_first)
+    expected = [(FIRST_ID, OLD), (OTHER_ID, OTHER)]
+    assert passwords_sent_by(config) == expected[:: -1 if other_first else 1]
+    assert OLD not in json.dumps(named)
+    assert OTHER not in json.dumps(named)
+    assert [neighbor_of(row)["md5_password"] for row in device_settings_of(named)] == [
+        HIDDEN,
+        HIDDEN,
+    ]
+
+    assert json.dumps(document_of(config, named)) == json.dumps(wire_of(config))
+    by_keys = type(config).model_validate(wire_of(config))
+    by_name = read_back(config, named)
+    assert json.dumps(wire_of(by_name)) == json.dumps(wire_of(by_keys))
+    for kept, again in zip(rows_of(by_keys), rows_of(by_name), strict=True):
+        assert json.dumps(again.raw_data) == json.dumps(kept.raw_data)
+        assert again.raw_refs == kept.raw_refs
+    assert passwords_sent_by(by_name) == passwords_sent_by(config)
+
+
+async def test_rows_of_one_name_keep_their_secrets_wherever_they_are() -> None:
+    config, named = await with_two_rows()
+    named["modules"].reverse()
+    again = read_back(config, named)
+    assert passwords_sent_by(again) == [(OTHER_ID, OTHER), (FIRST_ID, OLD)]
+    # One of the two alone is found by its ID too: `stored` has two of the name.
+    del named["modules"][-1]
+    assert passwords_sent_by(read_back(config, named)) == [(OTHER_ID, OTHER)]
+
+
+async def test_a_row_given_the_id_of_another_of_its_name_takes_that_rows_secrets() -> (
+    None
+):
+    """Among rows of one name the ID is the row's identity.
+
+    A named dump shows it and nothing else tells the rows apart, so a row
+    whose ``id_`` is set to that of another stored row is that row: its masks
+    keep that row's secrets. The two IDs swapped swap the secrets.
+    """
+    config, named = await with_two_rows()
+    first, other = device_settings_of(named)
+    first["id_"], other["id_"] = other["id_"], first["id_"]
+    again = read_back(config, named)
+    assert passwords_sent_by(again) == [(OTHER_ID, OTHER), (FIRST_ID, OLD)]
+
+
+async def test_a_mask_in_a_row_whose_id_no_stored_row_of_its_name_has_is_refused() -> (
+    None
+):
+    config, named = await with_two_rows()
+    device_settings_of(named)[1]["id_"] = 78
+    error = refusal_of(type(config), named, config)
+    assert OTHER not in "".join(traceback.format_exception(error)) + repr(error)
+    assert error.kind == "masked_secret"
+    assert error.path == PASSWORD.format(row=3)
+    assert error.message == NO_ROW.format(
+        why="no `deviceSettings` row of `stored` has the `id_` 78: the row is new"
+    )
+    assert "Give the model" not in str(error)
+
+
+async def test_a_row_whose_id_no_stored_row_has_is_taken_with_its_secrets() -> None:
+    config, named = await with_two_rows()
+    new = device_settings_of(named)[1]
+    new["id_"] = 78
+    in_full(new, "given-in-full")
+    again = read_back(config, named)
+    assert passwords_sent_by(again) == [(FIRST_ID, OLD), (78, "given-in-full")]
+
+
+@pytest.mark.parametrize("given", [None, True, "77", 77.0, [77]])
+async def test_a_mask_in_a_row_of_several_that_gives_no_id_is_refused(
+    given: object,
+) -> None:
+    config, named = await with_two_rows()
+    row = device_settings_of(named)[1]
+    if given is None:
+        del row["id_"]
+    else:
+        row["id_"] = given
+    error = refusal_of(type(config), named, config)
+    assert error.kind == "masked_secret"
+    assert error.path == PASSWORD.format(row=3)
+    assert error.message == NO_ROW.format(
+        why=(
+            "several module rows are named `deviceSettings`, and this one gives "
+            "no `id_`, a whole number, to say which stored row it is"
+        )
+    )
+
+
+async def test_a_row_added_under_a_name_stored_has_once_is_a_new_row() -> None:
+    config, named = await with_a_password()
+    new = copy.deepcopy(named["modules"][0])
+    new["id_"] = OTHER_ID
+    named["modules"].append(new)
+    error = refusal_of(type(config), named, config)
+    assert error.kind == "masked_secret"
+    assert error.path == PASSWORD.format(row=3)
+    assert error.message == NO_ROW.format(
+        why="no `deviceSettings` row of `stored` has the `id_` 77: the row is new"
+    )
+    in_full(new, "given-in-full")
+    again = read_back(config, named)
+    assert passwords_sent_by(again) == [(FIRST_ID, OLD), (OTHER_ID, "given-in-full")]
+
+
+async def test_an_id_two_rows_of_one_name_have_pairs_neither() -> None:
+    config, named = await with_two_rows()
+    first, other = device_settings_of(named)
+    other["id_"] = first["id_"]
+    error = refusal_of(type(config), named, config)
+    assert error.kind == "masked_secret"
+    assert error.path == PASSWORD.format(row=0)
+    # Whichever of the two holds the mask is refused: neither is before the other.
+    in_full(first, "given-in-full")
+    assert refusal_of(type(config), named, config).path == PASSWORD.format(row=3)
 
 
 # --- A row that is no row, and a document that is not JSON --------------------
@@ -588,17 +785,61 @@ async def test_modules_that_are_no_list_are_passed_on_and_validation_refuses_the
 
 
 async def test_a_value_validation_refuses_in_a_row_is_named_from_the_document() -> None:
-    # The place below a row is as validation has it: after the row's position
-    # its module name, then the VCO's keys.
     config, named = await with_a_password()
     neighbor_of(named["modules"][0])["neighbor_as"] = 65010
     error = refusal_of(type(config), named, config)
     assert error.kind == "invalid_value"
     assert error.path == ""
     assert (
-        "modules[#0].deviceSettings.data.segments[#0].bgp.neighbors[#0].neighborAS: "
+        "modules[#0].data.segments[#0].bgp.neighbors[#0].neighbor_as: "
         "Input should be a valid string"
     ) in error.message
+    assert "neighborAS" not in str(error)
+    assert "deviceSettings" not in str(error)
+
+
+async def test_each_value_validation_refuses_is_at_its_place_in_the_document() -> None:
+    config, named = await with_a_password()
+    named["id_"] = "no number"
+    named["modules"][0]["id_"] = "no number"
+    named["modules"][1]["data"]["segments"] = "no list"
+    named["modules"][2]["type_"] = 7
+    error = refusal_of(type(config), named, config)
+    assert error.kind == "invalid_value"
+    start = "this document is not a valid EnterpriseConfigurationProfile: "
+    assert error.message.startswith(start)
+    lines = error.message.removeprefix(start).split(". No model is made of it")[0]
+    assert [line.split(": ")[0] for line in lines.split("; ")] == [
+        "id_",
+        "modules[#0].id_",
+        "modules[#1].data.segments",
+        "modules[#2].type_",
+    ]
+
+
+def test_a_place_below_a_row_is_named_by_the_rows_class() -> None:
+    place = EnterpriseConfigurationProfile.named_place
+    neighbor = ("segments", 0, "bgp", "neighbors", 0, "neighborAS")
+    assert place(("modules", 0, "deviceSettings", "data", *neighbor)) == (
+        "modules[#0].data.segments[#0].bgp.neighbors[#0].neighbor_as"
+    )
+    assert place(("modules", 4, "QOS", "configurationId")) == (
+        "modules[#4].configuration_id"
+    )
+    assert place(("modules", 1, "firewall")) == "modules[#1]"
+    assert place(("schemaVersion",)) == "schema_version"
+    # The row read alone names the same place, from the row down.
+    alone = DeviceSettingsConfigurationModule.named_place(("data", *neighbor))
+    assert alone == "data.segments[#0].bgp.neighbors[#0].neighbor_as"
+
+
+def test_a_place_in_a_row_no_class_reads_is_named_as_far_as_the_document_goes() -> None:
+    place = EdgeConfiguration.named_place
+    assert place(("modules", 3)) == "modules[#3]"
+    assert place(("modules",)) == "modules"
+    assert place(("modules", 0, "noSuchModule", "configurationId")) == (
+        "modules[#0].noSuchModule.configurationId"
+    )
 
 
 async def test_a_vco_key_in_a_row_is_refused_at_its_place_in_the_document() -> None:

@@ -96,7 +96,7 @@ from .rebase import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from pydantic.fields import FieldInfo
 
@@ -1029,8 +1029,11 @@ def _refuse_bool_as_number(given: object, stored: object, path: Path) -> None:
         )
 
 
-def _python_place(loc: Sequence[int | str], models: Sequence[type[VcoModel]]) -> Path:
+def python_place(loc: Sequence[int | str], models: Sequence[type[VcoModel]]) -> Path:
     """Where in the value an error is, in python names.
+
+    *loc* is the ``loc`` of one error of a ``ValidationError``, and *models*
+    are the classes the validated value is made of.
 
     A part that names a field of the model classes in hand, by any name
     ``merge_patch`` accepts, becomes its python name, and the walk goes on
@@ -1094,15 +1097,23 @@ def validation_lines(exc: ValidationError, models: Sequence[type[VcoModel]]) -> 
 
     The errors are joined by ``"; "``.
 
-    The place is in python names (``_python_place``), where *models* are the
+    The place is in python names (``python_place``), where *models* are the
     classes the validated value is made of; it is left out for an error of
     the value itself.
     """
-    lines: list[str] = []
-    for error in exc.errors(include_url=False):
-        place = _python_place(error["loc"], models)
-        lines.append(f"{place}: {error['msg']}" if place else error["msg"])
-    return "; ".join(lines)
+    return placed_lines(
+        (python_place(error["loc"], models), error["msg"])
+        for error in exc.errors(include_url=False)
+    )
+
+
+def placed_lines(errors: Iterable[tuple[Path, str]]) -> str:
+    """One ``place: message`` for each of *errors*, a place with what is wrong there.
+
+    The lines are joined by ``"; "``. An empty place, that of the value
+    itself, is left out of its line.
+    """
+    return "; ".join(f"{place}: {text}" if place else text for place, text in errors)
 
 
 def _without_input(exc: ValidationError) -> ValidationError:
