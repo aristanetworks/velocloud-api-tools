@@ -1892,8 +1892,7 @@ class SaveResult:
 
     Each holds in ``path`` a ``Path`` with no module before it, and the
     python name of the module it is about in ``module``; a write-time
-    validator's warning is the exception, and keeps the path the validator
-    wrote, as text.
+    validator's warning too.
     """
     validation_errors: list[ValidationError] = field(default_factory=list)
     # Optional count for downstream integrations managing enterprise objects.

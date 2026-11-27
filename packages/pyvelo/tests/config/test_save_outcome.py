@@ -68,6 +68,7 @@ async def test_a_save_blocked_by_a_validator_raises_and_sends_nothing() -> None:
     assert [(e.module, e.path, e.message, e.code) for e in exc.value.errors] == [
         ("firewall", "", "blocked", "test")
     ]
+    assert "1 validator error(s): firewall: blocked. Fix them" in str(exc.value)
     assert client.store.requests == []
     assert changed(state) == ["firewall"]
     assert save_progress(exc.value) is None  # nothing was sent

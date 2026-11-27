@@ -106,7 +106,8 @@ of your own passes the same: `module=` the Python name, or nothing for a
 finding in no module, and `path=Path(("lan", "networks"))` (from
 `pyvelo.core`), or `Path(())` for the whole module. `SaveValidationError`
 names each one as `business_policy segments[Guest].rules[#1]: <message>`, and
-a warning of a load or a save (`state.load_warnings`, `SaveResult.warnings`)
+one about a whole module by the module alone (`firewall: <message>`); a
+warning of a load or a save (`state.load_warnings`, `SaveResult.warnings`)
 has the finding's `module` and `path`.
 
 `save(state, unconditional=True)` writes a module that has no `version`. A
