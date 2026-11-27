@@ -1,4 +1,4 @@
-"""The ``QOS`` module's data: segments, service rate limit, QoE and client connector."""
+"""The ``QOS`` module's data: segments, service rate limit and QoE."""
 
 from typing import Annotated, Any
 
@@ -27,18 +27,13 @@ class ServiceRateLimit(VcoModel):
     value: int = 1
 
 
-class QosClientConnector(VcoModel):
-    # Keeping as flexible dict for now - add specific fields as needed
-    data: dict[str, Any] = Field(default_factory=dict)
-
-
 class QosData(Layered[L]):
     """The QoS module's data.
 
-    The three module-level values are ``Inheritable`` and stored by presence:
+    The two module-level values are ``Inheritable`` and stored by presence:
     the edge may store its own, and a layer that stores none displays the
-    value the packaged profile template holds (``None`` for
-    ``qos_client_connector``).
+    value the packaged profile template holds. A stored ``qosClientConnector``
+    is not modeled: it is kept as read.
     """
 
     segments: Annotated[
@@ -53,11 +48,6 @@ class QosData(Layered[L]):
         Inheritable[QoeSettings],
         ByPresence(),
         Default(factory=template_default(QoeSettings, "QOS", "qoe")),
-    ] = Field(default=...)
-    qos_client_connector: Annotated[
-        Inheritable[QosClientConnector | None],
-        ByPresence(),
-        Default(None),
     ] = Field(default=...)
 
     _profile_segments: list[dict[str, Any]] | None = PrivateAttr(default=None)

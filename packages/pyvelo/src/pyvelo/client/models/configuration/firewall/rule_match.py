@@ -1,5 +1,6 @@
 """What an outbound, inbound or inbound IPv6 firewall rule matches."""
 
+import uuid
 from typing import Annotated, Any, override
 
 from pydantic import MISSING
@@ -13,11 +14,25 @@ from pyvelo.client.models.configuration.common import (
 )
 from pyvelo.core import Alias, VcoModel
 from pyvelo.core.fields import Normalizer, Resolvable
-from pyvelo.core.identity import ApplicationIdentity
+from pyvelo.core.identity import (
+    AddressGroupIdentity,
+    ApplicationIdentity,
+    ServiceGroupIdentity,
+)
 
 
 def _subnet_mask_normalizer(v: Any) -> Any:
     return "any" if isinstance(v, str) and v == "255.255.255.255" else v
+
+
+# The UI stores null for a group that is not chosen: null and an absent key
+# both mean no group.
+OutboundAddressGroupRef = Annotated[
+    uuid.UUID | None | MISSING, Resolvable(AddressGroupIdentity, lambda i: i.logical_id)
+]
+OutboundServiceGroupRef = Annotated[
+    uuid.UUID | None | MISSING, Resolvable(ServiceGroupIdentity, lambda i: i.logical_id)
+]
 
 
 class OutboundRuleMatch(VcoModel):
@@ -85,12 +100,16 @@ class OutboundRuleMatch(VcoModel):
 
     # Optional device and group matching
     os_version: Annotated[int, Alias("os_version")] = -1
-    source_address_group: Annotated[AddressGroupRef, Alias("sAddressGroup")] = MISSING
-    destination_address_group: Annotated[AddressGroupRef, Alias("dAddressGroup")] = (
+    source_address_group: Annotated[OutboundAddressGroupRef, Alias("sAddressGroup")] = (
         MISSING
     )
-    source_port_group: Annotated[ServiceGroupRef, Alias("sPortGroup")] = MISSING
-    destination_port_group: Annotated[ServiceGroupRef, Alias("dPortGroup")] = MISSING
+    destination_address_group: Annotated[
+        OutboundAddressGroupRef, Alias("dAddressGroup")
+    ] = MISSING
+    source_port_group: Annotated[OutboundServiceGroupRef, Alias("sPortGroup")] = MISSING
+    destination_port_group: Annotated[OutboundServiceGroupRef, Alias("dPortGroup")] = (
+        MISSING
+    )
 
     vlan_type: Annotated[VlanType, Alias("vlan_type")] = "end-to-end"
 
@@ -135,7 +154,7 @@ class InboundRuleMatch(VcoModel):
 class InboundRuleMatchV6(VcoModel):
     # IP addressing
     ip_version: AddressType = "IPv6"
-    destination_ip_v6: Annotated[str, Alias("dip_v6")] = "any"
+    destination_ip_v6: Annotated[str, Alias("dipV6")] = "any"
 
     # Port range
     destination_port_low: Annotated[int, Alias("dport_low")] = -1

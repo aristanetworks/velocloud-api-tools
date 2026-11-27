@@ -114,6 +114,7 @@ async def test_a_patch_into_an_inherited_section_the_profile_lacks_copies_the_di
     assert isinstance(default, dict)
     expected = copy.deepcopy(default)
     expected["ssh"]["enabled"] = True
+    del expected["icmp"]  # the model does not hold the ICMP service, unused by the Edge
     assert changed_paths(state) == ["services"]
     assert change_after(firewall_plan(state), "services") == expected
     assert default["ssh"]["enabled"] is False  # the template is not changed

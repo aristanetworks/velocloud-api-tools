@@ -17,19 +17,22 @@ from .common import (
 
 
 class WanLinkStaticSla(VcoModel):
-    latency_ms: Literal[0] | str = 0
-    jitter_ms: Literal[0] | str = 0
-    loss_pct: Literal[0] | str = 0
+    latency_ms: int | float | str = 0
+    jitter_ms: int | float | str = 0
+    loss_pct: int | float | str = 0
 
 
 class WanLinkCosEntry(VcoModel):
     bandwidth_guaranteed: bool = False
-    bandwidth_percent: Annotated[float, Alias("bandwidth_pct")] = 100
+    bandwidth_percent: Annotated[int | float, Alias("bandwidthPct")] = 100
     default_class_of_service: bool = False
     dscp_tags: list[str]
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    name: str | MISSING = MISSING
     policing: bool = False
-    static_sla: WanLinkStaticSla = Field(default_factory=WanLinkStaticSla)
+    static_sla: Annotated[WanLinkStaticSla, Alias("staticSLA")] = Field(
+        default_factory=WanLinkStaticSla
+    )
 
 
 class WanLinkCos(VcoModel):
@@ -84,7 +87,7 @@ class WanLink(VcoModel):
     )
     classes_of_service: WanLinkCos = Field(default_factory=WanLinkCos)
     static_sla_enabled: bool = False
-    class_of_service_enabled: Annotated[bool, Alias("classesOfServiceEnabled")] = False
+    class_of_service_enabled: Annotated[bool, Alias("classesofServiceEnabled")] = False
     strict_ip_precedence: bool = False
 
     # Link behavior flags

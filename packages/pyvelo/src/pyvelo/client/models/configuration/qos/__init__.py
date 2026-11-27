@@ -14,7 +14,7 @@ from .common import (
 )
 from .qoe import QoeLatencyThreshold, QoeSettings, QoeThreshold
 from .refs import QosRefs
-from .root import QosClientConnector, QosData, ServiceRateLimit
+from .root import QosData, ServiceRateLimit
 from .rule import (
     QosNatSettings,
     QosRule,
@@ -42,7 +42,6 @@ __all__ = [
     "QoeLatencyThreshold",
     "QoeSettings",
     "QoeThreshold",
-    "QosClientConnector",
     "QosData",
     "QosLinkPolicy",
     "QosNatSettings",

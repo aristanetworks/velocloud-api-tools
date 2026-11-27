@@ -214,7 +214,9 @@ class DeviceSettingsZscalerLocationRef(ConfigurationRef):
 
 class DeviceSettingsZscalerSubLocationRef(ConfigurationRef):
     ref: Literal["deviceSettings:zscaler:subLocation"] | MISSING = MISSING
-    object_: Annotated[Literal["NETWORK_SERVICE"] | MISSING, Alias("object")] = MISSING
+    object_: Annotated[Literal["ZSCALER_SUBLOCATION"] | MISSING, Alias("object")] = (
+        MISSING
+    )
     data: dict[str, Any] | MISSING = MISSING
 
 

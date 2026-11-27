@@ -446,18 +446,19 @@ A patch on a value the edge inherits starts from the profile's value, or from
 the display default (the packaged profile template's) where the profile stores
 none, and the whole value becomes the edge's own and shows in `plan()`.
 `{"services": {"ssh": {"enabled": true}}}` stores the whole `services` object,
-with `ssh.enabled` true and the rest as the profile has it, and the plan shows
-one added key. A patch on a value the edge already stores merges into it, a
-scalar sets it, and `null` makes the edge inherit again (the plan shows the key
-removed): `{"syslog_forwarding": null}`. The keys of a group (`stateful`,
+with `ssh.enabled` true and the rest of what the model holds as the profile has
+it (no `icmp`, which the model does not hold), and the plan shows one added
+key. A patch on a value the edge already stores merges into it, a scalar sets
+it, and `null` makes the edge inherit again (the plan shows the key removed):
+`{"syslog_forwarding": null}`. The keys of a group (`stateful`,
 `network_protection`, `atp`) change owner together, so
 `{"stateful_firewall_enabled": false}` on an edge that inherits the group adds
 its three keys, with the settings as the profile has them. A patch that raises
 leaves the group as it was. `state.effective` shows each value an edge uses and
 where it comes from; see "The effective view".
 
-The QoS module works the same way. Its three module-level values
-(`serviceRateLimit`, `qoe`, `qosClientConnector`) are stored by the edge or
+The QoS module works the same way. Its two module-level values
+(`serviceRateLimit`, `qoe`) are stored by the edge or
 inherited, and a segment's `cosMapping` is the edge's own when it is stored
 with `override` true. A patch on one the edge inherits starts from the
 profile's value (or the display default) and stores it whole:
@@ -751,7 +752,7 @@ There are six categories, and three of them are findings:
 | `server_only` | the server's answer has a value the view lacks | yes |
 | `factory` | the view gives a display default where the server has no value, or the same one | no, information |
 | `ignored` | the path is on the ignore list, is a secret, or is a segment the composer left out; reported with its reason | no |
-| `unconverted` | the path is not converted yet (the firewall's `inbound`, `inboundV6`, a segment's `firewall_logging_enabled` and `etm`, and a QoS segment's `webProxy`), so the view has no value to compare | no, information |
+| `unconverted` | the path is not converted yet (the firewall's `inbound`, `inboundV6` and `services.icmp`, a segment's `firewall_logging_enabled` and `etm`, a QoS segment's `webProxy` and a QoS module's `qosClientConnector`), so the view has no value to compare | no, information |
 
 `comparison.findings` is the entries that are findings, and `entries` all of
 them. A key is reported once, at the highest path that is absent from a side.
@@ -764,7 +765,7 @@ the edge's), and the rules of a segment, edge entries then profile entries, by
 position. For QoS the segments' `rules` are compared the same way, and a
 segment's `cosMapping` is the edge's stored object even when its `override` flag
 is off, because that is the object the composer takes; the module's
-`serviceRateLimit`, `qoe` and `qosClientConnector` and a segment's `cosMapping`
+`serviceRateLimit` and `qoe` and a segment's `cosMapping`
 are display defaults (`factory`) where neither layer stores one and the server
 has none.
 
@@ -1448,7 +1449,7 @@ Known limits:
 - Three kinds of text leave secrets out. `render()` of a plan and the message
   of a write error (`str(error)`) show `"***"` in place of the value of every
   field the models mark as a secret (`Secret`, in `pyvelo.core`: passwords,
-  pre-shared keys, SNMP communities), and in place of a ref row. `repr()` of a
+  pre-shared keys, SNMP communities, a WAN network's ISP key), and in place of a ref row. `repr()` of a
   plan or of a write holds no values, and `repr()` of a `SaveResult` holds
   neither module data nor the changes it reports, only their number per module
   (it still holds the validators' messages). A response that fails to parse

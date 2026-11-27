@@ -122,8 +122,8 @@ They are what ``compare_effective`` compares when it is given none.
 """
 
 UNMODELED_KEYS: Mapping[str, frozenset[str]] = {
-    "firewall": frozenset({"etm"}),
-    "QOS": frozenset(),
+    "firewall": frozenset({"etm", "services.icmp"}),
+    "QOS": frozenset({"qosClientConnector"}),
 }
 """Keys of a module that no model declares, as paths.
 

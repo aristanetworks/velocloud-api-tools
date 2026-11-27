@@ -25,6 +25,7 @@ from .services import (
     FirewallServices,
     FirewallServicesGroup,
     LocalUiService,
+    SshService,
 )
 from .stateful import StatefulFirewallSettings
 
@@ -55,6 +56,7 @@ __all__ = [
     "SecurityFeatureAction",
     "SecurityFeatureSettings",
     "SegmentMetadata",
+    "SshService",
     "StatefulFirewallSettings",
     "StatefulLocal",
     "TcpBasedAttacks",
