@@ -807,7 +807,12 @@ firewall: update
   `render()` does (with `removed=True` for a path the change removes), from
   the copy of the data the plan took when it was made (`ModulePlan.planned`),
   so a plan you keep while you edit further still names each item as it was
-  then.
+  then. `ModulePlan.shown_change(change)` is one of those changes as
+  `render()` shows it. `state.get_field_changes()` lists the same changes in
+  the same names: a `ConfigFieldChange` has the module's Python name as
+  `module`, the line's path as `path`, `before` and `after` with their keys
+  by attribute name, and the items of a move, a place and an order entry's
+  `before` and `after` named as the line names them.
 - The plan lists the modules in the order a save writes them. The device
   settings are written first, and the role steps right before them; in a save
   that removes a hub from a list (a plan with a `disable` step) they are written
@@ -922,8 +927,8 @@ firewall: update
   removes a hub writes the device settings, and so the steps, after the other
   modules. "Hubs", below, has all of it.
 - A segment added to a profile module has an `added segments: Guest` line, and
-  `get_field_changes()` lists it as one change at `segments["Guest"]`, from
-  `MISSING` to the entry as written. A QoS segment that lacks template
+  `get_field_changes()` lists it as one change at `segments[Guest]`, from
+  `MISSING` to the entry as written, with its keys by attribute name. A QoS segment that lacks template
   `defaults` has them added to the module's write when the module is written
   (`repaired defaults: Guest: Default-Any-UDP, Default-Any-Other`); the plan
   warns with the code `defaults_repaired` either way, and `missing defaults`

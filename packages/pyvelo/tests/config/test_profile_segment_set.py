@@ -17,6 +17,7 @@ from profile_state import (
 )
 from pydantic import MISSING
 from pyvelo.client.exceptions import SegmentSetError
+from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.profile_segments import (
     default_rules,
     new_segment_entry,
@@ -24,6 +25,7 @@ from pyvelo.client.models.configuration.profile_segments import (
 from pyvelo.client.schemas.configuration import AnyConfigurationModule
 from pyvelo.config.state import ConfigPlan, ConfigState
 from pyvelo.core.layers import Profile
+from pyvelo.core.names import named_value
 from pyvelo.core.rebase import Path
 from pyvelo.testing import make_module_json
 from refs_helpers import QOS_ID
@@ -337,15 +339,17 @@ async def test_get_field_changes_lists_an_added_segment() -> None:
     changes = state.get_field_changes()
 
     assert [(c.module, str(c.path)) for c in changes] == [
-        (DS, "segments[Guest]"),
-        (QOS, "segments[Guest]"),
-        (FIREWALL, "segments[Guest]"),
+        ("device_settings", "segments[Guest]"),
+        ("business_policy", "segments[Guest]"),
+        ("firewall", "segments[Guest]"),
     ]
     guest = state.get_field_changes(FIREWALL)[0]
     assert guest.path == Path.parse('segments["Guest"]')
     assert guest.before is MISSING
     (addition,) = state.module(FIREWALL).additions
-    assert guest.after == addition.entry  # pyright: ignore[reportAttributeAccessIssue]
+    # The entry as written, with its keys by attribute name.
+    entry = addition.entry  # pyright: ignore[reportAttributeAccessIssue]
+    assert guest.after == named_value(entry, FirewallData, guest.path)
 
 
 async def test_plan_warnings_reach_the_save_result() -> None:

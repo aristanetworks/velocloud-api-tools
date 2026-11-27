@@ -23,7 +23,7 @@ from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import DeviceSettingsConfigurationModule
 from pyvelo.config import ConfigPipeline, add
 from pyvelo.config.state import ConfigState
-from pyvelo.core.rebase import Key, Path
+from pyvelo.core.rebase import ItemMove, ItemPlace, Key, Path
 from pyvelo.testing import make_module_json
 from shown_paths import reached
 
@@ -260,3 +260,67 @@ def test_named_shows_a_path_of_the_plan() -> None:
     path = Path(("lan", "interfaces", Key("GE1"), "vlanIds"))
     assert plan.named(path) == "lan.interfaces[GE1].vlan_ids"
     assert plan.named(path, removed=True) == "lan.interfaces[GE1].vlan_ids"
+
+
+HUB = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1"
+ENTRY = "segments[Guest].rules[Web].action.edge_to_edge_route_action.route_cfg"
+
+
+async def test_field_changes_are_in_the_names_of_the_plan_text() -> None:
+    changes = (await edited()).get_field_changes()
+    assert [(c.module, str(c.path)) for c in changes] == [
+        ("business_policy", "segments[Guest].rules[Web].match.destination_port_low"),
+        ("business_policy", f"{ENTRY}.backhaul_edges[Hub-A]"),
+        ("firewall", "firewall_logging_enabled"),
+        ("device_settings", "segments[Guest].vpn.hub_edges.enabled"),
+        ("device_settings", "segments[Guest].vpn.hub_edges.vpn_hubs[Hub-A]"),
+        ("device_settings", "segments[Guest].vpn.backhaul_edges[Hub-A]"),
+    ]
+    removed = changes[-1].before
+    assert isinstance(removed, dict)
+    assert removed["logical_id"] == HUB
+    assert "logicalId" not in removed
+
+
+async def test_the_path_of_every_field_change_is_in_the_plan_text() -> None:
+    state = await edited()
+    lines = state.plan().render().splitlines()
+    for change in state.get_field_changes():
+        assert any(
+            line.startswith(f"  {sign} {change.path}")
+            for line in lines
+            for sign in "+-~"
+        )
+
+
+async def test_either_module_name_filters() -> None:
+    state = await edited()
+    assert state.get_field_changes("business_policy") == state.get_field_changes("QOS")
+    assert len(state.get_field_changes("business_policy")) == 2
+
+
+async def test_a_renamed_item_is_shown_by_its_new_name() -> None:
+    state = await rule_uses_hub()
+    await edit(
+        state, "QOS", {"segments": {"Guest": {"rules": {"Web": {"name": "Web2"}}}}}
+    )
+    (change,) = state.get_field_changes("business_policy")
+    assert (str(change.path), change.before, change.after) == (
+        "segments[Guest].rules[Web2].name",
+        "Web",
+        "Web2",
+    )
+    assert reached(state.profile.qos, change.path) == "Web2"
+
+
+async def test_an_order_entry_names_its_items_as_shown() -> None:
+    state = await guest_backhaul_state()
+    hubs = state.profile.device_settings.segments[1].vpn.backhaul_edges
+    hubs.reverse()
+    (change,) = state.get_field_changes("device_settings")
+    assert (str(change.path), change.before, change.after, change.moves) == (
+        "segments[Guest].vpn.backhaul_edges",
+        ["Hub-A", "Hub-B"],
+        ["Hub-B", "Hub-A"],
+        (ItemMove(Key("Hub-B"), ItemPlace()),),
+    )

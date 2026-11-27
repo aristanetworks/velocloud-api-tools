@@ -202,7 +202,7 @@ def test_replace_leaves_the_other_modules_edits() -> None:
 
     assert [m.name for m in state.plan().changed] == ["QOS"]
     assert [(c.module, c.path, c.before) for c in state.get_field_changes()] == [
-        ("QOS", "service_rate_limit", MISSING)
+        ("business_policy", "service_rate_limit", MISSING)
     ]
 
 

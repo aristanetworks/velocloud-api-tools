@@ -152,6 +152,7 @@ from pyvelo.core.rebase import (
     carry_unset_defaults,
     find_lossy_assignments,
     is_override_flag,
+    item_text,
     mark_added_items,
     raw_changes,
     rebase,
@@ -389,36 +390,78 @@ class ModulePlan:
             return place
         return ItemPlace(self._named_item(items, place.after))
 
-    def _change_line(self, change: RawChange) -> str:
-        """The line of ``render`` for *change*.
+    def _named_names(self, items: Path, names: object) -> object:
+        """*names*, the item names of the order entry of the list at *items*, as shown.
 
-        The path and the items of a place or a move are shown by ``named``, and
-        an object by ``named_value``. The secrets are found by the path as the
-        change has it, in the VCO's keys.
+        Each is the text ``Path`` writes an item in (``item_text``); it is read
+        back as that item and written as ``_named_item`` shows it.
+        """
+        if not is_list(names):
+            return names
+        shown_names: list[object] = []
+        for name in names:
+            part = Path.parse(f"[{name}]").parts[0] if isinstance(name, str) else None
+            shown_names.append(
+                name
+                if part is None or isinstance(part, str)
+                else item_text(self._named_item(items, part))
+            )
+        return shown_names
+
+    def shown_change(self, change: RawChange) -> RawChange:
+        """*change*, one of ``changes``, as pyvelo shows it.
+
+        The path is shown by ``named`` (as the data as read names it where the
+        change removes what it names), and so are the item a place is after
+        and the items of a move. A value is written by ``named_value``, with
+        its keys by attribute name; the values of an order entry, the item
+        names in the order read and in the new order, are the items as shown.
+        ``render`` writes each line from it, and
+        ``ConfigState.get_field_changes`` is made of them.
         """
         path = self.named(change.path, removed=change.after is MISSING)
         if change.moves is not None:
-            moves = [
-                ItemMove(
-                    self._named_item(change.path, move.item),
-                    self._named_place(change.path, move.place),
-                )
-                for move in change.moves
-            ]
-            return f"  ~ {path}: order: {moves_text(moves)}"
-        if change.after is MISSING:
-            return f"  - {path}"
-        after = named_value(change.after, self.model, change.path)
-        if change.before is MISSING:
-            place = ""
-            if change.place is not None:
-                items = Path(change.path.parts[:-1])
-                place = f" ({self._named_place(items, change.place)})"
-            text = shown(after, model=self.model, path=change.path)
-            return f"  + {path}{place}: {text}"
-        before = named_value(change.before, self.model, change.path)
-        old, new = shown_together(before, after, model=self.model, path=change.path)
-        return f"  ~ {path}: {old} -> {new}"
+            return RawChange(
+                path,
+                self._named_names(change.path, change.before),
+                self._named_names(change.path, change.after),
+                moves=tuple(
+                    ItemMove(
+                        self._named_item(change.path, move.item),
+                        self._named_place(change.path, move.place),
+                    )
+                    for move in change.moves
+                ),
+            )
+        place = change.place
+        if place is not None:
+            place = self._named_place(Path(change.path.parts[:-1]), place)
+        return RawChange(
+            path,
+            named_value(change.before, self.model, change.path),
+            named_value(change.after, self.model, change.path),
+            place=place,
+        )
+
+    def _change_line(self, change: RawChange) -> str:
+        """The line of ``render`` for *change*, as ``shown_change`` shows it.
+
+        The secrets are found by the path as the change has it, in the VCO's
+        keys.
+        """
+        seen = self.shown_change(change)
+        if seen.moves is not None:
+            return f"  ~ {seen.path}: order: {moves_text(seen.moves)}"
+        if seen.after is MISSING:
+            return f"  - {seen.path}"
+        if seen.before is MISSING:
+            place = "" if seen.place is None else f" ({seen.place})"
+            text = shown(seen.after, model=self.model, path=change.path)
+            return f"  + {seen.path}{place}: {text}"
+        old, new = shown_together(
+            seen.before, seen.after, model=self.model, path=change.path
+        )
+        return f"  ~ {seen.path}: {old} -> {new}"
 
     def render(self) -> str:
         """The plan as text: a headline, then a line for each change.

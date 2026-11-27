@@ -18,7 +18,10 @@ from typing import (
 
 from pydantic import MISSING, BaseModel
 
-from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.enums.configuration import (
+    ConfigurationModuleName,
+    python_module_name,
+)
 from pyvelo.client.exceptions import (
     DanglingReferenceError,
     DetachedObjectError,
@@ -78,12 +81,12 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 from pyvelo.core.layers import Edge, Effective, Profile
+from pyvelo.core.names import named_value
 from pyvelo.core.rebase import (
     ItemMove,
     ItemPlace,
     Key,
     Path,
-    python_path,
     raw_changes,
 )
 from pyvelo.core.references import (
@@ -106,25 +109,33 @@ _SEGMENT_MODULES = (
 
 @dataclass(frozen=True)
 class ConfigFieldChange:
-    """One change of :meth:`ConfigState.plan`: its module, and its path in python names.
+    """One change of :meth:`ConfigState.plan`, in the names its text shows.
+
+    Each is the change as ``ModulePlan.shown_change`` shows it, so its module,
+    path and items read as the plan's line for it does.
 
     Attributes:
-        module: The module's VCO name (e.g. ``"firewall"``, ``"WAN"``).
-        path: Where the change is, in the names a patch uses
+        module: The module's python name (e.g. ``"firewall"``,
+            ``"business_policy"`` for the module the VCO calls ``QOS``).
+        path: Where the change is, as the plan's line names it: a field by
+            its attribute, an item by its name
             (``segments["Global Segment"].outbound[block-ssh].name``). A
             provider change is at the provider's field
             (``segments["Global Segment"].dns.primary_provider.service``).
-        before: The value as read, a JSON value, or ``MISSING`` where there
-            was none. For a keyed list whose items change place, the item
-            names in the order read. For a provider (a field whose value is
-            a ref row), the service's logical ID as lower-case text, or None
-            for no provider.
-        after: The value as it is now, a JSON value, or ``MISSING`` where
-            there is none; the item names in the new order for a reorder.
-            For a provider, as ``before``.
-        place: Where an item added to a keyed list goes, else None.
-        moves: For the order of a keyed list, each item that changes place
-            with its new place, else None.
+        before: The value as read, a JSON value with its keys by attribute
+            name, or ``MISSING`` where there was none. For a keyed list whose
+            items change place, the item names in the order read, as the
+            plan shows them. For a provider (a field whose value is a ref
+            row), the service's logical ID as lower-case text, or None for no
+            provider.
+        after: The value as it is now, a JSON value with its keys by
+            attribute name, or ``MISSING`` where there is none; the item
+            names in the new order for a reorder. For a provider, as
+            ``before``.
+        place: Where an item added to a keyed list goes, after an item as
+            the plan shows it, else None.
+        moves: For the order of a keyed list, each item that changes place,
+            as the plan shows it, with its new place, else None.
     """
 
     module: str
@@ -1438,16 +1449,18 @@ class ConfigState:
         for :meth:`get_changed_modules`.
 
         These are the changes a save writes, so a read changes nothing and a
-        rename is one change. Each path is in the names a patch uses, and the
-        values are JSON, as in the plan; the order of a keyed list is one
-        entry whose ``moves`` say which items change place. A provider set,
+        rename is one change. Each is in the names of the plan's text
+        (``ModulePlan.shown_change``): the module by its python name, the path
+        as its line names it and one ``apply`` takes, and the values JSON with
+        their keys by attribute name; the order of a keyed list is one entry
+        whose ``moves`` say which items change place. A provider set,
         replaced or cleared is one entry at the provider's field, with the
         logical ID of the service before and after, or None; a provider
         replaced is one entry, not a removal and an addition. When the
         provider's stub had no ``ref``, setting a provider also writes the
         stub's ``ref``, and that is an entry of its own, before the
         provider's. A segment added to a profile module is one entry, at
-        ``segments["<name>"]``, with ``before`` ``MISSING`` and ``after`` the
+        ``segments[<name>]``, with ``before`` ``MISSING`` and ``after`` the
         entry as written; it comes before the changes to the module's other
         values.
         """
@@ -1457,20 +1470,20 @@ class ConfigState:
             if wanted is not None and module.name != wanted:
                 continue
             held = _find_module(self.target_config, module.name)
-            data = None if held is None else held.data
-            model = type(data) if isinstance(data, VcoModel) else None
             changes.extend(_added_segment_changes(module, held))
-            changes.extend(
-                ConfigFieldChange(
-                    module=module.name,
-                    path=python_path(change.path, model),
-                    before=change.before,
-                    after=change.after,
-                    place=change.place,
-                    moves=change.moves,
+            name = python_module_name(module.name)
+            for change in module.changes:
+                seen = module.shown_change(change)
+                changes.append(
+                    ConfigFieldChange(
+                        module=name,
+                        path=seen.path,
+                        before=seen.before,
+                        after=seen.after,
+                        place=seen.place,
+                        moves=seen.moves,
+                    )
                 )
-                for change in module.changes
-            )
             changes.extend(_provider_changes(module))
         return changes
 
@@ -1480,21 +1493,25 @@ def _added_segment_changes(
 ) -> list[ConfigFieldChange]:
     """One change for each segment added to *held*, a profile module.
 
-    Each change has the entry as the plan writes it.
+    Each change has the entry as the plan writes it, with its keys by
+    attribute name, at the segment as the plan shows it.
     """
     if held is None:
         return []
     written = _segment_entries(module.data)
-    return [
-        ConfigFieldChange(
-            module=module.name,
-            path=Path(("segments", Key(addition.name))),
-            before=MISSING,
-            after=written[addition.segment_id],
-        )
-        for addition in held.additions
-        if isinstance(addition, AddedSegment) and addition.segment_id in written
-    ]
+    changes: list[ConfigFieldChange] = []
+    for addition in held.additions:
+        if isinstance(addition, AddedSegment) and addition.segment_id in written:
+            path = Path(("segments", Key(addition.name)))
+            changes.append(
+                ConfigFieldChange(
+                    module=python_module_name(module.name),
+                    path=module.named(path),
+                    before=MISSING,
+                    after=named_value(written[addition.segment_id], module.model, path),
+                )
+            )
+    return changes
 
 
 def _segment_entries(data: object) -> dict[Any, Any]:
@@ -1654,7 +1671,8 @@ def _provider_changes(module: ModulePlan) -> list[ConfigFieldChange]:
     They are the ref rows of ``RefOnly`` owners.
 
     The row a change removes is the owner's ``before`` and the row it adds
-    its ``after``, each as the identity's lower-case text.
+    its ``after``, each as the identity's lower-case text. The owner's path
+    is as the plan shows it.
     """
     before: dict[Path, str] = {}
     after: dict[Path, str] = {}
@@ -1663,8 +1681,8 @@ def _provider_changes(module: ModulePlan) -> list[ConfigFieldChange]:
             (after if change.added else before)[change.owner] = str(change.value)
     return [
         ConfigFieldChange(
-            module=module.name,
-            path=owner,
+            module=python_module_name(module.name),
+            path=module.named(owner, removed=owner not in after),
             before=before.get(owner),
             after=after.get(owner),
         )

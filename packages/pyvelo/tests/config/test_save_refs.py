@@ -453,7 +453,7 @@ async def test_field_changes_list_a_provider_change_at_its_path() -> None:
     primary_provider(state).service = uuid.UUID(DNS_B)
     (swap,) = state.get_field_changes()
     assert (swap.module, swap.path, swap.before, swap.after) == (
-        "deviceSettings",
+        "device_settings",
         OWNER,
         DNS_A,
         DNS_B,
