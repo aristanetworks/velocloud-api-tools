@@ -796,7 +796,7 @@ def check_profile_segments(
     if redescribed:
         parts.append(
             "it re-describes " + ", ".join(sorted(redescribed)) + ": the "
-            "descriptor of a segment (its name, `segmentId`, type and logical "
+            "descriptor of a segment (its name, `segment_id`, type and logical "
             "ID) is the enterprise's, so leave `segment` out of the patch"
         )
     if added:

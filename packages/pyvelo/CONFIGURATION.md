@@ -130,7 +130,12 @@ network services, a new resolver if the pipeline has none), and raises
 
 ## The patch format
 
-`apply` takes a module, a patch and, optionally, an address. The address is
+`apply` takes a module, a patch and, optionally, an address. The module is
+given by its python name, the name pyvelo prints it by: `device_settings`,
+`business_policy`, `firewall`, `wan`, `control_plane`, `management_plane`,
+`image_update`, `meta_data`, `properties`, `analytics_settings` or
+`atp_metadata` (`python_module_name` gives it for the VCO's name). The VCO's
+own name (`deviceSettings`, `QOS`) is accepted too. The address is
 shorthand for nesting: `segment="Global Segment", path="outbound", patch=P` is
 `patch={"segments": {"Global Segment": {"outbound": P}}}`. `path` is a path
 in the form pyvelo prints one: field names joined by dots, with an item in

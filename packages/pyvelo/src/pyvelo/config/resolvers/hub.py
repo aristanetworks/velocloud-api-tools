@@ -105,7 +105,7 @@ class HubResolver(BaseResolver[HubIdentity]):
             message=(
                 f"Several hubs are named {name!r}: {listed}. "
                 "Give the logical ID of the one you mean instead of its name, "
-                'as in {"_op": "add", "logicalId": "<logical ID>"}.'
+                'as in {"_op": "add", "logical_id": "<logical ID>"}.'
             ),
         )
 

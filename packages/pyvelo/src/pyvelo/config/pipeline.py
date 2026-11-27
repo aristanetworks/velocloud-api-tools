@@ -792,9 +792,10 @@ class ConfigPipeline:
 
         **Steps.**
 
-        1. Locate the module on the target config. A ``firewall`` or ``QOS``
-           module that an edge lacks starts as an empty layer (nothing is
-           copied from the profile) and is inserted on save. A module a save
+        1. Locate the module on the target config. A ``firewall`` or
+           ``business_policy`` module that an edge lacks starts as an empty
+           layer (nothing is copied from the profile) and is inserted on save.
+           A module a save
            does not write (control plane) raises ``PatchError``, with an empty
            path, before the patch is read.
         2. On a profile target, the ``segments`` of device settings, QoS and
@@ -871,8 +872,8 @@ class ConfigPipeline:
            does not write at the level of the target.
         5. Return the updated :class:`ConfigState`.
 
-        A QoS patch that names a hub in a rule's ``backhaulEdges`` entry (on a
-        profile or an edge) gives the entry its ``logicalId``, the hub's
+        A QoS patch that names a hub in a rule's ``backhaul_edges`` entry (on a
+        profile or an edge) gives the entry its ``logical_id``, the hub's
         service for the profile and the rule's segment
         (:meth:`ConfigState.fill_hub_services`), on the copy and again on the
         module's data, so the state and its dump hold it. A hub with no
@@ -1210,13 +1211,14 @@ class ConfigPipeline:
 
         1. Plan the write of every module (:meth:`ConfigState.plan`), and
            raise ``TypeError`` if a changed module is not one a save writes
-           (device settings, QoS, WAN, firewall), also for ``dry_run``. The
-           plan is in the write order: the device settings are written first,
-           and the role steps right before them; in a save that removes a hub
-           from a list (a plan with a ``disable`` step) they are written last,
-           after the other modules, so that a rule stops using a hub before
-           the hub loses its role. A profile's three modules (device settings,
-           QoS and firewall) hold the same segments, so the plan raises
+           (``device_settings``, ``business_policy``, ``wan``, ``firewall``),
+           also for ``dry_run``. The plan is in the write order: the device
+           settings are written first, and the role steps right before them;
+           in a save that removes a hub from a list (a plan with a ``disable``
+           step) they are written last, after the other modules, so that a
+           rule stops using a hub before the hub loses its role. A profile's
+           three modules (device settings, QoS and firewall) hold the same
+           segments, so the plan raises
            ``SegmentSetError`` for an edit that removes a segment from one, or
            adds it to some and not all, and carries a ``segments_disagree``
            warning for a profile whose modules disagree as read.
@@ -2958,7 +2960,7 @@ def _qos_rules_json(
 ) -> list[dict[str, object]] | None:
     """The JSON of *rules*, each validated as a ``QosRule``, in order; None for None.
 
-    Raises ``ValueError`` for two rules of one name or one ``ruleLogicalId``,
+    Raises ``ValueError`` for two rules of one name or one ``rule_logical_id``,
     and pydantic's ``ValidationError`` (a ``ValueError``) for a rule that is not one.
     """
     if rules is None:
@@ -2969,14 +2971,14 @@ def _qos_rules_json(
         ).model_dump(mode="json", by_alias=True)
         for rule in rules
     ]
-    for key in ("name", "ruleLogicalId"):
+    for key, shown in (("name", "name"), ("ruleLogicalId", "rule_logical_id")):
         seen: set[object] = set()
         for rule in dumped:
             if rule[key] in seen:
                 raise ValueError(
-                    f"qos_rules holds more than one rule with the {key} "
+                    f"qos_rules holds more than one rule with the {shown} "
                     f"{rule[key]!r}: each rule of a QoS entry has a name and a "
-                    "ruleLogicalId of its own."
+                    "rule_logical_id of its own."
                 )
             seen.add(rule[key])
     return dumped

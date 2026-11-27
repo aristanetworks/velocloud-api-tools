@@ -5,6 +5,8 @@ That is its list entry or rule entry.
 ``merge_patch`` runs here over a registry that holds a loaded ``HubResolver``.
 """
 
+import json
+import re
 import uuid
 from typing import Any
 
@@ -14,6 +16,7 @@ from pydantic import MISSING
 from pyvelo.client.models.configuration.device_settings.segment import (
     EdgeToEdgeDetail,
     EdgeToEdgeHub,
+    VpnHub,
 )
 from pyvelo.client.models.configuration.qos.rule import BackhaulEdge, RouteConfig
 from pyvelo.config.resolver import ResolverRegistry
@@ -170,6 +173,36 @@ async def test_a_shared_name_given_with_its_logical_id_adds_that_hub() -> None:
         )
     _ = model.merge_patch(
         {"vpnHubs": {"+": add({"logicalId": CLUSTER.logical_id})}}, resolvers=registry
+    )
+
+    assert hub_list(model) == [
+        {"name": "Hub-A", "type": "edgeHubCluster", "logicalId": CLUSTER.logical_id}
+    ]
+
+
+async def test_the_patch_a_shared_name_is_refused_with_adds_the_hub_it_names() -> None:
+    resolver = await make_hub_resolver(
+        [
+            identity(HUB_A),
+            identity(Hub("cluster", 51, CLUSTER.logical_id, "Hub-A")),
+        ]
+    )
+    registry = ResolverRegistry()
+    registry.register(resolver)
+    model = EdgeToEdgeHub()
+    with pytest.raises(ResolutionError) as raised:
+        _ = model.merge_patch(
+            {"vpn_hubs": {"+": add({"name": "Hub-A"})}}, resolvers=registry
+        )
+
+    shown = re.search(r"as in (\{.*\})\.$", str(raised.value))
+    assert shown is not None
+    body = json.loads(shown[1])
+    assert body == {"_op": "add", "logical_id": "<logical ID>"}
+    assert set(body) - {"_op"} <= set(VpnHub.model_fields)
+    _ = model.merge_patch(
+        {"vpn_hubs": {"+": {**body, "logical_id": CLUSTER.logical_id}}},
+        resolvers=registry,
     )
 
     assert hub_list(model) == [

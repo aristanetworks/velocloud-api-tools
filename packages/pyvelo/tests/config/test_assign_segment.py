@@ -235,7 +235,7 @@ async def test_qos_rules_empty_gives_no_rules() -> None:
             rule("Other", "11111111-1111-4111-8111-111111111111"),
         ],
     ],
-    ids=["one name", "one ruleLogicalId"],
+    ids=["one name", "one rule_logical_id"],
 )
 async def test_qos_rules_with_a_repeated_name_or_id_raise(
     rules: list[dict[str, Any]],
@@ -244,10 +244,12 @@ async def test_qos_rules_with_a_repeated_name_or_id_raise(
     pipeline, _ = module_store_pipeline(state)
     before = state.plan().render()
 
-    with pytest.raises(ValueError, match="more than one rule with the"):
+    with pytest.raises(ValueError, match="more than one rule with the") as raised:
         _ = await pipeline.assign_segment(state, "Guest", qos_rules=rules)
 
     assert state.plan().render() == before
+    assert "has a name and a rule_logical_id of its own" in str(raised.value)
+    assert "ruleLogicalId" not in str(raised.value)
 
 
 async def test_an_edit_before_the_save_is_a_change_from_the_template() -> None:

@@ -193,7 +193,7 @@ def test_a_list_value_that_gives_another_alt_key_says_to_leave_it_out() -> None:
     value[1]["ruleId"] = str(uuid.uuid4())
     error = refusal(segment(), {"defaults": value})
     assert "changes ruleId of" in error.message
-    assert "Leave `ruleId` out of the item and it keeps the current one" in (
+    assert "Leave `rule_id` out of the item and it keeps the current one" in (
         error.message
     )
 

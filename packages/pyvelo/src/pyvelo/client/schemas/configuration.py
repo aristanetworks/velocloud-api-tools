@@ -257,12 +257,12 @@ class ConfigurationModuleBase(VcoModel):
         name: str = item.segment.name
         if segment_id_of(added) != segment_id:
             raise ValueError(
-                f"The entry for segment {name!r} has no `segmentId`: give its "
+                f"The entry for segment {name!r} has no `segment_id`: give its "
                 "`segment` descriptor the segment's ID."
             )
         if any(held.segment.segment_id == segment_id for held in segments):
             raise ValueError(
-                f"Segment {name!r} (segmentId {segment_id}) is already in the "
+                f"Segment {name!r} (segment_id {segment_id}) is already in the "
                 f"data of module {self.id_}."
             )
         segments.append(item)
@@ -293,7 +293,7 @@ class ConfigurationModuleBase(VcoModel):
         found = [s for s in segments if s.segment.segment_id == segment_id]
         if not found:
             raise ValueError(
-                f"The data of module {self.id_} has no segment with segmentId "
+                f"The data of module {self.id_} has no segment with segment_id "
                 f"{segment_id} to add default entries to."
             )
         segment = found[0]

@@ -32,7 +32,6 @@ from .base import (
     _effective_default,  # pyright: ignore[reportPrivateUsage]
     _field_accepts_missing,  # pyright: ignore[reportPrivateUsage]
     _field_accepts_none,  # pyright: ignore[reportPrivateUsage]
-    _field_alias,  # pyright: ignore[reportPrivateUsage]
     _field_model_type,  # pyright: ignore[reportPrivateUsage]
     _field_model_types,  # pyright: ignore[reportPrivateUsage]
     _field_names_by_key,  # pyright: ignore[reportPrivateUsage]
@@ -52,7 +51,6 @@ from .base import (
     list_item_type,
     list_kind,
     python_name,
-    wire_name,
 )
 from .fields import (
     ConfigContext,
@@ -789,12 +787,11 @@ def _refuse_profile_only(
         and model.layer() is Edge
         and field_kind(field_info).kind is Kind.PROFILE_ONLY
     ):
-        key = wire_name(type(model), name)
         raise PatchError(
-            f"{key!r} belongs to the profile: the edge layer holds none, and one "
+            f"{name!r} belongs to the profile: the edge layer holds none, and one "
             "stored there would be added to the profile's by the VCO, not "
             "replace it. Send this patch to the profile's state, and leave "
-            f"{key!r} out of an edge's",
+            f"{name!r} out of an edge's",
             path,
             "invalid_value",
         )
@@ -2818,9 +2815,7 @@ def _alt_key_advice(spec: _ListSpec, old: object, new: object) -> str:
     """
     if spec.alt_path is None or _alt_key(spec, old) == _alt_key(spec, new):
         return ""
-    field = _item_type_of(spec).fields.get(spec.alt_path)
-    name = spec.alt_path if field is None else _field_alias(field, spec.alt_path)
-    return f"Leave `{name}` out of the item and it keeps the current one. "
+    return f"Leave `{spec.alt_path}` out of the item and it keeps the current one. "
 
 
 def _copy_path(source: object, target: object, dotted: str) -> None:

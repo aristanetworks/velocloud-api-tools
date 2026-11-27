@@ -1721,8 +1721,8 @@ def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its c
     A mapping given as *data* is converted as the request would write it (a
     ``UUID`` or a ``datetime`` becomes its text), so the plan holds plain JSON
     that shares nothing with the caller's objects. A mapping has no owners to
-    compare, so it changes no ref row; a deviceSettings or QOS module with
-    segments still sends its refs as read.
+    compare, so it changes no ref row; a ``device_settings`` or
+    ``business_policy`` module with segments still sends its refs as read.
     """
     name = str(_attribute(module, "name"))
     current = data if data is not None else _attribute(module, "data")
