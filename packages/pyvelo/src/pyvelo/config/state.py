@@ -644,8 +644,12 @@ class ConfigState:
         default_factory=set, init=False, repr=False, compare=False
     )
     """The names of the profile modules a device settings write of this profile
-    may have changed since the state read them. A save writes each with a rebase:
-    it reads the version first and applies the edits to the module as it is now."""
+    may have changed since the state read them. The VCO changes them itself as
+    it stores the device settings: it rewrites QoS rule flags, and it updates
+    the versions of QoS and firewall when a segment comes into use. The client
+    sends only the device settings. A save writes each module named here with a
+    rebase: it reads the version first and applies the edits to the module as
+    it is now."""
     _modules_were_unset: bool | None = field(default=None, repr=False)
     """Whether ``modules`` was in the target config's ``model_fields_set`` when
     ``module(create=True)`` made the list where it was unset; ``None`` when the

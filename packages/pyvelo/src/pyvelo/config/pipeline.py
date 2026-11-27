@@ -288,7 +288,7 @@ _CHANGED_BY_DEVICE_SETTINGS = (
     ConfigurationModuleName.QOS,
     ConfigurationModuleName.FIREWALL,
 )
-"""The modules of a profile that a write of its device settings can change."""
+"""The modules of a profile that the VCO can change as it stores its device settings."""
 
 
 @dataclass
