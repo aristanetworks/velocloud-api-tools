@@ -564,6 +564,6 @@ def test_a_hub_service_message_names_the_hub_by_logical_id_when_it_has_no_name()
     )
 
     assert '"name": "Hub-A"' in str(named)
-    assert '"logicalId"' not in str(named)
-    assert f'"logicalId": "{logical_id}"' in str(unnamed)
+    assert '"logical_id"' not in str(named)
+    assert f'"logical_id": "{logical_id}"' in str(unnamed)
     assert '"name"' not in str(unnamed)

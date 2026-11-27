@@ -443,7 +443,7 @@ def _only_hubs_text(
     again = (
         "with the patch above"
         if any(m.kind == "add_member" for m in mending)
-        else "(one of the segment's `vpn.backHaulEdges`)"
+        else "(one of the segment's `vpn.backhaul_edges`)"
     )
     return (
         " No patch takes a hub out of the rule that names it: for "
@@ -451,7 +451,7 @@ def _only_hubs_text(
         "is the only hub of a rule that backhauls through hubs, or one of all "
         "the hubs it names, and the rule would backhaul nowhere. Make the hub a "
         f"backhaul hub again {again}; or first give the rule another hub or "
-        "change its `routePolicy`, and the next `plan()` offers the patch that "
+        "change its `route_policy`, and the next `plan()` offers the patch that "
         "takes the hub out of the rule; or delete the rule."
     )
 
@@ -464,27 +464,31 @@ class DanglingReferenceError(VcoError):
     the set it refers to has. The VCO would store it without complaint, and
     what it stands for would not work: an interface in a segment that does
     not exist, a rule that backhauls nowhere. ``references`` are the
-    references found, each with its module, path and value. A reference the
-    configuration already held as it was read is not one of them.
+    references found, each with its module (by its python name), its path (as
+    pyvelo shows it: fields by attribute name, items by what names them), its
+    value and the name of its segment. A reference the configuration already
+    held as it was read is not one of them.
     ``on_edge`` is whether the target is an Edge: the hub lists are its
     profile's, and the message says so.
 
     ``mending`` holds the patches that mend the references to a backhaul hub,
     as data: for each, a ``remove_reference`` patch (the rule stops using the
     hub) and an ``add_member`` patch (the hub becomes a backhaul hub of the
-    segment, in the profile's device settings). All ``remove_reference``
-    patches come first, then the ``add_member`` ones. The patches of one kind
-    together mend every hub reference of the error; a kind that cannot be
-    built for every one is left out whole. A reference to a segment gets no
-    patch.
+    segment, in the profile's device settings). Each names its module by its
+    python name and each field of its patch by its attribute, and applies as
+    it is given. All ``remove_reference`` patches come first, then the
+    ``add_member`` ones. The patches of one kind together mend every hub
+    reference of the error; a kind that cannot be built for every one is left
+    out whole. A reference to a segment gets no patch.
 
     ``only_hubs`` are the hub references whose rule, one that backhauls through
-    hubs (``routePolicy`` ``"backhaul"``, ``routeCfg.type`` ``"edge"``), would
+    hubs (``route_policy`` ``"backhaul"``, ``route_cfg.type_`` ``"edge"``), would
     be left with no hub if each were taken out of it: each is the only hub its
-    rule names, or one of all the hubs it names. No ``remove_reference`` patch
+    rule names, or one of all the hubs it names. They are among ``references``,
+    the same objects. No ``remove_reference`` patch
     is offered then (for any reference), and the message says to make the hub
     a backhaul hub again; or first to give the rule another hub or change its
-    ``routePolicy``, after which the next ``plan()`` offers the removal patch;
+    ``route_policy``, after which the next ``plan()`` offers the removal patch;
     or to delete the rule.
     """
 
@@ -520,7 +524,7 @@ class DanglingReferenceError(VcoError):
             )
         if "backhaul_hub" in names:
             sources.append(
-                "a backhaul hub is one of the segment's `vpn.backHaulEdges` in the "
+                "a backhaul hub is one of the segment's `vpn.backhaul_edges` in the "
                 "profile's device settings"
             )
         nowhere = (
@@ -550,11 +554,17 @@ class HublessBackhaul:
     """
 
     module: str
-    """The module name on the wire: ``QOS``."""
+    """The module the rule is in.
+
+    A place an error carries has the module's python name
+    (``business_policy``).
+    """
     path: Path
-    """The route action's path in python names, as ``Reference.path`` gives one.
+    """The route action's path, each field by its attribute name.
 
     For example, ``segments[Guest].rules[Web].action.edge_to_cloud_route_action``.
+    A place an error carries names the segment and the rule as pyvelo shows
+    them (``named_path``).
     """
     segment_name: str | None
     """The name of the segment the rule is in, when the segment has one."""
@@ -562,8 +572,8 @@ class HublessBackhaul:
     keys: tuple[str, ...] | None = field(default=None, compare=False)
     """The keys a patch to the module gives to reach the route action.
 
-    Each step by its wire name and each item by the selector that names it
-    alone. ``None`` when an item on the way has no such selector.
+    Each field by its attribute name and each item by the selector that names
+    it alone. ``None`` when an item on the way has no such selector.
     """
     deletable: bool = field(default=True, compare=False)
     """Whether a patch can delete the rule.
@@ -583,26 +593,26 @@ def _nested(keys: Sequence[str], leaf: object) -> dict[str, object]:
 def _backhaul_ways(places: Sequence[HublessBackhaul]) -> str:
     """The sentences of a ``BackhaulWithoutHubError`` that say how to mend a rule.
 
-    The patches are those of the first place that has keys; the others are
-    mended the same way.
+    The patches are those of the first place that has keys, each field by its
+    attribute name; the others are mended the same way.
     """
     first = next((p for p in places if p.keys is not None), None)
     if first is None or first.keys is None:
         text = (
             " To mend a rule, give it a hub (a backhaul hub of its segment), set "
-            'the route action\'s `routePolicy` to "auto", "direct" or "gateway", '
+            'the route action\'s `route_policy` to "auto", "direct" or "gateway", '
             "or delete the rule (a rule that is not one of the segment's default "
             "rules)."
         )
     else:
         keys = first.keys
-        added = {"_op": "add", "name": "<hub name>"}
-        hub = _nested(keys, {"routeCfg": {"backhaulEdges": {"+": added}}})
-        policy = _nested(keys, {"routePolicy": "<auto, direct or gateway>"})
+        added = {"_op": "add", "edge_name": "<hub name>"}
+        hub = _nested(keys, {"route_cfg": {"backhaul_edges": {"+": added}}})
+        policy = _nested(keys, {"route_policy": "<auto, direct or gateway>"})
         text = (
             f" To mend the rule, send one of these patches to {first.module}: to "
             "give the rule a hub (a backhaul hub of its segment: one of the "
-            "segment's `vpn.backHaulEdges` in the profile's device settings), "
+            "segment's `vpn.backhaul_edges` in the profile's device settings), "
             f"{json.dumps(hub)}; to route it another way, {json.dumps(policy)}"
         )
         if first.deletable:
@@ -662,11 +672,12 @@ class BackhaulWithoutHubError(VcoError):
     """Raised when a save would leave a QoS rule that backhauls to hubs and names none.
 
     A route action of a rule (its Edge to Edge, Edge to data center or Edge to
-    cloud action) whose ``routePolicy`` is ``"backhaul"`` and whose
-    ``routeCfg.type`` is ``"edge"`` sends its traffic to the hubs of its
-    ``routeCfg.backhaulEdges``. With none, the VCO would store a rule that
+    cloud action) whose ``route_policy`` is ``"backhaul"`` and whose
+    ``route_cfg.type_`` is ``"edge"`` sends its traffic to the hubs of its
+    ``route_cfg.backhaul_edges``. With none, the VCO would store a rule that
     backhauls nowhere. ``places`` are the route actions found, each with its
-    module, path, segment and rule. A route action that was so as the module
+    module (by its python name), its path (as pyvelo shows it), its segment
+    and its rule. A route action that was so as the module
     was read is not one of them (``ConfigState.plan()`` warns of it instead).
     """
 
@@ -675,8 +686,8 @@ class BackhaulWithoutHubError(VcoError):
     def __init__(self, places: Sequence[HublessBackhaul]) -> None:
         """The error for *places*, with a message that lists each and what to do.
 
-        The message gives the patches that mend the first, with the module
-        they go to.
+        The message gives the patches that mend the first, in attribute
+        names, with the module they go to.
         """
         self.places = tuple(places)
         lines = "\n".join(
@@ -685,8 +696,8 @@ class BackhaulWithoutHubError(VcoError):
         message = (
             f"{len(self.places)} backhaul rule(s) name no hub:\n{lines}\n"
             "Each sends its traffic by backhaul and names no hub to send it to: "
-            'its `routePolicy` is "backhaul", its `routeCfg.type` is "edge" and '
-            "its `routeCfg.backhaulEdges` is empty. The save is refused because "
+            'its `route_policy` is "backhaul", its `route_cfg.type_` is "edge" and '
+            "its `route_cfg.backhaul_edges` is empty. The save is refused because "
             "the VCO would store a rule that backhauls nowhere."
         )
         super().__init__(message + _backhaul_ways(self.places))

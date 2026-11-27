@@ -1,14 +1,18 @@
 """The check that a QoS rule that backhauls to hubs names a hub.
 
-A route action of a rule (``action.edge2EdgeRouteAction``,
-``edge2DataCenterRouteAction`` or ``edge2CloudRouteAction``) whose
-``routePolicy`` is ``"backhaul"`` and whose ``routeCfg.type`` is ``"edge"`` is a
-hub backhaul: it sends its traffic to the hubs of its ``routeCfg.backhaulEdges``.
-With none, the VCO stores a rule that backhauls nowhere. ``ConfigState.plan()``
-refuses one that the edits made so (``BackhaulWithoutHubError``) and warns of
-one that was so as read. Each of the three route actions is checked, whatever
-the rule's ``routeType`` says; ``backhaulEdgesAutoSelection`` does not stand in
-for a hub.
+A route action of a rule (``action.edge_to_edge_route_action``,
+``edge_to_data_center_route_action`` or ``edge_to_cloud_route_action``) whose
+``route_policy`` is ``"backhaul"`` and whose ``route_cfg.type_`` is ``"edge"``
+is a hub backhaul: it sends its traffic to the hubs of its
+``route_cfg.backhaul_edges``. With none, the VCO stores a rule that backhauls
+nowhere. ``ConfigState.plan()`` refuses one that the edits made so
+(``BackhaulWithoutHubError``) and warns of one that was so as read. Each of the
+three route actions is checked, whatever the rule's ``route_type`` says;
+``backhaul_edges_auto_selection`` does not stand in for a hub.
+
+The check finds a place under the VCO's name of its module, with the rule
+named by its key. The places the error carries and the warnings name the
+module by its python name and give the path as pyvelo shows it.
 """
 
 import dataclasses
@@ -17,6 +21,7 @@ from typing import Final, TypeGuard
 
 from pydantic import MISSING
 
+from pyvelo.client.enums.configuration import python_module_name
 from pyvelo.client.exceptions import BackhaulWithoutHubError, HublessBackhaul
 from pyvelo.client.models.configuration.qos.rule import (
     QosRule,
@@ -29,6 +34,7 @@ from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import VcoModel, unwrap
 from pyvelo.core.base import field_models, is_list
 from pyvelo.core.fields import get_fixed_list
+from pyvelo.core.names import named_path
 from pyvelo.core.rebase import Path
 from pyvelo.core.references import Reference, patch_keys, segment_name
 from pyvelo.core.walk import can_hold, walk_fields
@@ -77,8 +83,10 @@ def _deletable(segment: VcoModel | None, action_path: Path) -> bool:
 def hubless_backhauls(module: str, data: VcoModel) -> tuple[HublessBackhaul, ...]:
     """Each route action of a rule in *data* that backhauls to hubs and names none.
 
-    *data* is the data of the module named *module*. The places come without
-    their patch keys. A module that holds no rule gives none.
+    *data* is the data of the module named *module*: each place has that
+    name as it is given, and its path as the walk found it, the segment and
+    the rule by their keys. The places come without their patch keys. A module
+    that holds no rule gives none.
     """
     found: list[HublessBackhaul] = []
     for site in walk_fields(
@@ -155,9 +163,16 @@ def check_backhaul_hubs(
     left as it is with a ``backhaul_without_hub_kept`` warning; any other
     raises ``BackhaulWithoutHubError``, which names them all.
 
-    The path names the segment and the rule by their keys (a rule by its
-    name), so a rule that is renamed is a new rule, and
-    one that takes the name of a rule removed is that rule.
+    The two are matched by the path as the walk found it, which names the
+    segment and the rule by their keys (a rule by its name), so a rule that is
+    renamed is a new rule, and one that takes the name of a rule removed is
+    that rule.
+
+    A place the error carries, and a warning, name the module by its python
+    name and give the path as pyvelo shows it in the data as edited
+    (``named_path``). A refused place has the keys a patch reaches it by, each
+    field by its attribute name; a warning has the module in ``module``, the
+    path in ``path`` and the segment's name in ``segment``.
     """
     refused: list[HublessBackhaul] = []
     kept: list[HublessBackhaul] = []
@@ -176,23 +191,31 @@ def check_backhaul_hubs(
             else set()
         )
         for place in found:
+            # Matched by the path as found; shown only after.
+            shown = dataclasses.replace(
+                place,
+                module=python_module_name(place.module),
+                path=named_path(place.path, edited),
+            )
             if place.path in held:
-                kept.append(place)
+                kept.append(shown)
             else:
                 refused.append(
-                    dataclasses.replace(place, keys=patch_keys(edited, place.path))
+                    dataclasses.replace(shown, keys=patch_keys(edited, place.path))
                 )
     if refused:
         raise BackhaulWithoutHubError(refused)
     return tuple(
         ValidationWarning(
-            path=f"{place.module}: {place.path}",
+            path=place.path,
             message=(
                 f"{place.module} {place.path}: rule {place.rule_name!r} sends its "
                 "traffic by backhaul and names no hub (it was so as read; the save "
                 "leaves it)"
             ),
             code="backhaul_without_hub_kept",
+            module=place.module,
+            segment=place.segment_name,
         )
         for place in kept
     )

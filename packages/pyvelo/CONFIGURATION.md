@@ -851,7 +851,17 @@ firewall: update
   the target, on every save and with `validate=False` too, and raises
   `DanglingReferenceError` (from `pyvelo.config`), naming each value, its
   module and its path, for a value the edit adds, or one whose segment or hub
-  the edit removes. An edge's values are checked against its profile's device
+  the edit removes. The module is named by its python name, the path is in
+  the form every path has (fields by attribute, items by name) and a hub's
+  segment is named too, in the message and in `error.references` (`module`,
+  `path`, `segment_name`):
+
+  ```text
+  1 reference(s) name nothing:
+    business_policy segments[Guest].rules[Web].action.edge_to_edge_route_action.route_cfg.backhaul_edges[Hub-A].edge_logical_id: a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1 is not a backhaul_hub of segment Guest
+  ```
+
+  An edge's values are checked against its profile's device
   settings as read as well as its own. `apply` accepts an edit that leaves such
   a value, so that two edits that are only right together go in either order;
   `plan()`, `save` and a dry run refuse the state until it is mended. For a
@@ -860,7 +870,14 @@ firewall: update
   that says what the patch does), `target_type`, `module`, `patch`, `segment`
   and `path`. A `remove_reference` patch takes the hub out of the rule that
   names it; an `add_member` patch makes it a backhaul hub of the rule's
-  segment. The `remove_reference` patches come first, and the patches of one
+  segment. `module` is the module's python name and `patch` names each field
+  by its attribute: for the reference above, `{"segments": {"Guest": {"rules":
+  {"Web": {"action": {"edge_to_edge_route_action": {"route_cfg":
+  {"backhaul_edges": {"Hub-A": {"_op": "delete"}}}}}}}}}}` for
+  `business_policy`, and `{"segments": {"Guest": {"vpn": {"enabled": true,
+  "hub_edges": {"enabled": true, "vpn_hubs": {"+": {"_op": "add", "name":
+  "Hub-A"}}}, "backhaul_edges": {"+": {"_op": "add", "name": "Hub-A"}}}}}}`
+  for `device_settings`. The `remove_reference` patches come first, and the patches of one
   kind together mend every hub reference of the error: send those of one kind.
   No `remove_reference` patch is offered, for any reference of the error, when
   those patches together would leave a rule that backhauls through hubs
@@ -869,7 +886,7 @@ firewall: update
   `BackhaulWithoutHubError` below). `error.only_hubs` then holds those
   references, as `Reference` objects, and the message says so: make the hub a
   backhaul hub again with the `add_member` patch; or first give the rule
-  another hub or change its `routePolicy`, and the next `plan()` offers the
+  another hub or change its `route_policy`, and the next `plan()` offers the
   `remove_reference` patch again, which mends the reference; or delete the
   rule, which takes the reference with it. Emptying a rule that does not
   backhaul through hubs withholds nothing: the removal patches are withheld,
@@ -886,7 +903,10 @@ firewall: update
   with `pipeline.revert(state, module=...)`. A value that named nothing as read, at the same path, is left as it is: a
   `reference_kept` warning in `ConfigPlan.check_warnings` (also in
   `ConfigPlan.warnings` and `SaveResult.warnings`), and a
-  `warning: <message>` line in `render()`. `client.update_module` writes one
+  `warning: <message>` line in `render()`. The warning's `module` is the
+  module's python name, its `path` the value's path within that module
+  (`lan.networks[Guests].segment_id`), and its `segment` the name of a hub
+  reference's segment. `client.update_module` writes one
   module and does not run the check.
 - A QoS rule's route action (`edge2EdgeRouteAction`,
   `edge2DataCenterRouteAction` or `edge2CloudRouteAction`, whatever the rule's
@@ -898,26 +918,28 @@ firewall: update
   the references, and raises `BackhaulWithoutHubError` (from `pyvelo.config`)
   for a route action the edits leave with no hub: a patch that deletes its
   last hub, a rule added with none, a rule set to backhaul with none.
-  `error.places` names each route action, with its `module`, `path`,
-  `segment_name` and `rule_name`; the message gives the patches that mend the
-  first, with the module they go to, and says that the others are mended the
-  same way. `apply` accepts the edit, as for a reference. After
+  `error.places` names each route action, with its `module` (the python
+  name), `path`, `segment_name` and `rule_name`; the message gives the patches
+  that mend the first, each field by its attribute (it calls the fields above
+  `route_policy`, `route_cfg.type_` and `route_cfg.backhaul_edges`), with the
+  module they go to, and says that the others are mended the same way. `apply` accepts the edit, as for a reference. After
   `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge2CloudRouteAction":
   {"routeCfg": {"backhaulEdges": {"Hub-A": {"_op": "delete"}}}}}}}}}}` takes the
   only hub out of the rule `Web`, the error begins:
 
   ```text
   1 backhaul rule(s) name no hub:
-    QOS segments[Guest].rules[Web].action.edge_to_cloud_route_action: rule 'Web' of segment 'Guest'
+    business_policy segments[Guest].rules[Web].action.edge_to_cloud_route_action: rule 'Web' of segment 'Guest'
   ```
 
-  Any one of these, sent to `QOS`, mends it: give the rule a hub that is a
-  backhaul hub of its segment (one of the segment's `vpn.backHaulEdges`), by
-  name or `edgeLogicalId`, with
-  `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge2CloudRouteAction":
-  {"routeCfg": {"backhaulEdges": {"+": {"_op": "add", "name": "Hub-B"}}}}}}}}}}`;
+  Any one of these, sent to `business_policy`, mends it: give the rule a hub
+  that is a backhaul hub of its segment (one of the segment's
+  `vpn.backhaul_edges`), by `edge_name` or `edge_logical_id`, with
+  `{"segments": {"Guest": {"rules": {"Web": {"action":
+  {"edge_to_cloud_route_action": {"route_cfg": {"backhaul_edges": {"+":
+  {"_op": "add", "edge_name": "Hub-B"}}}}}}}}}}`;
   route it another way with `{"segments": {"Guest": {"rules": {"Web":
-  {"action": {"edge2CloudRouteAction": {"routePolicy": "gateway"}}}}}}}`
+  {"action": {"edge_to_cloud_route_action": {"route_policy": "gateway"}}}}}}}`
   (`"auto"`, `"direct"` or `"gateway"`); or delete the rule with
   `{"segments": {"Guest": {"rules": {"Web": {"_op": "delete"}}}}}`. A rule of
   the segment's `defaults` cannot be deleted: when the first rule listed is one,
@@ -925,12 +947,15 @@ firewall: update
   rule that is not a default rule can be deleted too); when the first rule
   listed can be deleted, the default rules listed after it are named as rules
   that cannot be deleted and take the first two ways only. Or take the
-  module's edits back with `pipeline.revert(state, module="QOS")`. A route
-  action that had no hub as read, at the same path (the same route action of
-  the same rule of the same segment), is left as it is: a
+  module's edits back with `pipeline.revert(state, module="business_policy")`.
+  A route action that had no hub as read, at the same path (the same route
+  action of the same rule of the same segment), is left as it is: a
   `backhaul_without_hub_kept` warning in `ConfigPlan.check_warnings` (also in
   `ConfigPlan.warnings` and `SaveResult.warnings`), and a `warning: <message>`
-  line in `render()`.
+  line in `render()`. The warning's `module` is `business_policy`, its `path`
+  the route action's path within that module
+  (`segments[Guest].rules[Web].action.edge_to_cloud_route_action`) and its
+  `segment` the segment's name.
 - A hub added to or removed from a profile segment's hub, bridge or backhaul
   list has role steps (`ConfigPlan.steps`), which `render()` shows right before
   the device settings block and a save sends right before it writes the device

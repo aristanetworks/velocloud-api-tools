@@ -6,7 +6,8 @@ stops using the hub (a ``remove_reference`` patch, to the module that holds the
 rule), or the hub becomes a backhaul hub of the segment (an ``add_member``
 patch, to the profile's device settings). ``hub_reference_mending`` builds both
 for every hub reference ``ConfigState.plan()`` refuses, and
-``DanglingReferenceError.mending`` carries them. No patch takes the last hub out
+``DanglingReferenceError.mending`` carries them. Each patch names its module by
+its python name and each field by its attribute. No patch takes the last hub out
 of a rule that backhauls through hubs: a rule that backhauls nowhere mends
 nothing.
 """
@@ -14,6 +15,7 @@ nothing.
 from collections.abc import Collection, Mapping, Sequence
 from typing import Literal
 
+from pyvelo.client.enums.configuration import python_module_name
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.config.backhaul_check import left_without_hub
 from pyvelo.core import VcoModel, unwrap
@@ -52,7 +54,11 @@ def _removal(
     edited: Mapping[str, VcoModel],
     target_type: Literal["edge", "profile"],
 ) -> MendingPatch | None:
-    """The patch that takes the hub of *reference* out of its rule, or ``None``."""
+    """The patch that takes the hub of *reference* out of its rule, or ``None``.
+
+    *reference* is as the check found it: its module, by the VCO's name, is
+    looked up in *edited*. The patch names that module by its python name.
+    """
     data = edited.get(reference.module)
     patch = removal_patch(data, reference) if data is not None else None
     if patch is None:
@@ -66,7 +72,7 @@ def _removal(
             f"{segment!r}"
         ),
         target_type=target_type,
-        module=reference.module,
+        module=python_module_name(reference.module),
         patch=patch,
     )
 
@@ -99,7 +105,8 @@ def hub_reference_mending(
 ) -> tuple[MendingPatch, ...]:
     """The patches that mend the references to a backhaul hub among *dangling*.
 
-    *edited* is the target's module data as edited, by module name;
+    *dangling* are the references as the check found them, and *edited* is the
+    target's module data as edited, by the VCO's name of each module;
     *hub_lists* the logical IDs in each segment's Branch-to-Hub list, by
     segment ID (``hub_list_members`` of the device settings that hold the hub
     lists: the profile's); *target_type* the configuration the references are

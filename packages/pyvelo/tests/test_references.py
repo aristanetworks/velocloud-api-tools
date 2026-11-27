@@ -353,6 +353,21 @@ def test_the_text_of_a_reference() -> None:
     )
 
 
+def test_the_text_of_a_reference_names_its_segment_where_it_has_the_name() -> None:
+    reference = Reference(
+        "business_policy",
+        Path(("segments", Key("Guest"), "rules", Key("Web"), "edge_logical_id")),
+        HUB_B_ID,
+        "backhaul_hub",
+        2,
+        "Guest",
+    )
+    assert reference_text(reference) == (
+        f"business_policy segments[Guest].rules[Web].edge_logical_id: {HUB_B_ID} "
+        "is not a backhaul_hub of segment Guest"
+    )
+
+
 def test_the_text_of_a_reference_to_a_global_set_has_no_segment() -> None:
     reference = Reference(
         "deviceSettings",
@@ -382,7 +397,7 @@ def test_the_error_lists_every_reference() -> None:
     for reference in findings.dangling:
         assert reference_text(reference) in text
     assert "refused" in text
-    assert "vpn.backHaulEdges" in text
+    assert "vpn.backhaul_edges" in text
     assert "segments" in text
     with pytest.raises(DanglingReferenceError):
         raise error
@@ -411,9 +426,25 @@ def test_the_sources_are_a_sentence_of_their_own() -> None:
     assert (
         ". Where each comes from: a segment is one of the device settings "
         "`segments` of the profile; a backhaul hub is one of the segment's "
-        "`vpn.backHaulEdges` in the profile's device settings." in str(both)
+        "`vpn.backhaul_edges` in the profile's device settings." in str(both)
     )
     assert "reference; " not in str(both)
+
+
+def test_with_no_member_patch_the_only_hubs_sentence_names_the_list_by_attribute() -> (
+    None
+):
+    reference = Reference("business_policy", Path(("x",)), "x", "backhaul_hub", 0)
+
+    text = str(DanglingReferenceError([reference], only_hubs=[reference]))
+
+    assert (
+        "Make the hub a backhaul hub again (one of the segment's "
+        "`vpn.backhaul_edges`); or first give the rule another hub or change its "
+        "`route_policy`, and the next `plan()` offers"
+    ) in text
+    for wire in ("backHaulEdges", "routePolicy"):
+        assert wire not in text
 
 
 # -- the patches that mend a hub reference ------------------------------------------
@@ -441,8 +472,8 @@ def _dangling_hub(
 
 def _out_of_the_rule(hub: str, segment: str = GUEST[1]) -> dict[str, Any]:
     """The patch that deletes *hub* from the backhaul entries of rule ``Web``."""
-    entries = {"backhaulEdges": {hub: {"_op": "delete"}}}
-    action = {"edge2EdgeRouteAction": {"routeCfg": entries}}
+    entries = {"backhaul_edges": {hub: {"_op": "delete"}}}
+    action = {"edge_to_edge_route_action": {"route_cfg": entries}}
     return {"segments": {segment: {"rules": {"Web": {"action": action}}}}}
 
 
@@ -476,6 +507,17 @@ def test_there_is_no_removal_patch_for_a_path_that_names_no_item() -> None:
     parts[parts.index(Key("Web"))] = Key("Nope")
 
     assert removal_patch(data, dataclasses.replace(reference, path=Path(parts))) is None
+
+
+def test_each_patch_names_its_module_by_its_python_name() -> None:
+    data, dangling = _dangling_hub()
+
+    mending = _mending(data, dangling)
+
+    assert [(m.kind, m.module) for m in mending] == [
+        ("remove_reference", "business_policy"),
+        ("add_member", "device_settings"),
+    ]
 
 
 def test_the_member_patch_makes_the_hub_a_backhaul_hub_of_its_segment() -> None:

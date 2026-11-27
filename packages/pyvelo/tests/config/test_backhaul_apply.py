@@ -130,7 +130,7 @@ async def test_a_hub_and_its_rule_in_one_save_is_refused() -> None:
 
     assert (error.value.hub, error.value.segment) == (HUB_B.name, GLOBAL[1])
     assert "save the hub first" in str(error.value)
-    assert '"vpnHubs": {"+": {"_op": "add", "name": "Hub-B"}}' in str(error.value)
+    assert '"vpn_hubs": {"+": {"_op": "add", "name": "Hub-B"}}' in str(error.value)
     assert backhaul_of(state.profile.qos) == []
     assert state.profile.qos.model_dump() == before
     (segment,) = state.profile.device_settings.segments

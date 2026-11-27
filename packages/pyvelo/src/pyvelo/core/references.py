@@ -24,7 +24,7 @@ from typing import cast
 
 from pydantic import MISSING
 
-from .base import VcoModel, is_dict, is_list, wire_name
+from .base import VcoModel, is_dict, is_list
 from .fields import get_key_spec, get_provides, get_refers_to
 from .merge import item_selector
 from .owned import unwrap
@@ -45,9 +45,19 @@ class Reference:
     """A value in a module's data that names a member of a set."""
 
     module: str
-    """The module name on the wire: ``deviceSettings``, ``QOS``, ``firewall``."""
+    """The module the value is in, by the name ``references`` was given.
+
+    The check works with the VCO's name (``deviceSettings``, ``QOS``). A
+    reference an error or a warning carries has the module's python name
+    (``device_settings``, ``business_policy``).
+    """
     path: Path
-    """The field's path in python names."""
+    """The field's path, each field by its attribute name.
+
+    The walk names an item of a keyed list by its key and any other by its
+    position. A reference an error or a warning carries names each item as
+    pyvelo shows it (``named_path``): a hub by its name.
+    """
     value: object
     set_name: str
     """The name of the set the value is a member of."""
@@ -260,16 +270,23 @@ def check_references(
 def reference_text(reference: Reference) -> str:
     """A reference as one line.
 
-    The line is ``<module> <path>: <value> is not a <set> of segment <ID>``.
+    The line is ``<module> <path>: <value> is not a <set> of segment <name>``.
 
-    The tail ``of segment <ID>`` is left out for a set of the module.
+    The segment is given by its name, or by its ID when the reference has no
+    name for it. The tail ``of segment <name>`` is left out for a set of the
+    module.
     """
     text = (
         f"{reference.module} {reference.path}: {reference.value} "
         f"is not a {reference.set_name}"
     )
     if reference.segment_id is not None:
-        text += f" of segment {reference.segment_id}"
+        segment = (
+            reference.segment_id
+            if reference.segment_name is None
+            else reference.segment_name
+        )
+        text += f" of segment {segment}"
     return text
 
 
@@ -300,9 +317,10 @@ def _patch_keys(
 ) -> tuple[list[str], object, bool] | None:
     """The patch keys that lead along *parts* from *data*.
 
-    Also returns what they lead to, and whether the last key is an item
-    selector. ``None`` when a part names nothing of the data, or an item has no
-    selector that names it alone.
+    A field is given by its attribute name, an item by its selector. Also
+    returns what they lead to, and whether the last key is an item selector.
+    ``None`` when a part names nothing of the data, or an item has no selector
+    that names it alone.
     """
     keys: list[str] = []
     current: object = data
@@ -316,7 +334,7 @@ def _patch_keys(
             and part in type(current).model_fields
         ):
             return None
-        keys.append(wire_name(type(current), part))
+        keys.append(part)
         held: object = getattr(current, part)
         following = parts[index + 1] if index + 1 < len(parts) else None
         if not isinstance(following, (Key, int)):
@@ -341,7 +359,7 @@ def removal_patch(data: VcoModel, reference: Reference) -> dict[str, object] | N
     """The patch to *data* that deletes the list item holding *reference*'s field.
 
     *data* is the data the reference was found in, of its module. The patch
-    gives each step by its wire name and each item by the selector a patch
+    gives each step by its attribute name and each item by the selector a patch
     names it by (``item_selector``), and ends on ``{"_op": "delete"}``: for a
     backhaul entry of a QoS rule, the patch that takes the hub out of the rule.
     ``None`` when the field's holder is no list item, or a step to it is not
@@ -363,8 +381,8 @@ def removal_patch(data: VcoModel, reference: Reference) -> dict[str, object] | N
 def patch_keys(data: VcoModel, path: Path) -> tuple[str, ...] | None:
     """The keys a patch to *data* gives to reach what *path* names.
 
-    Each step by its wire name and each item by the selector a patch names it
-    by (``item_selector``), as ``removal_patch`` gives them. ``None`` when a
+    Each step by its attribute name and each item by the selector a patch names
+    it by (``item_selector``), as ``removal_patch`` gives them. ``None`` when a
     step is not found in *data* or an item has no selector that names it alone.
     """
     found = _patch_keys(data, path.parts)

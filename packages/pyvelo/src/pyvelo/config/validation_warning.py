@@ -11,6 +11,16 @@ class ValidationWarning:
     """
 
     path: str
+    """Where the thing is.
+
+    In a warning that names its ``module``, the path within that module's data
+    as pyvelo shows it (a ``Path``): fields by attribute name, items by what
+    names them.
+    """
     message: str
     code: str
     severity: str = "warning"
+    module: str | None = None
+    """The module the warning is about, by its python name, where it is about one."""
+    segment: str | None = None
+    """The name of the segment the warning is about, where it is about one."""

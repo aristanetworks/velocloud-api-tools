@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import copy
+import dataclasses
 import json
 import weakref
 from collections.abc import Collection, Mapping, Sequence
@@ -81,7 +82,7 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 from pyvelo.core.layers import Edge, Effective, Profile
-from pyvelo.core.names import named_value
+from pyvelo.core.names import named_path, named_value
 from pyvelo.core.rebase import (
     ItemMove,
     ItemPlace,
@@ -90,6 +91,7 @@ from pyvelo.core.rebase import (
     raw_changes,
 )
 from pyvelo.core.references import (
+    Reference,
     can_provide,
     check_references,
     provided,
@@ -1230,6 +1232,10 @@ class ConfigState:
         target's device settings as edited, or for an edge of the profile's as read);
         returns a ``reference_kept`` warning for one that named nothing as read and does
         still.
+
+        The check and the patches work with each reference as it was found. The error
+        and the warnings carry it as pyvelo shows it (``_shown_reference``): the
+        references of the error and its ``only_hubs`` are the same objects.
         """
         level = self._level()
         profile_models = self._profile_as_read() if level is ConfigContext.EDGE else []
@@ -1248,8 +1254,8 @@ class ConfigState:
             *(provided(model) for model in profile_models),
         )
         findings = check_references(targets, sets_now, sets_as_read)
+        edited_by_name = {name: edited for name, edited, _ in targets}
         if findings.dangling:
-            edited_by_name = {name: edited for name, edited, _ in targets}
             hub_lists = (
                 next(
                     (m for m in profile_models if isinstance(m, DeviceSettingsData)),
@@ -1259,28 +1265,38 @@ class ConfigState:
                 else edited_by_name.get(ConfigurationModuleName.DEVICE_SETTINGS)
             )
             only_hubs = left_without_hub(findings.dangling, edited_by_name)
-            raise DanglingReferenceError(
+            mending = hub_reference_mending(
                 findings.dangling,
-                on_edge=level is ConfigContext.EDGE,
-                mending=hub_reference_mending(
-                    findings.dangling,
-                    edited_by_name,
-                    hub_list_members(hub_lists),
-                    target_type=self.target_type,
-                    only_hubs=only_hubs,
-                ),
+                edited_by_name,
+                hub_list_members(hub_lists),
+                target_type=self.target_type,
                 only_hubs=only_hubs,
             )
+            # A reference is matched by its object, not its value: two are equal
+            # where they hold one value at one path.
+            shown = {
+                id(reference): _shown_reference(reference, edited_by_name)
+                for reference in findings.dangling
+            }
+            raise DanglingReferenceError(
+                tuple(shown.values()),
+                on_edge=level is ConfigContext.EDGE,
+                mending=mending,
+                only_hubs=tuple(shown[id(reference)] for reference in only_hubs),
+            )
+        kept = [_shown_reference(r, edited_by_name) for r in findings.kept]
         return tuple(
             ValidationWarning(
-                path=f"{reference.module}: {reference.path}",
+                path=reference.path,
                 message=(
                     f"{reference_text(reference)} (it was so as read; the save "
                     "leaves it)"
                 ),
                 code="reference_kept",
+                module=reference.module,
+                segment=reference.segment_name,
             )
-            for reference in findings.kept
+            for reference in kept
         )
 
     def _level(self) -> ConfigContext:
@@ -1490,6 +1506,23 @@ class ConfigState:
                 )
             changes.extend(_provider_changes(module))
         return changes
+
+
+def _shown_reference(reference: Reference, edited: Mapping[str, VcoModel]) -> Reference:
+    """*reference* as an error or a warning carries it.
+
+    *reference* is as the check found it in the data as edited, and *edited*
+    is that data of each module, by the VCO's name. The module is given by its
+    python name, and the path as pyvelo shows it in the data it was found in
+    (``named_path``): a hub entry by the hub's name, where its key is the
+    hub's logical ID. The segment keeps its name, and the holder is the same
+    object.
+    """
+    return dataclasses.replace(
+        reference,
+        module=python_module_name(reference.module),
+        path=named_path(reference.path, edited.get(reference.module)),
+    )
 
 
 def _added_segment_changes(

@@ -204,7 +204,10 @@ async def test_a_rule_on_a_hub_with_a_service_but_not_listed_for_backhaul_dangle
         _ = state.plan()
 
     (reference,) = error.value.references
-    assert (reference.module, reference.set_name) == ("QOS", "backhaul_hub")
+    assert (reference.module, reference.set_name) == (
+        "business_policy",
+        "backhaul_hub",
+    )
 
 
 async def test_the_save_of_a_profile_rule_writes_the_row_the_store_keeps() -> None:

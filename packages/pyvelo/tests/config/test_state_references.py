@@ -41,10 +41,11 @@ from pyvelo.client.schemas.configuration import (
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.state import ConfigState
-from pyvelo.core import add, backhaul_hub_mending, delete
+from pyvelo.core import Path, add, backhaul_hub_mending, delete
 from pyvelo.testing import MockVcoClient, make_module_json
 from refs_helpers import QOS_ID, segment_row
 from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
+from shown_paths import round_trips
 
 DS = "deviceSettings"
 QOS = "QOS"
@@ -159,7 +160,11 @@ async def test_a_new_vlan_naming_no_segment_raises() -> None:
         _ = state.plan()
 
     (reference,) = error.value.references
-    assert (reference.module, reference.value, reference.set_name) == (DS, 9, "segment")
+    assert (reference.module, reference.value, reference.set_name) == (
+        "device_settings",
+        9,
+        "segment",
+    )
     assert "lan.networks" in str(error.value)
 
 
@@ -181,7 +186,14 @@ async def test_a_vlan_left_as_read_on_a_missing_segment_warns() -> None:
 
     (warning,) = plan.warnings
     assert warning.code == "reference_kept"
-    assert warning.path.startswith("deviceSettings: lan.networks")
+    assert (warning.module, warning.path, warning.segment) == (
+        "device_settings",
+        "lan.networks[renamed].segment_id",
+        None,
+    )
+    assert warning.message.startswith(
+        "device_settings lan.networks[renamed].segment_id: "
+    )
     assert "9 is not a segment" in warning.message
     assert "it was so as read" in warning.message
     assert f"warning: {warning.message}" in plan.render()
@@ -255,6 +267,42 @@ async def hub_profile_of(
     )
 
 
+async def test_a_hub_reference_left_as_read_warns_in_names() -> None:
+    state = await hub_profile_of(
+        hub_profile_ds(),  # Hub-A alone is a backhaul hub of Guest
+        guest_rule_qos(HUB_B),
+        hub_refs(HUB_A, HUB_B, segment=GUEST),
+        qos_refs={
+            BACKHAUL_REF: backhaul_row(
+                HUB_B,
+                service_id=SERVICE_ID + 1,
+                service_logical_id=SERVICE,
+                segment=GUEST,
+                module_id=QOS_ID,
+            )
+        },
+    )
+
+    warnings = [w for w in state.plan().warnings if w.code == "reference_kept"]
+
+    (warning,) = warnings
+    path = (
+        "segments[Guest].rules[Web].action.edge_to_edge_route_action.route_cfg"
+        ".backhaul_edges[Hub-B].edge_logical_id"
+    )
+    assert (warning.module, warning.path, warning.segment) == (
+        "business_policy",
+        path,
+        "Guest",
+    )
+    assert isinstance(warning.path, Path)
+    round_trips(warning.path)
+    assert warning.message == (
+        f"business_policy {path}: {HUB_B.logical_id} is not a backhaul_hub of "
+        "segment Guest (it was so as read; the save leaves it)"
+    )
+
+
 async def test_removing_a_hub_a_rule_uses_raises_and_names_the_rule() -> None:
     state = await hub_profile_of(
         hub_profile_ds(),
@@ -294,7 +342,10 @@ async def test_removing_a_hub_a_rule_uses_raises_and_names_the_rule() -> None:
         _ = state.plan()
 
     (reference,) = error.value.references
-    assert (reference.module, reference.set_name) == (QOS, "backhaul_hub")
+    assert (reference.module, reference.set_name) == (
+        "business_policy",
+        "backhaul_hub",
+    )
     assert reference.segment_id == GUEST[0]
     assert "rules[Web]" in str(error.value)
     assert not error.value.on_edge
@@ -331,7 +382,10 @@ async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile() -> None:
         _ = state.plan()
 
     (reference,) = error.value.references
-    assert (reference.module, reference.value) == (QOS, uuid.UUID(HUB_B.logical_id))
+    assert (reference.module, reference.value) == (
+        "business_policy",
+        uuid.UUID(HUB_B.logical_id),
+    )
     # The hub lists are the profile's: the advice names its segment and hub.
     assert error.value.on_edge
     assert "This is an Edge" in str(error.value)
@@ -341,7 +395,7 @@ async def test_an_edge_rule_must_name_a_backhaul_hub_of_the_profile() -> None:
     assert (remove.kind, remove.target_type, remove.module) == (
         "remove_reference",
         "edge",
-        QOS,
+        "business_policy",
     )
     assert member == backhaul_hub_mending(GLOBAL[1], HUB_B.name, in_hub_list=True)
     await patch(state, remove.module, remove.patch)

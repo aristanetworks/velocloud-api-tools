@@ -25,7 +25,9 @@ class MendingPatch:
     (``"edge"`` or ``"profile"``, as ``ConfigState.target_type`` names it).
     ``module``, ``patch``, ``segment`` and ``path`` are the keyword arguments of
     the ``apply`` call that sends the patch; a patch given in full leaves
-    ``segment`` and ``path`` as ``None``.
+    ``segment`` and ``path`` as ``None``. ``module`` is the module's python name
+    (``device_settings``, ``business_policy``), and ``patch`` names each field
+    by its attribute.
     """
 
     kind: MendingKind
@@ -45,23 +47,24 @@ def backhaul_hub_mending(
     A backhaul hub is a hub of the segment too, so the patch adds the hub to the
     segment's Branch-to-Hub list as well as to its backhaul list, and turns on
     what a segment with hubs needs. The patch is for the profile's device
-    settings and gives the hub by its name, or by its logical ID when
-    *by_logical_id* is true. With *in_hub_list* (the hub is in the
+    settings (``module`` is their python name, ``device_settings``), names each
+    field by its attribute, and gives the hub by its name, or by its logical ID
+    when *by_logical_id* is true. With *in_hub_list* (the hub is in the
     Branch-to-Hub list already, where an add would be refused as a duplicate)
     the patch leaves that list alone.
     """
-    key = "logicalId" if by_logical_id else "name"
+    key = "logical_id" if by_logical_id else "name"
     vpn: dict[str, object] = {"enabled": True}
     if not in_hub_list:
-        vpn["edgeToEdgeHub"] = {
+        vpn["hub_edges"] = {
             "enabled": True,
-            "vpnHubs": {"+": {"_op": "add", key: hub}},
+            "vpn_hubs": {"+": {"_op": "add", key: hub}},
         }
-    vpn["backHaulEdges"] = {"+": {"_op": "add", key: hub}}
+    vpn["backhaul_edges"] = {"+": {"_op": "add", key: hub}}
     return MendingPatch(
         kind="add_member",
         does=f"Make {hub!r} a backhaul hub of segment {segment!r}",
         target_type="profile",
-        module="deviceSettings",
+        module="device_settings",
         patch={"segments": {segment: {"vpn": vpn}}},
     )

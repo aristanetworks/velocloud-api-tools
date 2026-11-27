@@ -52,6 +52,7 @@ from pyvelo.core import add, backhaul_hub_mending, delete
 from pyvelo.testing import ModuleStore
 from refs_helpers import CONFIG, DS_ID, QOS_ID, segment_row
 from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
+from shown_paths import round_trips
 
 UPDATE = "configuration/updateConfigurationModule"
 DISABLE_HUB = "edge/disableEdgeForEdgeHub"
@@ -118,6 +119,44 @@ async def send(state: ConfigState, mending: MendingPatch) -> None:
     )
 
 
+LINE = (
+    "  business_policy segments[Guest].rules[Web].action.edge_to_edge_route_action"
+    ".route_cfg.backhaul_edges[Hub-A].edge_logical_id: "
+    "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1 is not a backhaul_hub of segment Guest"
+)
+TAKE_OUT = {
+    "segments": {
+        "Guest": {
+            "rules": {
+                "Web": {
+                    "action": {
+                        "edge_to_edge_route_action": {
+                            "route_cfg": {
+                                "backhaul_edges": {"Hub-A": {"_op": "delete"}}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+PUT_BACK = {
+    "segments": {
+        "Guest": {
+            "vpn": {
+                "enabled": True,
+                "hub_edges": {
+                    "enabled": True,
+                    "vpn_hubs": {"+": {"_op": "add", "name": "Hub-A"}},
+                },
+                "backhaul_edges": {"+": {"_op": "add", "name": "Hub-A"}},
+            }
+        }
+    }
+}
+
+
 async def test_apply_accepts_the_removal_and_plan_refuses_with_both_patches() -> None:
     state = await rule_uses_hub()
     await edit(state, DS, FROM_BOTH_LISTS)  # accepted: plan() is the judge
@@ -128,15 +167,31 @@ async def test_apply_accepts_the_removal_and_plan_refuses_with_both_patches() ->
     assert (remove.kind, remove.target_type, remove.module) == (
         "remove_reference",
         "profile",
-        QOS,
+        "business_policy",
     )
-    assert remove.patch == OUT_OF_THE_RULE
+    assert remove.patch == TAKE_OUT
     assert add == backhaul_hub_mending("Guest", "Hub-A")
     for mending in error.mending:
         as_json = dataclasses.asdict(mending)
         assert json.loads(json.dumps(as_json)) == as_json
         assert f"send {json.dumps(mending.patch)} to {mending.module}" in str(error)
     assert "`revert`" in str(error)
+
+
+async def test_the_refusal_and_its_patches_are_in_names() -> None:
+    state = await rule_uses_hub()
+    await edit(state, "device_settings", FROM_BOTH_LISTS)
+    error = refused(state)
+    assert str(error).splitlines()[1] == LINE
+    assert "`vpn.backhaul_edges`" in str(error)
+    assert "backHaulEdges" not in str(error)
+    (reference,) = error.references
+    assert (reference.module, reference.segment_name) == ("business_policy", "Guest")
+    round_trips(reference.path)
+    remove, add = error.mending
+    assert (remove.module, remove.patch) == ("business_policy", TAKE_OUT)
+    assert (add.module, add.patch) == ("device_settings", PUT_BACK)
+    assert f"send {json.dumps(TAKE_OUT)} to business_policy" in str(error)
 
 
 @pytest.mark.parametrize("kind", ["remove_reference", "add_member"])
@@ -473,7 +528,9 @@ async def test_no_patch_takes_the_only_hub_out_of_a_rule() -> None:
     assert error.only_hubs == error.references
     text = str(error)
     assert ONLY_HUB in text
-    assert "give the rule another hub or change its `routePolicy`, and the next" in text
+    assert (
+        "give the rule another hub or change its `route_policy`, and the next" in text
+    )
     (member,) = error.mending
     await send(state, member)
     _ = state.plan()  # the hub is a backhaul hub again
