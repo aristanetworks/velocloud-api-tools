@@ -530,6 +530,14 @@ and `networkProtectionSettings.icmpBasedAttacks.enablePingOfDeath` as `true`.
 A `FACTORY` value is never written: nothing is sent for a key the caller did
 not set, whatever it displays.
 
+SSH access (`services.ssh`, an `SshService`) has one allow list,
+`allow_selected_ip`, which holds IPv4 and IPv6 addresses alike. SNMP and the
+local UI have a second list for IPv6, `allow_selected_ip_v6`. `ssh` has no
+`allow_selected_ip_v6`, because the Edge reads none for SSH: a patch that names
+it is refused as an unknown field, so put IPv6 addresses for SSH in
+`allow_selected_ip`. A stored `allowSelectedIpV6` on SSH is kept as read by
+every write, like any key the models do not know.
+
 ### QoS
 
 The module-level values of QoS are `Inheritable` and stored by presence, as the

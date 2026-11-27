@@ -156,7 +156,7 @@ def test_every_key_path_names_a_field() -> None:
 def test_list_counts() -> None:
     assert Counter(walk(ROOTS).values()) == {
         "keyed": 45,
-        "value": 19,
+        "value": 20,
         "positional": 24,
         "undeclared": 22,
         "untyped": 6,

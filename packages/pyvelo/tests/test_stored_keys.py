@@ -21,6 +21,7 @@ from pyvelo.client.models.configuration.device_settings.segment import (
     GatewayListItem,
     SegmentHandoffGateways,
 )
+from pyvelo.client.models.configuration.firewall import FirewallServices, SshService
 from pyvelo.client.models.enterprise.service_data import LoadSharingMethod
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import (
@@ -30,8 +31,8 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
 )
 from pyvelo.client.schemas.edge import EdgeLink
-from pyvelo.core import ConfigContext
-from pyvelo.core.layers import Edge
+from pyvelo.core import ConfigContext, PatchError
+from pyvelo.core.layers import Edge, Profile
 from pyvelo.testing import make_module_json
 
 from ._type_support import require_present
@@ -486,6 +487,113 @@ def test_an_ipv6_inbound_rule_s_destination_is_read_at_dip_v6() -> None:
         (rule,) = module.data.inbound_v6
         assert rule.match.destination_ip_v6 == "2001:db8::1"
         assert_untouched(module, FIREWALL, EDGE)
+
+
+# SSH has one allow list, for IPv4 and IPv6 addresses alike. A stored
+# ``allowSelectedIpV6`` on SSH holds nothing the Edge reads.
+SSH_SERVICES: dict[str, Any] = {
+    "segments": [],
+    "services": {
+        "ssh": {
+            "enabled": False,
+            "allowSelectedIp": ["192.0.2.1"],
+            "allowSelectedIpV6": [],
+        }
+    },
+}
+
+
+def firewall_profile(raw: dict[str, Any]) -> FirewallConfigurationModule[Profile]:
+    return both_ways(FirewallConfigurationModule[Profile], "firewall", raw)[0]
+
+
+def test_ssh_is_read_as_a_service_with_one_allow_list() -> None:
+    services = FirewallServices.model_validate(
+        {"ssh": {"enabled": True, "allowSelectedIp": ["192.0.2.1", "2001:db8::1"]}}
+    )
+    ssh = require_present(services.ssh)
+    assert isinstance(ssh, SshService)
+    assert ssh.allow_selected_ip == ["192.0.2.1", "2001:db8::1"]
+    assert "allow_selected_ip_v6" not in SshService.model_fields
+
+
+def test_a_stored_ipv6_list_on_ssh_plans_nothing_with_no_edit() -> None:
+    for module in both_ways(
+        FirewallConfigurationModule[Profile], "firewall", SSH_SERVICES
+    ):
+        assert_untouched(module, SSH_SERVICES, PROFILE)
+
+
+def test_an_edit_of_ssh_sends_its_stored_ipv6_list_as_read() -> None:
+    module = firewall_profile(SSH_SERVICES)
+    require_present(module.data.services.ssh).enabled = True
+    sent = plan_module(module, level=PROFILE).data["services"]["ssh"]
+    assert sent == {
+        "enabled": True,
+        "allowSelectedIp": ["192.0.2.1"],
+        "allowSelectedIpV6": [],
+    }
+
+
+def test_an_edge_s_own_ssh_keeps_its_stored_ipv6_list_as_read() -> None:
+    for module in both_ways(
+        FirewallConfigurationModule[Edge], "firewall", SSH_SERVICES
+    ):
+        assert_untouched(module, SSH_SERVICES, EDGE)
+    edge = both_ways(FirewallConfigurationModule[Edge], "firewall", SSH_SERVICES)[0]
+    _ = edge.data.merge_patch({"services": {"ssh": {"enabled": True}}})
+    sent = plan_module(edge, level=EDGE).data["services"]["ssh"]
+    assert sent == {
+        "enabled": True,
+        "allowSelectedIp": ["192.0.2.1"],
+        "allowSelectedIpV6": [],
+    }
+
+
+@pytest.mark.parametrize("key", ["allow_selected_ip_v6", "allowSelectedIpV6"])
+def test_a_patch_naming_an_ipv6_list_on_ssh_is_refused(key: str) -> None:
+    module = firewall_profile(SSH_SERVICES)
+    with pytest.raises(PatchError) as exc:
+        _ = module.data.merge_patch({"services": {"ssh": {key: ["2001:db8::1"]}}})
+    assert exc.value.kind == "unknown_field"
+    assert plan_module(module, level=PROFILE).operation == "none"
+
+
+def test_ssh_s_one_list_takes_ipv4_and_ipv6_addresses_as_given() -> None:
+    module = firewall_profile(SSH_SERVICES)
+    addresses = ["192.0.2.1", "2001:db8::1"]
+    _ = module.data.merge_patch({"services": {"ssh": {"allow_selected_ip": addresses}}})
+    plan = plan_module(module, level=PROFILE)
+    assert plan.operation != "none"
+    sent = plan.data["services"]["ssh"]
+    assert sent["allowSelectedIp"] == addresses
+    assert sent["allowSelectedIpV6"] == []
+
+
+def test_snmp_keeps_the_ipv6_list_that_ssh_has_not() -> None:
+    raw: dict[str, Any] = {
+        "segments": [],
+        "services": {
+            "snmp": {
+                "enabled": True,
+                "allowSelectedIp": ["192.0.2.2"],
+                "allowSelectedIpV6": ["2001:db8::2"],
+            }
+        },
+    }
+    for module in both_ways(FirewallConfigurationModule[Profile], "firewall", raw):
+        snmp = require_present(module.data.services.snmp)
+        assert snmp.allow_selected_ip_v6 == ["2001:db8::2"]
+        assert_untouched(module, raw, PROFILE)
+    # A list stored under another spelling is no field, and is kept as read.
+    stray: dict[str, Any] = {
+        "segments": [],
+        "services": {"snmp": {"enabled": True, "allowSelectedIpv6": ["2001:db8::3"]}},
+    }
+    for module in both_ways(FirewallConfigurationModule[Profile], "firewall", stray):
+        snmp = require_present(module.data.services.snmp)
+        assert snmp.allow_selected_ip_v6 is MISSING
+        assert_untouched(module, stray, PROFILE)
 
 
 # --- enterprise rows ----------------------------------------------------------
