@@ -1064,8 +1064,18 @@ def secret_view() -> SecretData[Effective]:
             ],
         },
         {"login": [{"password": "server-s3cret"}], "logins": []},
+        {
+            "login": {"user": "u", "password": "p"},
+            "logins": {"e0": {"user": "z", "password": "server-s3cret"}},
+        },
     ],
-    ids=["no object", "a scalar", "an item more", "a list for an object"],
+    ids=[
+        "no object",
+        "a scalar",
+        "an item more",
+        "a list for an object",
+        "a map for a list",
+    ],
 )
 def test_no_value_of_a_difference_holds_a_secret(server: dict[str, object]) -> None:
     entries = compare_module("secret", secret_view(), server, ignores=())
@@ -1083,6 +1093,100 @@ def test_a_whole_object_one_side_lacks_is_shown_with_its_secret_masked() -> None
         'client_only login: client {"password": "***", "user": "u"}, '
         "server (none) [profile login]"
     )
+
+
+class Named(VcoModel):
+    by_name: dict[str, Credentials] = Field(default_factory=dict)
+
+
+class SecretMaps(Layered[L]):
+    plain: dict[str, Credentials] = Field(default_factory=dict)
+    hubs: Annotated[
+        Inheritable[dict[str, Credentials]], ByPresence(), Default(factory=dict)
+    ] = Field(default=...)
+    outer: Named = Field(default_factory=Named)
+
+
+def secret_maps_view() -> SecretMaps[Effective]:
+    profile = SecretMaps[Profile].model_validate(
+        {
+            "plain": {"m": {"user": "u", "password": "s3cret-a"}},
+            "hubs": {"h": {"user": "v", "password": "s3cret-b"}},
+            "outer": {"byName": {"n": {"user": "w", "password": "s3cret-c"}}},
+        }
+    )
+    return effective_view(None, profile, SecretMaps[Effective])
+
+
+SERVER_ENTRY: dict[str, object] = {"user": "z", "password": "server-s3cret"}
+
+
+@pytest.mark.parametrize(
+    "held",
+    [
+        [SERVER_ENTRY],
+        [{"k": SERVER_ENTRY}, {"user": SERVER_ENTRY}],
+        [[SERVER_ENTRY]],
+        SERVER_ENTRY,
+        {"password": [SERVER_ENTRY], "user": [SERVER_ENTRY]},
+        "oops",
+    ],
+    ids=[
+        "a list of entries",
+        "a list of maps",
+        "a list of lists",
+        "one entry",
+        "lists for entries",
+        "a scalar",
+    ],
+)
+def test_no_value_of_a_difference_holds_a_secret_of_a_map(held: object) -> None:
+    # The view has a map of objects, and the server another kind of value.
+    server: dict[str, object] = {
+        "plain": held,
+        "hubs": held,
+        "outer": {"byName": held},
+    }
+    entries = compare_module("secret", secret_maps_view(), server, ignores=())
+    text = EffectiveComparison(tuple(entries)).render()
+    assert {str(entry.path).split(".")[0] for entry in entries} == {
+        "plain",
+        "hubs",
+        "outer",
+    }
+    assert not any(secret in text or secret in repr(entries) for secret in SECRETS)
+
+
+def test_a_list_where_a_map_is_declared_is_shown_with_its_secrets_masked() -> None:
+    server: dict[str, object] = {
+        "plain": [SERVER_ENTRY],
+        "hubs": {"h": {"user": "v", "password": "x"}},
+        "outer": {"byName": [SERVER_ENTRY]},
+    }
+    entries = compare_module("secret", secret_maps_view(), server, ignores=())
+    found = {str(entry.path): entry for entry in entries}
+    # No class names the keys of a list found where a map is declared, so
+    # they stay as the VCO writes them; the secret is hidden all the same.
+    assert found["plain"].server == [{"user": "z", "password": "***"}]
+    assert found["outer.by_name"].server == [{"user": "z", "password": "***"}]
+    assert found["plain"].render() == (
+        'differs plain: client {"m": {"password": "***", "user": "u"}}, '
+        'server [{"password": "***", "user": "z"}]'
+    )
+
+
+def test_one_entry_where_a_map_is_declared_is_shown_with_its_secret_masked() -> None:
+    # In a value shown whole, the comparison has not looked at the keys of
+    # the map: here the server has a list where the view has ``outer``.
+    server: dict[str, object] = {
+        "plain": {},
+        "hubs": {},
+        "outer": [{"byName": SERVER_ENTRY}],
+    }
+    entries = compare_module("secret", secret_maps_view(), server, ignores=())
+    found = {str(entry.path): entry for entry in entries}
+    assert found["outer"].server == [{"byName": {"user": "z", "password": "***"}}]
+    assert "server-s3cret" not in repr(entries)
 
 
 UNREADABLE_SERVER: dict[str, object] = {

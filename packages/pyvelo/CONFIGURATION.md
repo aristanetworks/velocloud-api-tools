@@ -831,6 +831,10 @@ no stored item, or several whose secrets differ. So:
   a secret it is always the mask. Assign it to the model instead. A stored
   secret that is itself the text `"***"` comes back as that text, like any
   other stored value.
+- **A mask in a value of another shape than the model declares is refused**:
+  in a list given where a map is declared, in a map given where a list is, in
+  one object given for a map. Nothing stored is at its place, and the shape
+  itself would be refused when the document is validated.
 - **Only a field the models mark is a secret.** The same text anywhere else is
   data and is validated as given. A secret under a key the models do not know
   is not masked by `named_dump` either: inside a field typed `dict[str, Any]`,
@@ -1414,8 +1418,10 @@ firewall
 - A key no model declares is kept as the VCO writes it, after the parts that
   are named (`services.icmp`, `etm`, `qosClientConnector`, and the keys the
   composer adds to a rule, below). A key that holds a dot or a bracket is one
-  part, quoted (`services."x.y"`). A path the two documents hold in more than
-  one way, which only such a key can cause, is not named at all: it is the
+  part, quoted (`services."x.y"`). A path the two documents do not hold in
+  exactly one way is not named at all, and only such a key can cause that:
+  one that reads as no path (a key `[0]` of an object), or one that reads two
+  ways (a key `services.ssh` beside `services`). The path is then the
   comparison's own text as one quoted part, and its values are as the VCO
   writes them. In a module whose models mark a secret, each of those values is
   `***` whole instead: nothing says which model reads the value, so nothing
@@ -1424,7 +1430,10 @@ firewall
   attribute name (`{"allow_selected_ip": []}`), at every depth; a key no model
   declares, and a scalar, stay as the VCO writes them. A secret is `***`, at
   any depth: an object or a list that one side has and the other lacks is
-  shown whole, with each secret in it masked.
+  shown whole, with each secret in it masked. So is a value of another kind
+  than the model declares there: a list where a map is declared, a map where
+  a list is, a list for one object ("Scope and data handling" has the one
+  shape this does not reach).
 
 These paths say where the view and the VCO differ. The view is not a layer, so
 none of them is promised to be a path `apply` takes.
@@ -2374,12 +2383,23 @@ Known limits:
   address), and no field marked a secret is the key, the alt key or the label
   of a list. A response that fails to parse raises pydantic's
   `ValidationError` without the input in its text; `error.errors()` still has
-  it. A secret is printed as it is in two places: under a key the models do
+  it. A secret is printed as it is in three places: under a key the models do
   not know, which includes everything inside a field typed `dict[str, Any]`
-  (`EdgeZscaler.deployment`, a WAN link's `private_network`), and in the data
+  (`EdgeZscaler.deployment`, a WAN link's `private_network`); in the data
   of a module whose data is not a model (a generic module: `analyticsSettings`,
-  `atpMetadata`). `VcoApiError` and `VcoOperationError` print the VCO's own
-  error data as the VCO sent it: pyvelo does not change it.
+  `atpMetadata`); and in one shape of an answer of the VCO that is not what
+  the models declare (the next point). `VcoApiError` and `VcoOperationError`
+  print the VCO's own error data as the VCO sent it: pyvelo does not change it.
+- A value of another shape than the models declare, which the VCO's own
+  answer can hold and the effective comparison then shows, is read both as an
+  object of the model declared there and as the field its key names, and a
+  secret under either reading is hidden. That covers a list where a map of
+  objects is declared, a map where only a list is, a list where one object
+  is, and one object where a map is, for each key of it that holds a text, a
+  number or a list. One shape is not reached: an object under a key of a map
+  is always an entry of the map, since that is what the models declare, so
+  where the VCO gives one object in place of a map of them, a secret below an
+  object of it is hidden only if the entry's model marks that key as well.
 - Keep API tokens and environment files outside version control. TLS verification
   uses the SDK default. Tests use synthetic fixtures and do not require a live VCO.
 

@@ -1474,3 +1474,188 @@ def test_shown_value_without_a_model_or_at_a_secret() -> None:
         {"user_name": "c", "pass_word": "***"},
     ]
     assert STORED["logins"][0] == login("b", "s-b")
+
+
+# --- a value of another shape than its field declares -------------------------
+
+
+class Shapes(VcoModel):
+    """A ``Login`` in each way a field can hold one."""
+
+    one: Login | MISSING = MISSING
+    several: list[Login] = Field(default_factory=list)
+    keyed: Annotated[list[Login], KeyField("user_name")] = Field(default_factory=list)
+    either: Login | list[Login] | MISSING = MISSING
+    by_site: dict[str, Login] = Field(default_factory=dict)
+    vault: Vault | MISSING = MISSING
+
+
+SEEN = login("f", "s-f")
+HID = login("f", "***")
+
+OTHER_SHAPES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+    # A list where a map is declared: an item is an entry of the map, ...
+    "a list for a map": ({"bySite": [SEEN]}, {"bySite": [HID]}),
+    # ... or a map itself, ...
+    "a list of maps for a map": ({"bySite": [{"x": SEEN}]}, {"bySite": [{"x": HID}]}),
+    # ... also where a key of that map is spelled as a field, ...
+    "a list of maps whose key is a field's": (
+        {"bySite": [{"userName": SEEN}]},
+        {"bySite": [{"userName": HID}]},
+    ),
+    # ... at any depth of lists.
+    "a list of lists for a map": (
+        {"bySite": [[SEEN, {"x": SEEN}], "text", 7, None]},
+        {"bySite": [[HID, {"x": HID}], "text", 7, None]},
+    ),
+    "a list for a map two levels down": (
+        {"vault": {"bySite": [SEEN]}},
+        {"vault": {"bySite": [HID]}},
+    ),
+    # One model where a map is declared: a key that holds no object is a field.
+    "one model for a map": ({"bySite": SEEN}, {"bySite": HID}),
+    "a list under a secret's key of a map": (
+        {"bySite": {"passWord": [SEEN]}},
+        {"bySite": {"passWord": "***"}},
+    ),
+    # A map where only a list is declared: an entry is an item.
+    "a map for a list": ({"several": {"e0": SEEN}}, {"several": {"e0": HID}}),
+    "a map for a keyed list": ({"keyed": {"e0": SEEN}}, {"keyed": {"e0": HID}}),
+    "a map for a list, its key a field's": (
+        {"several": {"userName": SEEN}},
+        {"several": {"userName": HID}},
+    ),
+}
+
+SAME_SHAPES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
+    # What the field declares.
+    "a map": ({"bySite": {"x": SEEN}}, {"bySite": {"x": HID}}),
+    "a map whose key is spelled as a secret": (
+        {"bySite": {"passWord": SEEN, "userName": None}},
+        {"bySite": {"passWord": HID, "userName": None}},
+    ),
+    "one model or a list of them": (
+        {"either": SEEN, "one": SEEN, "several": [SEEN], "keyed": [SEEN]},
+        {"either": HID, "one": HID, "several": [HID], "keyed": [HID]},
+    ),
+    "a list where one or a list is declared": ({"either": [SEEN]}, {"either": [HID]}),
+    # A key the classes do not know, where one model can be: all below is data.
+    "a key no class declares": (
+        {"one": {"e0": SEEN}, "either": {"e0": SEEN}, "e0": SEEN},
+        {"one": {"e0": SEEN}, "either": {"e0": SEEN}, "e0": SEEN},
+    ),
+    # Another shape, read as it was before.
+    "a list for one model": ({"one": [SEEN]}, {"one": [HID]}),
+    "one item for a list": ({"several": SEEN}, {"several": HID}),
+    "a list under a key of a map": (
+        {"bySite": {"x": [SEEN], "userName": [SEEN]}},
+        {"bySite": {"x": [HID], "userName": [HID]}},
+    ),
+    "no object at all": (
+        {"bySite": "text", "several": 7, "keyed": None, "one": "***"},
+        {"bySite": "text", "several": 7, "keyed": None, "one": "***"},
+    ),
+    "items that are no objects": (
+        {"bySite": {"x": "text", "userName": "f"}, "several": ["***", 7]},
+        {"bySite": {"x": "text", "userName": "f"}, "several": ["***", 7]},
+    ),
+}
+
+
+@pytest.mark.parametrize("name", list(OTHER_SHAPES))
+def test_a_value_of_another_shape_has_its_secrets_hidden(name: str) -> None:
+    document, hidden = OTHER_SHAPES[name]
+    given = copy.deepcopy(document)
+    assert hide_secrets(Shapes, Path(()), document) == hidden
+    assert document == given
+    assert "s-f" not in json.dumps(shown_value(document, Shapes))
+
+
+@pytest.mark.parametrize("name", list(SAME_SHAPES))
+def test_a_value_of_the_declared_shape_is_hidden_as_declared(name: str) -> None:
+    document, hidden = SAME_SHAPES[name]
+    assert hide_secrets(Shapes, Path(()), document) == hidden
+
+
+def places(value: object, path: tuple[str | int, ...] = ()) -> Iterator[Path]:
+    """The path of every value in the JSON *value*, itself first."""
+    yield Path(path)
+    if is_dict(value):
+        for key, item in value.items():
+            yield from places(item, (*path, cast("str", key)))
+    elif isinstance(value, list):
+        for position, item in enumerate(cast("list[object]", value)):
+            yield from places(item, (*path, position))
+
+
+def at(value: object, path: Path) -> object:
+    for part in path.parts:
+        if isinstance(value, str):
+            return value  # the mask of all below
+        value = cast("Any", value)[part]
+    return value
+
+
+@pytest.mark.parametrize("name", [*OTHER_SHAPES, *SAME_SHAPES])
+def test_a_part_of_a_value_is_hidden_as_it_is_in_the_whole(name: str) -> None:
+    document, _ = (OTHER_SHAPES | SAME_SHAPES)[name]
+    whole = hide_secrets(Shapes, Path(()), document)
+    for path in places(document):
+        part = hide_secrets(Shapes, path, at(document, path))
+        assert part == at(whole, path), path
+
+
+def test_shown_value_keeps_the_keys_of_another_shape_and_hides_its_secrets() -> None:
+    # No class names the keys of a list found where a map is declared.
+    assert shown_value([SEEN], Shapes, Path(("by_site",))) == [HID]
+    assert shown_value({"e0": SEEN}, Shapes, Path(("several",))) == {"e0": HID}
+    assert shown_value(SEEN, Shapes, Path(("by_site",))) == HID
+    assert shown_value("s-f", Shapes, Path(("by_site", "pass_word"))) == "***"
+    assert shown_value("s-f", Shapes, Path(("by_site", 0, "pass_word"))) == "***"
+
+
+STORED_SHAPES: dict[str, Any] = {
+    "one": login("a", "s-a"),
+    "several": [login("d", "s-d")],
+    "keyed": [login("b", "s-b")],
+    "bySite": {"x": login("f", "s-f"), "passWord": login("g", "s-g")},
+}
+
+
+@pytest.mark.parametrize(
+    ("document", "path"),
+    [
+        ({"bySite": [HID]}, "by_site[#0].pass_word"),
+        ({"bySite": [{"x": HID}]}, "by_site[#0].x.pass_word"),
+        ({"bySite": [[HID]]}, "by_site[#0][#0].pass_word"),
+        ({"bySite": HID}, "by_site.pass_word"),
+        ({"bySite": {"x": [HID]}}, "by_site.x[#0].pass_word"),
+        ({"several": {"e0": HID}}, "several.e0.pass_word"),
+        ({"several": HID}, "several.pass_word"),
+        ({"keyed": {"e0": HID}}, "keyed.e0.pass_word"),
+    ],
+)
+def test_a_mask_in_a_value_of_another_shape_is_refused(
+    document: dict[str, Any], path: str
+) -> None:
+    # Nothing stored is at the place of such a mask, whichever way it is read.
+    with pytest.raises(NamedDocumentError) as caught:
+        _ = restore_secrets(Shapes, document, STORED_SHAPES)
+    assert (caught.value.kind, caught.value.path) == ("masked_secret", path)
+    assert "`stored` has no value there" in caught.value.message
+    assert "would be written to the VCO as the secret" in caught.value.message
+
+
+@pytest.mark.parametrize("name", [*OTHER_SHAPES, *SAME_SHAPES])
+def test_a_value_of_another_shape_with_no_mask_is_restored_as_given(name: str) -> None:
+    document, hidden = (OTHER_SHAPES | SAME_SHAPES)[name]
+    restored = restore_secrets(Shapes, document, STORED_SHAPES)
+    assert restored == document
+    assert hide_secrets(Shapes, Path(()), restored) == hidden
+
+
+def test_a_mask_in_an_entry_of_a_map_takes_the_stored_entrys_value() -> None:
+    document = {"bySite": {"passWord": login("g", "***"), "x": login("f", "***")}}
+    assert restore_secrets(Shapes, document, STORED_SHAPES) == {
+        "bySite": STORED_SHAPES["bySite"]
+    }

@@ -6,14 +6,43 @@ dump) into one that is safe to show: the mask ``HIDDEN`` stands where a secret
 is. ``restore_secrets`` is the way back, for a document that was shown and is
 given again: each mask is replaced by the value stored at the same place.
 ``declares_secret`` says whether a model has a secret at any depth.
+
+A value of the shape its field declares is read as declared: the keys of a
+model are fields, a key no class declares is data with all below it, and the
+keys of a map are data. A value that cannot be what its field declares is
+read both as a model of the classes there and as the field its key names, and
+a secret under either reading is hidden. There are three such values:
+
+- an item of a list found where a map is declared (an entry of the map, or a
+  map itself);
+- an entry of a map that is neither an object nor ``null`` (the map is then
+  one model, and the entry a field of it);
+- an object found where a list of models is all the field declares (one item
+  of the list, or a map of its items).
+
+A mask in one of them is refused, since nothing stored is at its place. An
+object under a key of a map is always an entry of the map, which is what the
+field declares, and a key spelled as a field is no exception. So where a map
+is in fact one model, a secret below an object of it is hidden only where the
+entry's class marks that key too.
 """
 
 import copy
 import functools
 from dataclasses import dataclass, replace
-from typing import Final, TypeIs
+from enum import Enum, auto
+from types import UnionType
+from typing import (
+    Annotated,
+    Final,
+    TypeIs,
+    Union,  # pyright: ignore[reportDeprecated]  # the origin of ``T | MISSING``, below
+    get_args,
+    get_origin,
+)
 
 from pydantic import MISSING
+from pydantic.fields import FieldInfo
 
 from .base import (
     VcoModel,
@@ -26,7 +55,8 @@ from .base import (
 )
 from .documents import NamedDocumentError
 from .fields import is_secret
-from .rebase import KeyedList, Path, node_child, pair_items
+from .layers import field_kind
+from .rebase import KeyedList, Path, PathPart, node_child, pair_items
 
 HIDDEN: Final = "***"
 """The mask: what stands in place of a secret in everything pyvelo shows."""
@@ -38,17 +68,67 @@ def _is_tuple(value: object) -> TypeIs[tuple[object, ...]]:
     return isinstance(value, tuple)
 
 
-def _under(classes: _Classes, key: object) -> tuple[bool, _Classes, bool] | None:
+class _Holds(Enum):
+    """How the classes at a place of a walk are held there."""
+
+    MODEL = auto()
+    """One model. A list found there is a list of them."""
+    ITEMS = auto()
+    """The items of a list, where a list of models is all the field declares."""
+    ENTRIES = auto()
+    """The values of a map, whose keys are data."""
+    EITHER = auto()
+    """One model, or the values of a map.
+
+    An item of a list found where a map is declared: nothing says which.
+    """
+
+
+_ITEM: Final = {
+    _Holds.MODEL: _Holds.MODEL,
+    _Holds.ITEMS: _Holds.MODEL,
+    _Holds.ENTRIES: _Holds.EITHER,
+    _Holds.EITHER: _Holds.EITHER,
+}
+"""How the classes are held by an item of a list, by how the list holds them."""
+
+type _Reading = tuple[_Classes, _Holds]
+"""One way to read a value: the classes it is of, and how it holds them."""
+
+_UNION_ORIGINS: Final = (Union, UnionType)  # pyright: ignore[reportDeprecated]  # still an origin
+"""The origins of a union: two before Python 3.14, and ``T | MISSING`` has the first."""
+
+
+def _allows_one_model(annotation: object) -> bool:
+    """Whether *annotation* allows a model as it is, in no list and no map."""
+    while get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    if get_origin(annotation) in _UNION_ORIGINS:
+        return any(_allows_one_model(member) for member in get_args(annotation))
+    return isinstance(annotation, type) and issubclass(annotation, VcoModel)
+
+
+@functools.cache
+def _only_a_list(field_info: FieldInfo) -> bool:
+    """Whether a list is all *field_info* declares: an object there is never valid."""
+    if list_kind(field_info) in (None, "map"):
+        return False
+    return not _allows_one_model(field_kind(field_info).inner_type)
+
+
+def _under(classes: _Classes, key: object) -> tuple[bool, _Classes, _Holds] | None:
     """The field JSON key *key* names in *classes*.
 
-    Whether it is secret, what it holds, and whether it is a map.
+    Whether it is secret, the classes it holds, and how it holds them.
 
     None when no class has a field read from *key*. With several classes a
-    field is secret if it is in any of them, and holds what it holds in each.
+    field is secret if it is in any of them, and holds what it holds in each:
+    a map if it is one in any, and only a list if it is that in every one.
     """
     if not isinstance(key, str):
         return None
     known = secret = is_map = False
+    only_lists = True
     below: list[type[VcoModel]] = []
     for cls in classes:
         name = python_name(cls, key)
@@ -58,19 +138,36 @@ def _under(classes: _Classes, key: object) -> tuple[bool, _Classes, bool] | None
         field_info = cls.model_fields[name]
         secret = secret or is_secret(field_info)
         is_map = is_map or list_kind(field_info) == "map"
+        only_lists = only_lists and _only_a_list(field_info)
         below.extend(m for m in field_models(field_info) if m not in below)
-    return (secret, tuple(below), is_map) if known else None
+    if not known:
+        return None
+    if is_map:
+        return secret, tuple(below), _Holds.ENTRIES
+    return secret, tuple(below), _Holds.ITEMS if only_lists else _Holds.MODEL
 
 
-def _hide(value: object, classes: _Classes, *, is_map: bool) -> object:
+def _is_entry(item: object) -> bool:
+    """Whether *item* is what an entry of a map of models is: an object, or null."""
+    return is_dict(item) or item is None
+
+
+def _hide(value: object, classes: _Classes, holds: _Holds) -> object:
+    """*value*, found where *classes* are held as *holds* says, with no secret.
+
+    An object is one model only at ``_Holds.MODEL``: its keys are fields, and
+    a key no class declares is kept with all below it.
+    """
     if not classes:
         return value
     if is_list(value) or _is_tuple(value):
-        return [_hide(item, classes, is_map=is_map) for item in value]
+        return [_hide(item, classes, _ITEM[holds]) for item in value]
     if not is_dict(value):
         return value
-    if is_map:  # the keys are map keys, not field names
-        return {key: _hide(item, classes, is_map=False) for key, item in value.items()}
+    if holds is not _Holds.MODEL:
+        return {
+            key: _hide_under(key, item, classes, holds) for key, item in value.items()
+        }
     hidden: dict[object, object] = {}
     for key, item in value.items():
         found = _under(classes, key)
@@ -79,8 +176,51 @@ def _hide(value: object, classes: _Classes, *, is_map: bool) -> object:
         elif found[0]:
             hidden[key] = HIDDEN
         else:
-            hidden[key] = _hide(item, found[1], is_map=found[2])
+            hidden[key] = _hide(item, found[1], found[2])
     return hidden
+
+
+def _hide_under(key: object, item: object, classes: _Classes, holds: _Holds) -> object:
+    """*item*, under *key* of an object that is not one model, with no secret.
+
+    The entry of a map, as it is declared, is a model of *classes* under a
+    key that is data. Anything else is not what its field declares, and is
+    read both ways: as such a model, and as the field *key* names. So it is
+    for an entry that is neither an object nor null (the map is one model),
+    for an object found where only a list is declared (one item of it, or a
+    map of its items) and for an item of a list found where a map is declared
+    (an entry of the map, or a map).
+    """
+    hidden = _hide(item, classes, _Holds.MODEL)
+    if holds is _Holds.ENTRIES and _is_entry(item):
+        return hidden
+    found = _under(classes, key)
+    if found is None:
+        return hidden
+    return HIDDEN if found[0] else _hide(hidden, found[1], found[2])
+
+
+def _below(
+    reading: _Reading, part: PathPart, *, is_entry: bool
+) -> list[_Reading] | None:
+    """The readings of what is under *part* of a value read as *reading*.
+
+    None where it is, or is below, a secret; no reading where no class knows
+    the place. *is_entry* is whether what is under *part* is an object or
+    null. The readings are those of ``_hide``.
+    """
+    classes, holds = reading
+    if not isinstance(part, str):
+        return [(classes, _ITEM[holds])]  # an item of a list: the same classes
+    readings: list[_Reading] = (
+        [] if holds is _Holds.MODEL else [(classes, _Holds.MODEL)]
+    )
+    if holds is _Holds.ENTRIES and is_entry:
+        return readings  # an entry of a map: the same classes
+    found = _under(classes, part)
+    if found is None:
+        return readings
+    return None if found[0] else [*readings, (found[1], found[2])]
 
 
 def hide_secrets(model: type[VcoModel] | None, path: Path, value: object) -> object:
@@ -91,24 +231,32 @@ def hide_secrets(model: type[VcoModel] | None, path: Path, value: object) -> obj
     a field. A tuple is walked as a list is. *value* is returned as it is when
     it is ``MISSING``, when *model* is None, and where the model does not know
     the place. The value given is never changed.
+
+    A value of another shape than its field declares (a list where a map is
+    declared, an object where only a list is, an entry of a map that is no
+    object) is read both as a model of the classes there and as the field its
+    key names, and a secret under either reading is hidden. The module's text
+    says which values those are, and what is still read as declared.
     """
     if model is None or value is MISSING:
         return value
-    classes: _Classes = (model,)
-    is_map = False
-    for part in path.parts:
-        if not isinstance(part, str):
-            continue  # an item of a list: the same classes
-        if is_map:
-            is_map = False  # an entry of a map: the same classes
-            continue
-        found = _under(classes, part)
-        if found is None:
+    readings: list[_Reading] = [((model,), _Holds.MODEL)]
+    parts = path.parts
+    for position, part in enumerate(parts):
+        rest = parts[position + 1 :]
+        is_entry = isinstance(rest[0], str) if rest else _is_entry(value)
+        found: list[_Reading] = []
+        for reading in readings:
+            below = _below(reading, part, is_entry=is_entry)
+            if below is None:
+                return HIDDEN
+            found += below
+        if not found:
             return value
-        secret, classes, is_map = found
-        if secret:
-            return HIDDEN
-    return _hide(value, classes, is_map=is_map)
+        readings = found
+    for classes, holds in readings:
+        value = _hide(value, classes, holds)
+    return value
 
 
 @functools.cache
@@ -186,8 +334,8 @@ class _Place:
 
     classes: _Classes
     """The classes a model there can be, as ``_hide`` has them."""
-    is_map: bool
-    """Whether an object there is a map, whose keys are data."""
+    holds: _Holds
+    """How the place holds them."""
     keyed: KeyedList | None
     """What pairs the items of a list there; None for a list without a key."""
     path: Path
@@ -275,10 +423,11 @@ def _matched_by_content(
     the same JSON as one another are one. A ``_NoValue`` where there is none,
     and where there are several with different secrets. Position plays no part.
     """
-    hidden = [_hide(item, place.classes, is_map=place.is_map) for item in stored]
+    holds = _ITEM[place.holds]
+    hidden = [_hide(item, place.classes, holds) for item in stored]
     kept: list[object] = []
     for item in value:
-        shown = _hide(item, place.classes, is_map=place.is_map)
+        shown = _hide(item, place.classes, holds)
         same = [
             old
             for old, old_shown in zip(stored, hidden, strict=True)
@@ -325,12 +474,12 @@ def _restore_fields(
         if found is None or not isinstance(key, str):
             restored[key] = copy.deepcopy(item)
             continue
-        secret, below, is_map = found
+        secret, below, holds = found
         kept = _stored_field(stored, place.classes, key)
         path = place.path.child(_attribute(place.classes, key))
         if not secret:
             keyed = _keyed(place.classes, key)
-            held = _Place(below, is_map=is_map, keyed=keyed, path=path)
+            held = _Place(below, holds=holds, keyed=keyed, path=path)
             restored[key] = _restore(item, kept, held)
         elif isinstance(item, str) and item == HIDDEN:
             if isinstance(kept, _NoValue):
@@ -339,6 +488,36 @@ def _restore_fields(
         else:
             restored[key] = copy.deepcopy(item)
     return restored
+
+
+def _restore_under(key: object, item: object, stored: object, place: _Place) -> object:
+    """A copy of *item*, under *key* of an object at *place* that is not one model.
+
+    The entry of a map, as it is declared, takes each mask from the entry
+    *stored* has under the same key. Anything else is read as ``_hide_under``
+    reads it, both ways, and nothing stored is at its place: a mask where
+    either reading has a secret is refused, and the rest is copied.
+    """
+    entry = _Place(
+        place.classes,
+        holds=_Holds.MODEL,
+        keyed=None,
+        path=place.path.child(str(key)),
+    )
+    if place.holds is _Holds.ENTRIES and _is_entry(item):
+        return _restore(item, _entry(stored, key), entry)
+    nothing = stored if isinstance(stored, _NoValue) else _NO_VALUE
+    found = _under(place.classes, key)
+    if found is None or not isinstance(key, str):
+        return _restore(item, nothing, entry)
+    secret, below, holds = found
+    path = place.path.child(_attribute(place.classes, key))
+    if not secret:
+        held = _Place(below, holds=holds, keyed=None, path=path)
+        return _restore(_restore(item, nothing, entry), nothing, held)
+    if isinstance(item, str) and item == HIDDEN:
+        raise NamedDocumentError(nothing.refusal, path, "masked_secret")
+    return copy.deepcopy(item)
 
 
 def _restore(value: object, stored: object, place: _Place) -> object:
@@ -355,27 +534,22 @@ def _restore(value: object, stored: object, place: _Place) -> object:
             _restore(
                 item,
                 kept[position],
-                replace(place, keyed=None, path=place.path.child(position)),
+                replace(
+                    place,
+                    holds=_ITEM[place.holds],
+                    keyed=None,
+                    path=place.path.child(position),
+                ),
             )
             for position, item in enumerate(value)
         ]
     if not is_dict(value):
         return value
-    if place.is_map:  # the keys are map keys, not field names
-        return {
-            key: _restore(
-                item,
-                _entry(stored, key),
-                _Place(
-                    place.classes,
-                    is_map=False,
-                    keyed=None,
-                    path=place.path.child(str(key)),
-                ),
-            )
-            for key, item in value.items()
-        }
-    return _restore_fields(value, stored, place)
+    if place.holds is _Holds.MODEL:
+        return _restore_fields(value, stored, place)
+    return {
+        key: _restore_under(key, item, stored, place) for key, item in value.items()
+    }
 
 
 def restore_secrets(
@@ -408,6 +582,11 @@ def restore_secrets(
     Below an item the same rules hold. An item with no mask in it needs no
     stored item.
 
+    Nothing stored is at the same place as a value of another shape than its
+    field declares (the three kinds of the module's text). A mask there, where
+    ``hide_secrets`` has a secret under either reading, is refused, and the
+    rest of the value is copied.
+
     A mask with no stored value at its place raises ``NamedDocumentError`` of
     kind ``masked_secret``, at the path of the secret in attribute names (an
     item by its position in *value*): it would be written to the VCO as the
@@ -425,5 +604,5 @@ def restore_secrets(
     if stored is not MISSING:
         _refuse_what_is_not_json(stored, "`stored`")
         kept = stored
-    top = _Place((model,), is_map=False, keyed=None, path=Path(()))
+    top = _Place((model,), holds=_Holds.MODEL, keyed=None, path=Path(()))
     return _restore(value, kept, top)
