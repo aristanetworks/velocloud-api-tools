@@ -247,7 +247,7 @@ async def test_an_entry_built_by_assignment_without_its_service_is_refused_at_pl
         _ = state.plan()
 
     assert error.value.hub == HUB_A.name
-    assert "backhaul_edges" in error.value.path
+    assert "backhaul_edges" in str(error.value.path)
 
 
 async def test_a_segment_added_with_a_rule_on_a_hub_it_has_no_service_for_is_refused() -> (  # noqa: E501 (a test's name)

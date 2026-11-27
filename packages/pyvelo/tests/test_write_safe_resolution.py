@@ -1,7 +1,7 @@
 """Three name-resolution behaviours on write, under the strict rules."""
 
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from typing import Annotated, ClassVar, cast
 
 import pytest
@@ -55,7 +55,7 @@ class Fake:
     def lookup[T](self, key: type[T], name: str, /) -> T:
         if key not in self.tables:
             raise LookupError(f"No resolver registered for {key.__name__}")
-        return cast("T", resolve_name(name, dict(self.tables[key]), key.__name__)[1])
+        return cast("T", resolve_name(name, dict(self.tables[key]), key)[1])
 
     def resolver_for(self, identity_type: type[object], /) -> object | None:
         return self if identity_type in self.tables else None
@@ -73,6 +73,9 @@ class Fake:
         raise ResolutionError(
             name=str(value), identity_type=identity_type, candidates=[]
         )
+
+    def identities[T](self, identity_type: type[T], /) -> Collection[T]:
+        return cast("Collection[T]", tuple(self.tables.get(identity_type, {}).values()))
 
 
 def fresh() -> FirewallData[Edge]:

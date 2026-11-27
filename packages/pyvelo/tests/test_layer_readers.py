@@ -401,7 +401,12 @@ class _Marked(Layered[L]):
     owns: Unconverted[
         Annotated[
             uuid.UUID | None,
-            OwnsRef("marked:owner", SegmentIdentity, by="logical_id", row="logicalId"),
+            OwnsRef(
+                "marked:owner",
+                SegmentIdentity,
+                by=lambda i: i.logical_id,
+                row="logicalId",
+            ),
         ]
     ] = kind_default(None)
     ref_only: Unconverted[
@@ -804,7 +809,9 @@ class _Walked(Layered[L]):
     ] = Field(default=...)
     owner: Annotated[
         Inheritable[uuid.UUID | None],
-        OwnsRef("walked:owner", SegmentIdentity, by="logical_id", row="logicalId"),
+        OwnsRef(
+            "walked:owner", SegmentIdentity, by=lambda i: i.logical_id, row="logicalId"
+        ),
         ByPresence(),
         Default(None),
     ] = Field(default=...)

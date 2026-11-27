@@ -16,7 +16,9 @@ from pyvelo.client.enums.configuration import ConfigurationModuleName
 from pyvelo.client.exceptions import ConfigConflictError, DetachedObjectError
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.client.models.configuration.device_settings.segment import (
+    CssProviderRef,
     DnsPrimaryProvider,
+    SegmentCss,
     SegmentDns,
 )
 from pyvelo.client.models.configuration.qos.root import QosData, ServiceRateLimit
@@ -24,7 +26,7 @@ from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
 )
-from pyvelo.config import LayerNotSavedError
+from pyvelo.config import LayerNotSavedError, PatchError
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.resolvers.network_service import NetworkServiceResolver
@@ -257,6 +259,24 @@ async def test_a_provider_of_the_wrong_service_type_leaves_the_state_unchanged()
     assert state.plan().changed == ()
 
 
+async def test_a_service_of_the_wrong_type_is_refused_with_what_fits() -> None:
+    pipeline, client, state = await loaded_profile()
+    client.add_service(703, logical_id=AUTH, name="radius-1", type_="authentication")
+
+    with pytest.raises(ResolutionError) as wrong:
+        _ = await pipeline.apply(
+            state,
+            module="deviceSettings",
+            segment="Global Segment",
+            patch=provider_patch("radius-1"),
+        )
+
+    error = wrong.value
+    assert (error.wanted, error.candidates) == ("dns", ["dns-a", "dns-b"])
+    assert error.path == OWNER
+    assert str(error).endswith("Of type 'dns' the enterprise has: dns-a, dns-b.")
+
+
 async def test_a_save_after_setting_a_provider_by_uuid_loads_the_services_once() -> (
     None
 ):
@@ -314,15 +334,22 @@ def test_a_direct_plan_lets_the_not_loaded_error_through() -> None:
     assert error.value.identity_type is NetworkServiceIdentity
 
 
+class NeverLoads(NetworkServiceResolver):
+    loads: ClassVar[int] = 0
+
+    @property
+    @override
+    def loaded(self) -> bool:
+        return False
+
+    @override
+    async def _load(self, context: ResolverContext) -> None:
+        del context
+        type(self).loads += 1
+
+
 async def test_a_second_not_loaded_error_for_the_same_type_propagates() -> None:
-    class NeverLoads(NetworkServiceResolver):
-        loads: ClassVar[int] = 0
-
-        @override
-        async def load(self, context: ResolverContext) -> None:
-            del context
-            type(self).loads += 1
-
+    NeverLoads.loads = 0
     pipeline, client, state = await loaded_profile()
     state.resolvers.register(NeverLoads(client))
     primary_provider(state).service = uuid.UUID(DNS_A)
@@ -342,6 +369,40 @@ async def test_a_second_not_loaded_error_for_the_same_type_propagates() -> None:
     assert NeverLoads.loads == 3  # one load per call, never two
     assert client.update_requests == []
     assert primary_provider(state).service == uuid.UUID(DNS_A)
+
+
+async def test_an_unknown_provider_name_says_where_it_is() -> None:
+    pipeline, _, state = await loaded_profile()
+
+    with pytest.raises(ResolutionError) as unknown:
+        _ = await pipeline.apply(
+            state,
+            module="deviceSettings",
+            segment="Global Segment",
+            patch=provider_patch("dns-x"),
+        )
+
+    error = unknown.value
+    assert error.identity_type is NetworkServiceIdentity
+    assert str(error.path) == str(OWNER)
+    assert str(error).startswith(f"{OWNER}: Unknown network service")
+
+
+async def test_a_not_loaded_error_reaches_apply_as_it_was_raised() -> None:
+    pipeline, client, state = await loaded_profile()
+    state.resolvers.register(NeverLoads(client))
+
+    with pytest.raises(ResolverNotLoadedError) as not_loaded:
+        _ = await pipeline.apply(
+            state,
+            module="deviceSettings",
+            segment="Global Segment",
+            patch=provider_patch("dns-a"),
+        )
+
+    assert type(not_loaded.value) is ResolverNotLoadedError
+    assert not_loaded.value.path is None
+    assert str(not_loaded.value).startswith("The NetworkServiceIdentity lookups")
 
 
 async def test_plan_warnings_reach_the_plan_and_the_save_result() -> None:
@@ -426,6 +487,163 @@ async def test_a_provider_on_a_stub_that_has_a_ref_is_one_change() -> None:
     changes = state.get_field_changes("device_settings")
 
     assert [(c.path, c.before, c.after) for c in changes] == [(OWNER, DNS_A, DNS_B)]
+
+
+CSS_WEST = "c5c5c5c5-c5c5-4c5c-8c5c-c5c5c5c5c5c5"
+
+
+def other_writer_edit(row: dict[str, Any]) -> None:
+    """Another writer's change to a key the caller does not edit."""
+    row["data"]["futureKey"] = 1
+
+
+async def loaded_with_css() -> tuple[ConfigPipeline, MockVcoClient, ConfigState]:
+    """``loaded_profile()``, whose enterprise also has the CSS service css-west."""
+    pipeline, client, state = await loaded_profile()
+    client.add_service(
+        710, logical_id=CSS_WEST, name="css-west", type_="cloudSecurityService"
+    )
+    return pipeline, client, state
+
+
+async def set_css(
+    pipeline: ConfigPipeline, state: ConfigState, value: str | None
+) -> ConfigState:
+    return await pipeline.apply(
+        state,
+        module="deviceSettings",
+        segment="Global Segment",
+        patch={"css": {"provider": {"logical_id": value}}},
+    )
+
+
+def css_provider(state: ConfigState) -> CssProviderRef:
+    section = device_settings(state).segments[0].css
+    assert isinstance(section, SegmentCss)
+    provider = section.provider
+    assert isinstance(provider, CssProviderRef)
+    return provider
+
+
+@pytest.mark.parametrize("given", [CSS_WEST, CSS_WEST.upper(), "css-west"])
+async def test_a_css_provider_is_set_by_its_logical_id_or_its_name(given: str) -> None:
+    pipeline, _, state = await loaded_with_css()
+
+    state = await set_css(pipeline, state, given)
+
+    assert css_provider(state).logical_id == uuid.UUID(CSS_WEST)
+    (change,) = state.plan().changed[0].ref_changes
+    assert (change.added, change.name, change.value) == (True, CSS_PROVIDER, CSS_WEST)
+
+
+async def test_empty_text_clears_a_css_provider_and_null_is_refused() -> None:
+    pipeline, client, state = await loaded_with_css()
+    state = await set_css(pipeline, state, "css-west")
+    _ = await pipeline.save(state)
+    assert one_row(stored_refs(client.store), CSS_PROVIDER)["enterpriseObjectId"] == 710
+
+    with pytest.raises(PatchError) as refused:
+        _ = await set_css(pipeline, state, None)
+    assert refused.value.kind == "null"
+    assert 'give ""' in refused.value.message
+    assert css_provider(state).logical_id == uuid.UUID(CSS_WEST)
+
+    state = await set_css(pipeline, state, "")
+    assert css_provider(state).logical_id == ""
+    (change,) = state.plan().changed[0].ref_changes
+    assert (change.added, change.name, change.value) == (False, CSS_PROVIDER, CSS_WEST)
+    _ = await pipeline.save(state)
+    assert not stored_refs(client.store).get(CSS_PROVIDER)
+
+
+async def test_the_redo_of_a_lost_css_provider_edit_applies() -> None:
+    pipeline, client, state = await loaded_with_css()
+    state = await set_css(pipeline, state, "css-west")
+    client.store.other_writer(DS_ID, other_writer_edit)
+
+    with pytest.raises(ConfigConflictError) as lost:
+        _ = await pipeline.save(state)
+
+    patch = lost.value.redo_patch()
+    assert patch == {
+        "segments": {
+            "Global Segment": {
+                "css": {"provider": {"logicalId": CSS_WEST, "ref": CSS_PROVIDER}}
+            }
+        }
+    }
+    state = await pipeline.apply(state, module=lost.value.module_name, patch=patch)
+    assert css_provider(state).logical_id == uuid.UUID(CSS_WEST)
+    _ = await pipeline.save(state)
+    assert one_row(stored_refs(client.store), CSS_PROVIDER)["enterpriseObjectId"] == 710
+
+
+async def test_the_redo_of_a_lost_css_provider_clear_applies() -> None:
+    pipeline, client, state = await loaded_with_css()
+    state = await set_css(pipeline, state, "css-west")
+    _ = await pipeline.save(state)
+    state = await set_css(pipeline, state, "")
+    client.store.other_writer(DS_ID, other_writer_edit)
+
+    with pytest.raises(ConfigConflictError) as lost:
+        _ = await pipeline.save(state)
+
+    patch = lost.value.redo_patch()
+    assert patch == {
+        "segments": {"Global Segment": {"css": {"provider": {"logical_id": ""}}}}
+    }
+    # The row is listed, although the patch redoes the clear that removes it.
+    (listed,) = lost.value.not_redone()
+    assert (listed.part, str(listed.path).startswith(f'"{CSS_PROVIDER}"')) == (
+        "refs",
+        True,
+    )
+    state = await pipeline.apply(state, module=lost.value.module_name, patch=patch)
+    assert css_provider(state).logical_id == ""
+    _ = await pipeline.save(state)
+    assert not stored_refs(client.store).get(CSS_PROVIDER)
+
+
+async def test_an_unknown_css_name_lists_the_services_the_field_takes() -> None:
+    pipeline, client, state = await loaded_with_css()
+    client.add_service(
+        711,
+        logical_id=str(uuid.UUID(int=711)),
+        name="css-east",
+        type_="cloudSecurityService",
+    )
+
+    with pytest.raises(ResolutionError) as near:
+        _ = await set_css(pipeline, state, "css-wst")
+    with pytest.raises(ResolutionError) as far:
+        _ = await set_css(pipeline, state, "zzz")
+
+    assert near.value.wanted == "cloudSecurityService"
+    assert near.value.candidates[0] == "css-west"  # the closest first
+    assert set(near.value.candidates) <= {"css-west", "css-east"}
+    place = 'segments["Global Segment"].css.provider.logical_id'
+    assert str(near.value.path) == place
+    assert str(near.value).startswith(
+        f"{place}: Unknown network service of type 'cloudSecurityService': 'css-wst'."
+    )
+    assert far.value.candidates == ["css-east", "css-west"]
+    assert "Of that type: css-east, css-west" in str(far.value)
+    assert "dns-a" not in str(far.value)
+    assert state.plan().changed == ()
+
+
+async def test_an_unknown_css_name_with_no_css_service_says_there_is_none() -> None:
+    pipeline, _, state = await loaded_profile()
+
+    with pytest.raises(ResolutionError) as unknown:
+        _ = await set_css(pipeline, state, "css-west")
+
+    assert unknown.value.wanted == "cloudSecurityService"
+    assert unknown.value.candidates == []
+    assert (
+        "The enterprise has no network service of type 'cloudSecurityService'."
+        in str(unknown.value)
+    )
 
 
 def edge_state() -> ConfigState:

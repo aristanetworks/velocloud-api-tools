@@ -412,20 +412,24 @@ async def _read_stored(  # noqa: PLR0913 (existing: split it when it next change
         ) from error
 
 
-async def _read_named(
+async def find_named_module(
     client: VcoClientBaseProtocol,
     module: ConfigurationModuleBase,
     plan: ModulePlan,
-    enterprise_id: int | None,
+    *,
+    enterprise_id: int | None = None,
 ) -> ConfigurationModuleBase | None:
     """The module of the name of *plan* already held by the configuration of *module*.
 
-    Of several rows of that name it is the one with the highest ID, the last
-    inserted. Only that row is parsed, as ``_read_stored`` parses its row.
-    None when *module* has no ``configuration_id`` or the configuration holds
-    no row of the name. Raises ``WriteOutcomeUnknownError`` when the
+    One read of the configuration with its modules. Of several rows of that
+    name it is the one with the highest ID, the last inserted. Only that row
+    is parsed, at the config level of *module*, as ``_read_stored`` parses its
+    row. None when *module* has no ``configuration_id`` or the configuration
+    holds no row of the name. Raises ``WriteOutcomeUnknownError`` when the
     configuration read does not parse or the row found does not. An error of
-    the read request itself propagates.
+    the read request itself propagates. ``write_module`` with ``if_absent``
+    reads it before it sends an insert again, and :func:`check_found_insert`
+    says whether the module found is *module*.
     """
     configuration_id = module.configuration_id
     if configuration_id is None:
@@ -513,27 +517,6 @@ def _require_this_module[M: ConfigurationModuleBase](
             module_id=stored.id_ if plan.operation == "insert" else module.id_,
         )
     return cast("M", stored)  # _not_this_module found it of the class of module
-
-
-async def find_named_module(
-    client: VcoClientBaseProtocol,
-    module: ConfigurationModuleBase,
-    plan: ModulePlan,
-    *,
-    enterprise_id: int | None = None,
-) -> ConfigurationModuleBase | None:
-    """The module of the plan's name the configuration of *module* holds, or None.
-
-    It is read as ``write_module`` with ``if_absent`` reads it before it sends
-    an insert again: one read of the configuration with its modules; of
-    several rows of the name, the one with the highest ID, parsed at the
-    config level of *module*. None when *module* has no ``configuration_id``
-    or the configuration holds no row of the name. Raises
-    ``WriteOutcomeUnknownError`` when the configuration read, or the row
-    found, does not parse; an error of the read request itself propagates.
-    :func:`check_found_insert` says whether the module found is *module*.
-    """
-    return await _read_named(client, module, plan, enterprise_id)
 
 
 def check_found_insert[M: ConfigurationModuleBase](
@@ -990,7 +973,7 @@ class ConfigurationMixin(Protocol):
         if plan.operation == "insert":
             insert = insert_request(module, plan, enterprise_id)
             found = (
-                await _read_named(self, module, plan, enterprise_id)
+                await find_named_module(self, module, plan, enterprise_id=enterprise_id)
                 if if_absent
                 else None
             )

@@ -167,6 +167,26 @@ async def test_a_name_resolves_in_the_enterprise_of_its_state() -> None:
     assert stored["segmentId"] == 1
 
 
+async def test_an_unknown_segment_name_says_where_it_is_and_wants_no_type() -> None:
+    pipeline = ConfigPipeline(TwoEnterprises())
+    state = await pipeline.load(101, enterprise_id=1)
+
+    with pytest.raises(ResolutionError) as unknown:
+        _ = await pipeline.apply(
+            state,
+            module="device_settings",
+            path="lan.networks",
+            patch={"100": {"segment_id": "Gest"}},
+        )
+
+    error = unknown.value
+    assert error.identity_type is SegmentIdentity
+    assert error.candidates == ["Guest"]
+    assert str(error.path).endswith("segment_id")
+    assert str(error).startswith(f"{error.path}: Unknown segment: 'Gest'.")
+    assert error.wanted is None
+
+
 async def test_states_loaded_at_once_each_resolve_in_their_own_enterprise() -> None:
     pipeline = ConfigPipeline(TwoEnterprises())
 
@@ -270,16 +290,58 @@ async def test_load_resolvers_with_no_identity_leaves_the_services_unloaded() ->
     assert SERVICES not in [m for m, _ in client.store.requests]
 
 
-async def test_load_resolvers_with_a_loaded_type_reloads_the_states_resolver() -> None:
+async def test_load_resolvers_with_again_reloads_a_loaded_resolver() -> None:
     pipeline, client, state = await loaded_profile()
     segments = state.resolvers.get_resolver(SegmentResolver)
     calls = len(client.calls)
 
     await pipeline.load_resolvers(state, SegmentIdentity)
+    assert len(client.calls) == calls  # nothing read
+
+    await pipeline.load_resolvers(state, SegmentIdentity, again=True)
 
     assert state.resolvers.get_resolver(SegmentResolver) is segments
     assert len(client.calls) == calls + 1  # the segments were read again
     assert [m for m, _ in client.store.requests] == []  # and nothing else
+
+
+async def test_the_segment_resolver_of_a_loaded_state_says_it_is_loaded() -> None:
+    _, _, state = await loaded_profile()
+
+    assert state.resolvers.get_resolver(SegmentResolver).loaded
+    assert not state.resolvers.get_resolver(NetworkServiceResolver).loaded
+
+
+async def test_load_resolvers_loads_a_type_once_unless_asked_again() -> None:
+    pipeline, client, state = await loaded_profile()
+
+    await pipeline.load_resolvers(state, NetworkServiceIdentity)
+    await pipeline.load_resolvers(state, NetworkServiceIdentity)
+    assert [m for m, _ in client.store.requests] == [SERVICES]
+
+    client.add_service(
+        703, logical_id=str(uuid.UUID(int=703)), name="dns-c", type_="dns"
+    )
+    await pipeline.load_resolvers(state, NetworkServiceIdentity, again=True)
+    assert [m for m, _ in client.store.requests] == [SERVICES, SERVICES]
+    services = state.resolvers.get_resolver(NetworkServiceResolver)
+    assert sorted(i.name for i in services.identities()) == ["dns-a", "dns-b", "dns-c"]
+
+
+async def test_a_resolver_cleared_by_a_context_is_loaded_again_by_load_resolvers() -> (
+    None
+):
+    pipeline, client, state = await loaded_profile()
+    await pipeline.load_resolvers(state, NetworkServiceIdentity)
+    services = state.resolvers.get_resolver(NetworkServiceResolver)
+    with state.resolvers.context(ResolverContext(enterprise_id=2)):
+        assert not services.loaded
+
+    await pipeline.load_resolvers(state, NetworkServiceIdentity)
+
+    assert services.loaded
+    assert [m for m, _ in client.store.requests] == [SERVICES, SERVICES]
+    assert sorted(i.name for i in services.identities()) == ["dns-a", "dns-b"]
 
 
 async def test_load_resolvers_copies_the_pipelines_resolver_for_a_type_the_state_lacks() -> (  # noqa: E501 (a test's name)

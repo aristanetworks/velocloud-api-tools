@@ -57,6 +57,7 @@ from pyvelo.config.hub_steps import (
 from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core.base import is_dict
 from pyvelo.core.identity import HubServiceNotFoundError
+from pyvelo.core.rebase import Key, Path
 
 _ROLE_FIELDS: Final[dict[Role, str]] = {
     "hub": "edge_hub",
@@ -357,7 +358,7 @@ def _no_service(step: HubStep, what: str) -> HubServiceNotFoundError:
     return HubServiceNotFoundError(
         hub=step.hub.name,
         segment=step.segment,
-        path=f'deviceSettings: segments["{step.segment}"].vpn',
+        path=Path(("segments", Key(step.segment), "vpn")),
         message=(
             f"The VCO has no {what} for {step.hub.name!r} in segment "
             f"{step.segment!r} to call for the step '{step.render()}'. The save "

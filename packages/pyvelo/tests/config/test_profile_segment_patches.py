@@ -32,8 +32,10 @@ from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolverRegistry
 from pyvelo.config.state import ConfigState
 from pyvelo.core import PatchError, Profile, add, delete
-from pyvelo.core.identity import ResolutionError
+from pyvelo.core.identity import NetworkServiceIdentity, ResolutionError
 from pyvelo.core.rebase import Key, Path
+from pyvelo.testing import make_network_service_resolver
+from refs_helpers import DS_ID
 from segment_helpers import (
     GLOBAL,
     GUEST,
@@ -543,6 +545,151 @@ async def test_a_list_value_with_a_new_segment_of_another_descriptor_raises() ->
         )
 
     assert raised.value.kind == "segment_rule"
+    assert dumps(state) == before
+
+
+UNKNOWN_SERVICE = {"dns": {"primaryProvider": {"service": "dns-x"}}}
+
+
+@pytest.mark.parametrize(
+    ("form", "entry_at"),
+    [("list value", Path(("segments", 1))), ("add", GUEST_AT)],
+)
+async def test_an_unknown_service_in_a_new_segment_entry_names_the_whole_path(
+    form: str, entry_at: Path
+) -> None:
+    state = await global_only()
+    state.resolvers.register(
+        await make_network_service_resolver(
+            [NetworkServiceIdentity("dns-a", uuid.UUID(int=1), 701, "dns")]
+        )
+    )
+    segments: object = (
+        [kept(state, DS), {"segment": {"name": "Guest"}, **UNKNOWN_SERVICE}]
+        if form == "list value"
+        else {"Guest": add(UNKNOWN_SERVICE)}
+    )
+    before = dumps(state)
+
+    with pytest.raises(ResolutionError) as raised:
+        _ = await patch(state, DS, segments)
+
+    error = raised.value
+    full = Path((*entry_at.parts, "dns", "primary_provider", "service"))
+    assert error.path == full
+    assert str(error).startswith(
+        f"{full}: Unknown network service of type 'dns': 'dns-x'."
+    )
+    assert str(error).count("primary_provider") == 1
+    assert (error.name, error.identity_type, error.candidates) == (
+        "dns-x",
+        NetworkServiceIdentity,
+        ["dns-a"],
+    )
+    assert dumps(state) == before
+
+
+DNS_A = uuid.UUID(int=1)
+
+
+def dns_body(service: str) -> dict[str, object]:
+    """A DNS section whose primary provider is *service*."""
+    provider = {"service": service}
+    return {
+        "dns": {
+            "primaryProvider": provider,
+            "backupProvider": {},
+            "privateProviders": {},
+        }
+    }
+
+
+AUTH_A = uuid.UUID(int=2)
+CSS_A = uuid.UUID(int=3)
+PROVIDERS = {
+    "dns": (dns_body("dns-a"), DNS_A),
+    "authentication": ({"authentication": {"service": "auth-a"}}, AUTH_A),
+    "css": ({"css": {"provider": {"logicalId": "css-a"}}}, CSS_A),
+}
+"""A body that sets a provider by name, and the service it names."""
+SEGMENT_ROW = "deviceSettings:segment"
+
+
+async def with_services() -> ConfigState:
+    state = await global_only()
+    state.resolvers.register(
+        await make_network_service_resolver(
+            [
+                NetworkServiceIdentity("dns-a", DNS_A, 701, "dns"),
+                NetworkServiceIdentity("auth-a", AUTH_A, 702, "authentication"),
+                NetworkServiceIdentity("css-a", CSS_A, 703, "cloudSecurityService"),
+            ]
+        )
+    )
+    return state
+
+
+def as_list_value(state: ConfigState, body: Mapping[str, object]) -> list[object]:
+    return [kept(state, DS), {"segment": {"name": "Guest"}, **body}]
+
+
+@pytest.mark.parametrize("provider", PROVIDERS)
+async def test_a_provider_in_a_new_entry_of_a_list_value_is_planned_as_in_an_add(
+    provider: str,
+) -> None:
+    body, service = PROVIDERS[provider]
+    listed, added = await with_services(), await with_services()
+
+    _ = await patch(listed, DS, as_list_value(listed, body))
+    _ = await patch(added, DS, {"Guest": add(body)})
+
+    changes = plan_of(listed, DS).ref_changes
+    assert changes == plan_of(added, DS).ref_changes
+    assert [c.value for c in changes if c.name != SEGMENT_ROW] == [str(service)]
+
+
+@pytest.mark.parametrize("provider", ["dns", "authentication"])
+async def test_a_provider_in_a_new_entry_of_a_list_value_is_saved(
+    provider: str,
+) -> None:
+    body, service = PROVIDERS[provider]
+    state = await with_services()
+    pipeline, store = module_store_pipeline(state)
+    store.add_object(701, logical_id=str(DNS_A), name="dns-a", type_="dns")
+    store.add_object(702, logical_id=str(AUTH_A), name="auth-a", type_="authentication")
+    _ = await pipeline.apply(
+        state, module=DS, patch={"segments": as_list_value(state, body)}
+    )
+
+    _ = await pipeline.save(state)
+
+    refs = store.rows[DS_ID]["refs"]
+    (name,) = [n for n in refs if n != SEGMENT_ROW]
+    (row,) = refs[name] if isinstance(refs[name], list) else [refs[name]]
+    assert row["logicalId"] == str(service)
+
+
+@pytest.mark.parametrize("form", ["list value", "add"])
+@pytest.mark.parametrize(
+    "value", ["auth-a", str(uuid.UUID(int=99))], ids=["wrong type", "unknown ID"]
+)
+async def test_a_provider_a_new_entry_cannot_use_is_refused_in_either_form(
+    form: str, value: str
+) -> None:
+    state = await with_services()
+    body = dns_body(value)
+    segments = (
+        as_list_value(state, body) if form == "list value" else {"Guest": add(body)}
+    )
+    before = dumps(state)
+
+    with pytest.raises(ResolutionError) as raised:
+        _ = await patch(state, DS, segments)
+
+    assert raised.value.identity_type is NetworkServiceIdentity
+    assert raised.value.path == Path(
+        ("segments", Key("Guest"), "dns", "primary_provider", "service")
+    )
     assert dumps(state) == before
 
 

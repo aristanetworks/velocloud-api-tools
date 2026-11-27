@@ -813,7 +813,7 @@ async def test_plus_add_by_a_segment_id_no_segment_has_is_left_to_merge_patch() 
     state.resolvers = await _resolvers_with_lab()
     before = state.plan()
     patch: dict[str, object] = {"segments": {"+": add({"segment": {"segmentId": 99}})}}
-    with pytest.raises(ResolutionError, match="Unknown SegmentIdentity: '99'") as exc:
+    with pytest.raises(ResolutionError, match=r"No segment has the value 99\.") as exc:
         _ = await ConfigPipeline(client=None).apply(
             state, module="firewall", patch=patch
         )
@@ -862,11 +862,6 @@ class _SegmentsLoadedOnDemand(SegmentResolver):
     """A segment resolver that, like the services one, answers once loaded."""
 
     requires_load: ClassVar[bool] = True
-
-    @override
-    async def load(self, context: ResolverContext) -> None:
-        await super().load(context)
-        self.loaded = True
 
 
 class _ClientWithLab(MockVcoClient):

@@ -52,6 +52,7 @@ from pyvelo.core.identity import (
     ResolutionError,
     ResolverNotLoadedError,
     SegmentIdentity,
+    resolution_error,
 )
 from pyvelo.core.layers import Edge
 from pyvelo.core.mending import backhaul_hub_mending
@@ -458,11 +459,8 @@ def test_a_resolver_not_loaded_error_keeps_its_class_message_and_identity_type_t
 def test_a_hub_service_not_found_error_keeps_its_class_message_and_attributes_through_copies() -> (  # noqa: E501 (a test's name)
     None
 ):
-    error = HubServiceNotFoundError(
-        hub="Hub-A",
-        segment="Global Segment",
-        path='segments["Global Segment"].rules["r1"].action.route_cfg',
-    )
+    path = Path.parse('segments["Global Segment"].rules["r1"].action.route_cfg')
+    error = HubServiceNotFoundError(hub="Hub-A", segment="Global Segment", path=path)
     error.add_note("while planning QOS")
     for copied in copies(error):
         assert type(copied) is HubServiceNotFoundError
@@ -471,7 +469,7 @@ def test_a_hub_service_not_found_error_keeps_its_class_message_and_attributes_th
         assert (copied.hub, copied.segment, copied.path) == (
             "Hub-A",
             "Global Segment",
-            'segments["Global Segment"].rules["r1"].action.route_cfg',
+            path,
         )
         assert (copied.name, copied.identity_type, copied.candidates) == (
             "Hub-A",
@@ -484,11 +482,40 @@ def test_a_hub_service_not_found_error_keeps_its_class_message_and_attributes_th
 
 def test_a_resolution_error_given_its_own_message_keeps_it() -> None:
     error = ResolutionError(
-        name="x", identity_type="thing", candidates=[], message="no such thing"
+        name="x", identity_type=SegmentIdentity, candidates=[], message="no such thing"
     )
     for copied in copies(error):
         assert str(copied) == "no such thing"
-        assert copied.identity_type == "thing"
+        assert copied.identity_type is SegmentIdentity
+
+
+def test_a_located_resolution_error_keeps_its_path_through_copies() -> None:
+    error = ResolutionError(name="Gest", identity_type=SegmentIdentity, candidates=[])
+    error.locate(Path(("lan", "segment_id")))
+    _ = error.under(Path(("segments", Key("Guest"))))
+    full = Path(("segments", Key("Guest"), "lan", "segment_id"))
+    for copied in copies(error):
+        assert type(copied) is ResolutionError
+        assert (copied.path, copied.wanted) == (full, None)
+        assert str(copied) == str(error) == f"{full}: Unknown segment: 'Gest'."
+
+
+def test_a_resolution_error_of_a_service_type_keeps_it_and_its_candidates() -> None:
+    error = resolution_error(
+        NetworkServiceIdentity, "dns-x", ["dns-a", "dns-b"], wanted="dns"
+    )
+    error.locate(Path(("dns", "primary_provider", "service")))
+    assert sorted(error.candidates) == ["dns-a", "dns-b"]
+    for copied in copies(error):
+        assert type(copied) is ResolutionError
+        assert (copied.wanted, copied.candidates, copied.path) == (
+            "dns",
+            error.candidates,
+            error.path,
+        )
+        assert str(copied) == str(error)
+        assert copied.identity_type is NetworkServiceIdentity
+    assert copy.deepcopy(error).candidates is not error.candidates
 
 
 def test_a_patch_error_keeps_its_path_kind_and_notes_through_copies() -> None:
@@ -527,9 +554,11 @@ def test_a_hub_service_message_names_the_hub_by_logical_id_when_it_has_no_name()
     None
 ):
     logical_id = str(uuid.UUID(int=7))
-    named = HubServiceNotFoundError(hub="Hub-A", segment="Global Segment", path="p")
+    named = HubServiceNotFoundError(
+        hub="Hub-A", segment="Global Segment", path=Path(("p",))
+    )
     unnamed = HubServiceNotFoundError(
-        hub=logical_id, segment="Global Segment", path="p"
+        hub=logical_id, segment="Global Segment", path=Path(("p",))
     )
 
     assert '"name": "Hub-A"' in str(named)

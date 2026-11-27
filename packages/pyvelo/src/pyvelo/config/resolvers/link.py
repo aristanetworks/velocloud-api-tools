@@ -48,7 +48,7 @@ class LinkResolver(BaseResolver[LinkIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         """Fetch links for an edge and populate lookup tables."""
         if context.edge_id is None:
             raise ValueError("LinkResolver requires edge_id in ResolverContext")

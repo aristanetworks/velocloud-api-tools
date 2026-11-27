@@ -36,7 +36,7 @@ import datetime as dt
 import functools
 import sys
 import types
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
@@ -117,6 +117,10 @@ class IdentityResolver(Protocol):
         """The resolver registered for *identity_type*, or None when there is none."""
         ...
 
+    def identities[T](self, identity_type: type[T], /) -> Collection[T]:
+        """The loaded identities of *identity_type*; empty when none are loaded."""
+        ...
+
 
 class IdentityLookup(Protocol):
     """What a derived ref needs to find a loaded identity by one of its IDs.
@@ -128,6 +132,10 @@ class IdentityLookup(Protocol):
         self, identity_type: type[T], accessor: Callable[[T], object], value: object, /
     ) -> T:
         """The first loaded *identity_type* whose *accessor* gives *value*."""
+        ...
+
+    def identities[T](self, identity_type: type[T], /) -> Collection[T]:
+        """The loaded identities of *identity_type*; empty when none are loaded."""
         ...
 
 
@@ -1098,17 +1106,35 @@ def _field_accepts_none(fi: FieldInfo) -> bool:  # pyright: ignore[reportUnusedF
     return type(None) in _union_members(_held_type(fi))
 
 
+def _held_members(fi: FieldInfo) -> list[object]:
+    """The union members of the type field *fi* holds, without ``Annotated``."""
+    return [
+        _unwrap_annotated(m) for m in _union_members(_unwrap_annotated(_held_type(fi)))
+    ]
+
+
+def _is_empty_text_literal(tp: object) -> bool:
+    return get_origin(tp) is Literal and get_args(tp) == ("",)
+
+
+def _holds_empty_text(fi: FieldInfo) -> bool:  # pyright: ignore[reportUnusedFunction]  # imported by core.merge
+    """True if a member of the type field *fi* holds is exactly ``Literal[""]``."""
+    return any(_is_empty_text_literal(m) for m in _held_members(fi))
+
+
 def _id_type(fi: FieldInfo) -> object | None:  # pyright: ignore[reportUnusedFunction]  # imported by core.merge
     """The ID type of a Resolvable field.
 
-    It is the field's annotation without ``MISSING``, ``None`` and ``Annotated``.
+    It is the field's annotation without ``MISSING``, ``None``, ``Annotated``
+    and the empty-text literal, which is the field's value for no identity.
 
     None unless exactly one type is left.
     """
-    members = (
-        _unwrap_annotated(m) for m in _union_members(_unwrap_annotated(_held_type(fi)))
-    )
-    kept = [m for m in members if m is not MISSING and m is not type(None)]
+    kept = [
+        m
+        for m in _held_members(fi)
+        if m is not MISSING and m is not type(None) and not _is_empty_text_literal(m)
+    ]
     return kept[0] if len(kept) == 1 else None
 
 

@@ -112,7 +112,8 @@ The network-service resolver is registered on each state but not loaded by
 `load` or `load_profile`, which therefore cost no more requests than before. It
 is loaded when a plan or a patch first needs it (see "What a save writes"), or
 by `await pipeline.load_resolvers(state, NetworkServiceIdentity)`, which loads
-only that resolver. The call takes any identity type: it loads the state's
+only that resolver once: a second call reads nothing, and `again=True` reads the
+table again. The call takes any identity type: it loads the state's
 resolver for it, or first registers an unloaded copy of the pipeline's (for the
 network services, a new resolver if the pipeline has none), and raises
 `ValueError` when neither has one.
@@ -554,14 +555,20 @@ the edge keeps running with the object `state.effective` showed as the edge's.
 A DNS or authentication provider is set by assignment, with the service's
 logical ID (`provider.service = uuid.UUID(...)`), or by `apply`, with the
 logical ID or the service's name (`patch={"dns": {"primaryProvider":
-{"service": "dns-a"}}}`). The row needs the enterprise's network services, and
+{"service": "dns-a"}}}`). A CSS provider is held in the data
+(`css.provider.logical_id`): a patch gives the service's logical ID or its
+name, and `""` clears it (`{"css": {"provider": {"logical_id": ""}}}`), which
+is what the VCO writes for a provider that is not configured. `null` is refused
+there, with that advice. The row needs the enterprise's network services, and
 `load` does not read them: the first `apply`, `save` or `dry_run` that needs
 them reads the table, once for the state, and goes on. A name no service has
-raises `ResolutionError` and leaves the state as it was, and so does a service
-of the wrong type for the field (`dns` for a DNS provider, `authentication` for
-the authentication provider, `cloudSecurityService` for a CSS provider): the
-message names the service and both types and says to give a service of the
-wanted type. `state.plan()` does not read it and raises `ResolverNotLoadedError`
+raises `ResolutionError` and leaves the state as it was (`error.path` is the
+provider's field), and so does a service of the wrong type for the field (`dns`
+for a DNS provider, `authentication` for the authentication provider,
+`cloudSecurityService` for a CSS provider): the message names the field, the
+type it takes and the services of that type, and the error has them as `path`,
+`wanted` and `candidates`; a name no service of that type has is refused the
+same way. `state.plan()` does not read it and raises `ResolverNotLoadedError`
 for a provider set before the table is loaded;
 `await pipeline.load_resolvers(state, NetworkServiceIdentity)` (from
 `pyvelo.core.identity`) reads it at a time of your choosing.
@@ -1475,6 +1482,9 @@ A lost DNS or authentication provider (a ref row of a field that stands for
 it) is redone by setting the field again, in the segment as the stored list
 names it: `{"segments": {"Global Segment": {"dns": {"primaryProvider":
 {"service": "<logical ID>"}}}}}`, or `null` for a provider you cleared.
+A lost CSS provider is redone the same way, by its logical ID, or by `""` for
+one you cleared; its ref row is still listed in `not_redone()`, although the
+patch sets the provider that makes the row.
 `error.not_redone()` lists the lost edits the patch leaves out: the clashes, a
 lost ref row of any other kind (a patch changes data, not refs), a provider
 whose segment is no longer stored or cannot be told from another by its

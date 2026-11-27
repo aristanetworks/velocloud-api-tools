@@ -19,7 +19,7 @@ import functools
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
@@ -41,7 +41,7 @@ class RefOwner:
     name: str
     """The ref name: the stub's ``ref``, else the marker's default, else the ``OwnsRef``
     name."""
-    marker: OwnsRef | RefOnly
+    marker: OwnsRef[Any] | RefOnly
     identity_type: type
     value: object
     """The identity: a ``uuid.UUID`` (text that parses as one is made one) or an
@@ -203,7 +203,7 @@ def ref_owners(data: VcoModel, level: ConfigContext | None) -> tuple[RefOwner, .
         value = unwrap(stored)
         owns = get_owns_ref(site.field_info)
         ref_only = get_ref_only(site.field_info)
-        marker: OwnsRef | RefOnly
+        marker: OwnsRef[Any] | RefOnly
         if owns is not None:
             if owns.level is not None and owns.level != level:
                 continue

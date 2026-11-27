@@ -16,13 +16,14 @@ from pyvelo.client.schemas.enterprise import (
     GetEnterpriseEdgeList,
     GetEnterpriseServices,
 )
-from pyvelo.config.resolver import BaseResolver, ResolverContext, resolution_error
+from pyvelo.config.resolver import BaseResolver, ResolverContext
 from pyvelo.core.identity import (
     HubIdentity,
     HubLogicalId,
     HubName,
     IdentityKey,
     ResolutionError,
+    resolution_error,
 )
 
 
@@ -95,7 +96,7 @@ class HubResolver(BaseResolver[HubIdentity]):
                         "the cluster instead."
                     ),
                 )
-            raise resolution_error(self._entity_label, name, self._by_name.keys())
+            raise resolution_error(HubIdentity, name, self._by_name.keys())
         listed = ", ".join(f"a {_kind_label(h)} ({h.logical_id})" for h in named)
         raise ResolutionError(
             name=name,
@@ -137,7 +138,7 @@ class HubResolver(BaseResolver[HubIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         """Read the hubs of the enterprise, and populate the lookup tables.
 
         It reads the Edges, the clusters and their members.
@@ -210,7 +211,6 @@ class HubResolver(BaseResolver[HubIdentity]):
                     cluster_logical_id=cluster.logical_id,
                 )
             )
-        self.loaded: bool = True
 
     @override
     def identities(self) -> list[HubIdentity]:

@@ -1319,7 +1319,7 @@ async def test_a_step_with_no_ids_to_call_with_is_refused() -> None:
 
 
 def test_a_hub_enabled_with_no_service_afterwards_is_refused() -> None:
-    with pytest.raises(HubServiceNotFoundError):
+    with pytest.raises(HubServiceNotFoundError) as error:
         _ = hub_rows(
             {},
             [step_of("enable", "hub", HUB_A, added=True)],
@@ -1328,6 +1328,8 @@ def test_a_hub_enabled_with_no_service_afterwards_is_refused() -> None:
             module_id=DS_ID,
             now=ds_data_with(HUB_A),
         )
+
+    assert str(error.value.path) == 'segments["Global Segment"].vpn'
 
 
 def test_the_as_read_rows_of_hubs_that_left_the_hub_list_are_the_rows_removed() -> None:

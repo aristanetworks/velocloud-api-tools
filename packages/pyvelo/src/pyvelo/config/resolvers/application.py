@@ -41,7 +41,7 @@ class ApplicationResolver(BaseResolver[ApplicationIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         request = GetRoutableApplications()
         if context.enterprise_id is not None:
             request.enterprise_id = context.enterprise_id
@@ -63,4 +63,3 @@ class ApplicationResolver(BaseResolver[ApplicationIdentity]):
             app_id = app.id_
             identity = ApplicationIdentity(name=display, id=app_id)
             self._register(display, identity, id=app_id)
-            self._reverse.setdefault("name", {})[display] = display

@@ -1,17 +1,131 @@
 """Tests for resolution_error() and resolve_name() fuzzy matching helpers."""
 
+import copy
+import pickle
+
 import pytest
-from pyvelo.config.resolver import ResolutionError, resolution_error, resolve_name
+from pyvelo.config.resolver import resolve_name
+from pyvelo.core.identity import (
+    ApplicationIdentity,
+    EdgeIdentity,
+    HubIdentity,
+    NetworkServiceIdentity,
+    ResolutionError,
+    ResolverNotLoadedError,
+    SegmentIdentity,
+    resolution_error,
+)
+from pyvelo.core.rebase import Key, Path
+
+
+def test_identity_type_is_a_class_and_the_candidates_are_the_names_listed() -> None:
+    close = resolution_error(EdgeIdentity, "Branch-NY", ["Branch-NYC", "DC-Primary"])
+    far = resolution_error(EdgeIdentity, "zzz", ["Branch-NYC", "DC-Primary"])
+
+    assert close.identity_type is EdgeIdentity
+    assert close.candidates == ["Branch-NYC"]
+    assert str(far) == "Unknown edge: 'zzz'.\nAvailable: Branch-NYC, DC-Primary"
+    assert far.candidates == ["Branch-NYC", "DC-Primary"]
+    assert (far.path, far.wanted) == (None, None)
+
+
+def test_the_candidates_are_at_most_the_twenty_names_the_message_shows() -> None:
+    names = [f"edge-{n:02}" for n in range(30)]
+
+    error = resolution_error(EdgeIdentity, "zzz", names)
+
+    assert error.candidates == names[:20]
+    assert "Available (30 total, showing first 20): edge-00, " in str(error)
+
+
+def test_locate_sets_the_path_once_and_puts_it_before_the_message() -> None:
+    error = resolution_error(SegmentIdentity, "Gest", ["Guest"])
+    place = Path(("lan", "segment_id"))
+
+    error.locate(place)
+    error.locate(Path(("elsewhere",)))
+
+    assert error.path == place
+    assert str(error) == f"{place}: Unknown segment: 'Gest'.\nDid you mean:\n  - Guest"
+    for copied in (copy.copy(error), pickle.loads(pickle.dumps(error))):
+        assert (copied.path, copied.wanted, str(copied)) == (place, None, str(error))
+
+
+def test_under_puts_a_parent_before_the_path_of_a_located_error() -> None:
+    error = resolution_error(SegmentIdentity, "Gest", ["Guest"])
+    error.locate(Path(("lan", "segment_id")))
+    full = Path(("segments", Key("Guest"), "lan", "segment_id"))
+
+    under = error.under(Path(("segments", Key("Guest"))))
+
+    assert under is error
+    assert error.path == full
+    assert str(error) == f"{full}: Unknown segment: 'Gest'.\nDid you mean:\n  - Guest"
+    assert (error.name, error.identity_type, error.candidates) == (
+        "Gest",
+        SegmentIdentity,
+        ["Guest"],
+    )
+
+
+def test_under_replaces_the_path_a_message_starts_with() -> None:
+    place = Path(("dns", "primary_provider", "service"))
+    error = ResolutionError(
+        name="dns-x",
+        identity_type=NetworkServiceIdentity,
+        candidates=[],
+        message=f"{place} names the network service dns-x, which the VCO lacks.",
+        path=place,
+    )
+
+    _ = error.under(Path(("segments", Key("Guest"))))
+
+    full = Path(("segments", Key("Guest"), *place.parts))
+    assert error.path == full
+    assert str(error) == f"{full} names the network service dns-x, which the VCO lacks."
+
+
+def test_under_leaves_an_error_with_no_path_as_it_is() -> None:
+    error = resolution_error(SegmentIdentity, "Gest", ["Guest"])
+    not_loaded = ResolverNotLoadedError(NetworkServiceIdentity)
+    texts = (str(error), str(not_loaded))
+
+    _ = error.under(Path(("segments", Key("Guest"))))
+    _ = not_loaded.under(Path(("segments", Key("Guest"))))
+
+    assert (error.path, not_loaded.path) == (None, None)
+    assert (str(error), str(not_loaded)) == texts
+
+
+def test_an_error_built_with_its_place_and_type_keeps_them() -> None:
+    error = ResolutionError(
+        name="radius-1",
+        identity_type=NetworkServiceIdentity,
+        candidates=["dns-a"],
+        message="m",
+        path=Path(("css", "provider")),
+        wanted="dns",
+    )
+
+    assert (error.path, error.wanted) == (Path(("css", "provider")), "dns")
+    error.locate(Path(("elsewhere",)))
+    assert str(error) == "m"  # it had a place already
+
+
+def test_the_default_message_names_the_identity_by_its_label() -> None:
+    error = ResolutionError(name="x", identity_type=HubIdentity, candidates=[])
+
+    assert str(error) == "Unknown hub: 'x'."
 
 
 class TestResolutionError:
     def test_prints_as_its_message(self) -> None:
-        err = resolution_error("edge", "Branch-NY", ["Branch-NYC", "DC-Primary"])
+        err = resolution_error(EdgeIdentity, "Branch-NY", ["Branch-NYC", "DC-Primary"])
         assert str(err) == "Unknown edge: 'Branch-NY'.\nDid you mean:\n  - Branch-NYC"
 
     def test_close_match_suggests_candidates(self) -> None:
         err = resolution_error(
-            "application",
+            ApplicationIdentity,
             "Microsoft 365",
             ["Microsoft Office 365", "Google Workspace", "Zoom", "Slack"],
         )
@@ -22,7 +136,7 @@ class TestResolutionError:
 
     def test_case_insensitive_matching(self) -> None:
         err = resolution_error(
-            "application",
+            ApplicationIdentity,
             "microsoft office 365",
             ["Microsoft Office 365", "Zoom", "Slack"],
         )
@@ -32,7 +146,7 @@ class TestResolutionError:
 
     def test_no_close_match_shows_available_list(self) -> None:
         err = resolution_error(
-            "edge",
+            EdgeIdentity,
             "zzz-nonexistent",
             ["Branch-NYC", "Branch-London", "DC-Primary"],
         )
@@ -43,7 +157,7 @@ class TestResolutionError:
 
     def test_no_close_match_truncates_long_list(self) -> None:
         names = [f"App-{i:03d}" for i in range(50)]
-        err = resolution_error("application", "zzz-nonexistent", names)
+        err = resolution_error(ApplicationIdentity, "zzz-nonexistent", names)
         msg = str(err)
         assert "50 total, showing first 20" in msg
         # Should show first 20 sorted names
@@ -53,33 +167,33 @@ class TestResolutionError:
         assert "App-020" not in msg
 
     def test_empty_available_list(self) -> None:
-        err = resolution_error("segment", "Global", [])
+        err = resolution_error(SegmentIdentity, "Global", [])
         msg = str(err)
         assert "Unknown segment: 'Global'" in msg
         assert "Available: " in msg
 
     def test_returns_key_error(self) -> None:
-        err = resolution_error("edge", "foo", ["bar"])
+        err = resolution_error(EdgeIdentity, "foo", ["bar"])
         assert isinstance(err, KeyError)
 
     def test_returns_structured_resolution_error(self) -> None:
         err = resolution_error(
-            "application", "Microsoft 36", ["Microsoft 365", "Slack"]
+            ApplicationIdentity, "Microsoft 36", ["Microsoft 365", "Slack"]
         )
         assert isinstance(err, ResolutionError)
         assert err.name == "Microsoft 36"
-        assert err.identity_type == "application"
+        assert err.identity_type is ApplicationIdentity
         assert "Microsoft 365" in err.candidates
 
     def test_resolution_error_caught_as_key_error(self) -> None:
-        err = resolution_error("edge", "foo", ["bar"])
+        err = resolution_error(EdgeIdentity, "foo", ["bar"])
         # Backwards compatibility: ResolutionError must be a KeyError subclass
         assert isinstance(err, ResolutionError)
         assert isinstance(err, KeyError)
 
     def test_multiple_suggestions_ranked(self) -> None:
         err = resolution_error(
-            "edge",
+            EdgeIdentity,
             "Branch-NY",
             ["Branch-NYC", "Branch-NYJ", "Branch-London", "DC-Primary"],
         )
@@ -91,7 +205,7 @@ class TestResolutionError:
 
     def test_exact_substring_match(self) -> None:
         err = resolution_error(
-            "application",
+            ApplicationIdentity,
             "Zoom Phone Call",
             ["Zoom", "Zoom Phone", "Microsoft Teams"],
         )
@@ -102,7 +216,7 @@ class TestResolutionError:
 
     def test_custom_n_and_cutoff(self) -> None:
         names = [f"Branch-{chr(65 + i)}" for i in range(10)]
-        err = resolution_error("edge", "Branch-A", names, n=2, cutoff=0.5)
+        err = resolution_error(EdgeIdentity, "Branch-A", names, n=2, cutoff=0.5)
         msg = str(err)
         assert "Did you mean:" in msg
         # Should show at most 2 suggestions
@@ -119,21 +233,21 @@ class TestResolveName:
 
     def test_exact_match(self) -> None:
         name, val = resolve_name(
-            "Branch-NYC", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge"
+            "Branch-NYC", {"Branch-NYC": 1, "Branch-LAX": 2}, EdgeIdentity
         )
         assert name == "Branch-NYC"
         assert val == 1
 
     def test_case_insensitive_match(self) -> None:
         name, val = resolve_name(
-            "branch-nyc", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge"
+            "branch-nyc", {"Branch-NYC": 1, "Branch-LAX": 2}, EdgeIdentity
         )
         assert name == "Branch-NYC"
         assert val == 1
 
     def test_case_insensitive_upper(self) -> None:
         name, val = resolve_name(
-            "BRANCH-LAX", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge"
+            "BRANCH-LAX", {"Branch-NYC": 1, "Branch-LAX": 2}, EdgeIdentity
         )
         assert name == "Branch-LAX"
         assert val == 2
@@ -143,26 +257,31 @@ class TestResolveName:
             _ = resolve_name(
                 "Example-Edg",
                 {"Example-Edge": 1, "Branch-LAX": 2, "DC-Primary": 3},
-                "edge",
+                EdgeIdentity,
             )
         assert exc.value.candidates == ["Example-Edge"]
 
     def test_fuzzy_is_opt_in(self) -> None:
         name, val = resolve_name(
-            "Example-Edg", {"Example-Edge": 1, "Branch-LAX": 2}, "edge", fuzzy=True
+            "Example-Edg",
+            {"Example-Edge": 1, "Branch-LAX": 2},
+            EdgeIdentity,
+            fuzzy=True,
         )
         assert (name, val) == ("Example-Edge", 1)
 
     def test_fuzzy_ambiguous_raises(self) -> None:
         with pytest.raises(KeyError, match="Did you mean"):
-            _ = resolve_name("Branch", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge")
+            _ = resolve_name("Branch", {"Branch-NYC": 1, "Branch-LAX": 2}, EdgeIdentity)
 
     def test_no_match_raises(self) -> None:
         with pytest.raises(KeyError, match="Unknown edge"):
-            _ = resolve_name("zzz-nothing", {"Branch-NYC": 1, "Branch-LAX": 2}, "edge")
+            _ = resolve_name(
+                "zzz-nothing", {"Branch-NYC": 1, "Branch-LAX": 2}, EdgeIdentity
+            )
 
     def test_exact_match_preferred_over_case_insensitive(self) -> None:
         # If both "foo" and "FOO" exist, exact match wins
-        name, val = resolve_name("foo", {"foo": 1, "FOO": 2}, "edge")
+        name, val = resolve_name("foo", {"foo": 1, "FOO": 2}, EdgeIdentity)
         assert name == "foo"
         assert val == 1

@@ -20,7 +20,7 @@ import dataclasses
 import difflib
 import inspect
 from collections.abc import Callable
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from enum import StrEnum
 from types import UnionType
 from typing import (
@@ -28,7 +28,9 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Final,
     Literal,
+    NewType,
     Self,
     TypeAliasType,
     Union,  # pyright: ignore[reportDeprecated]  # get_origin(Optional[X]) is typing.Union
@@ -49,6 +51,8 @@ from pydantic import (
     ValidationInfo,
 )
 from pydantic_core import CoreSchema, core_schema
+
+from .identity import SERVICE_TYPES
 
 if TYPE_CHECKING:
     from pydantic.fields import FieldInfo
@@ -202,11 +206,11 @@ def is_secret(field_info: FieldInfo) -> bool:
     return any(isinstance(m, Secret) for m in _markers(field_info))
 
 
-def get_owns_ref(field_info: FieldInfo) -> OwnsRef | None:
+def get_owns_ref(field_info: FieldInfo) -> OwnsRef[Any] | None:
     """The ``OwnsRef`` a field is marked with, or None."""
     for m in _markers(field_info):
         if isinstance(m, OwnsRef):
-            return m
+            return cast("OwnsRef[Any]", m)
     return None
 
 
@@ -216,6 +220,40 @@ def get_ref_only(field_info: FieldInfo) -> RefOnly | None:
         if isinstance(m, RefOnly):
             return m
     return None
+
+
+def service_type_of(model: BaseModel | type[BaseModel], field_name: str) -> str | None:
+    """The type of network service the field *field_name* of *model* takes.
+
+    ``None`` for a field that is no provider field: one with neither a ``RefOnly``
+    nor an ``OwnsRef`` marker, or whose ref name is not in ``SERVICE_TYPES``. The
+    ref name is the ``ref`` of *model* when it is an instance that has one as
+    text, else the field's ``RefOnly`` default, else its ``OwnsRef`` name. A
+    *field_name* that is no field of *model* raises ``KeyError``.
+    """
+    if isinstance(model, type):
+        return _service_type(model.model_fields[field_name])
+    field_info = type(model).model_fields[field_name]
+    return _service_type(field_info, getattr(model, "ref", None))
+
+
+def _service_type(field_info: FieldInfo, stub_ref: object = None) -> str | None:
+    """``service_type_of`` from a field's *field_info*.
+
+    *stub_ref* is the ``ref`` its model holds, or ``None``.
+    """
+    ref_only = get_ref_only(field_info)
+    owns_ref = get_owns_ref(field_info)
+    if ref_only is None and owns_ref is None:
+        return None
+    name: str | None
+    if isinstance(stub_ref, str) and stub_ref:
+        name = stub_ref
+    elif ref_only is not None:
+        name = ref_only.default
+    else:
+        name = None if owns_ref is None else owns_ref.name
+    return None if name is None else SERVICE_TYPES.get(name)
 
 
 def get_provides(field_info: FieldInfo) -> Provides | None:
@@ -653,10 +691,53 @@ class _ProbeAnswer:
         raise TypeError("the value read was tested for truth")
 
 
-def _probe_accessor(identity_type: type, accessor: object) -> str:  # noqa: C901 (existing: split it when it next changes)
+@dataclass(frozen=True)
+class _MarkerWords:
+    """How the refusals of a marker that reads an identity name it.
+
+    *written* is how the marker is written, with ``{name}`` for the identity and
+    ``{accessor}`` for the accessor, and *consequence* what an accessor that is no
+    plain read could lead to. *marker* is the marker's name, *mismatch* the sentence
+    on what a field that cannot hold the attribute would do, and *fitting* how an
+    accessor that fits is written, with the same two places as *written*.
+    """
+
+    written: str
+    consequence: str
+    marker: str
+    mismatch: str
+    fitting: str
+
+
+_RESOLVABLE_WORDS: Final = _MarkerWords(
+    written="Resolvable({name}, {accessor})",
+    consequence="a name resolved through it could give a value the field refuses",
+    marker="Resolvable",
+    mismatch=(
+        "A name resolved through it would give a value the field refuses, and that "
+        "would show only when a name is merged in."
+    ),
+    fitting="Resolvable({name}, {accessor})",
+)
+_OWNS_REF_WORDS: Final = _MarkerWords(
+    written="OwnsRef(..., {name}, by={accessor}, ...)",
+    consequence="a ref row could be matched by a value the field never holds",
+    marker="OwnsRef",
+    mismatch=(
+        "A ref row could never be matched to the value the field holds, and that "
+        "would show only when a write derives its refs."
+    ),
+    fitting="by={accessor}",
+)
+
+
+def _probe_accessor(
+    identity_type: type, accessor: object, words: _MarkerWords = _RESOLVABLE_WORDS
+) -> str:
     """The name of the one field of *identity_type* that *accessor* reads and returns.
 
-    Any other accessor raises ``TypeError``.
+    Any other accessor raises ``TypeError``, whose text names the marker as *words*
+    write it.
 
     The accessor is called once on a stand-in for the identity that records each
     attribute read and answers a unique sentinel. One that reads a name that is
@@ -665,8 +746,22 @@ def _probe_accessor(identity_type: type, accessor: object) -> str:  # noqa: C901
     answer cannot be tested for truth: an accessor that falls back to another
     value for a falsy ID (the Global Segment's ``segment_id`` is 0) is refused.
     """
-    names = _identity_field_names(identity_type)
+    read, problem = _probe_problem(identity_type, accessor)
+    if problem is None:
+        return read[0]
+    raise TypeError(_probe_refusal(identity_type, accessor, read, problem, words))
+
+
+def _probe_problem(
+    identity_type: type, accessor: object
+) -> tuple[list[str], str | None]:
+    """The names *accessor* read on the stand-in, and what is wrong with it.
+
+    The problem is None when it read one field of *identity_type* and returned it.
+    """
     read: list[str] = []
+    if not callable(accessor):
+        return read, f"{accessor!r} is not a function."
     answer = _ProbeAnswer()
 
     class Probe:
@@ -674,32 +769,42 @@ def _probe_accessor(identity_type: type, accessor: object) -> str:  # noqa: C901
             read.append(name)
             return answer
 
-    problem: str
-    if not callable(accessor):
-        problem = f"{accessor!r} is not a function."
-    else:
-        try:
-            returned = cast("Callable[[object], object]", accessor)(Probe())
-        except Exception as err:  # noqa: BLE001 - whatever it raises, it is not a plain read
-            returned = err
-        if not read and isinstance(returned, Exception):
-            problem = (
-                f"It raised {type(returned).__name__}: {returned} before reading any "
-                "field of the identity."
-            )
-        elif not read:
-            problem = "It read no field of the identity."
-        elif len(read) > 1:
-            problem = f"It read several fields ({', '.join(read)}); it must read one."
-        elif read[0] not in names:
-            problem = (
-                f"It read '{read[0]}', which is not a field of "
-                f"{identity_type.__name__}."
-            )
-        elif returned is not answer:
-            problem = f"It did more than return '{read[0]}'."
-        else:
-            return read[0]
+    try:
+        returned = cast("Callable[[object], object]", accessor)(Probe())
+    except Exception as err:  # noqa: BLE001 - whatever it raises, it is not a plain read
+        returned = err
+    problem: str | None = None
+    if not read and isinstance(returned, Exception):
+        problem = (
+            f"It raised {type(returned).__name__}: {returned} before reading any "
+            "field of the identity."
+        )
+    elif not read:
+        problem = "It read no field of the identity."
+    elif len(read) > 1:
+        problem = f"It read several fields ({', '.join(read)}); it must read one."
+    elif read[0] not in _identity_field_names(identity_type):
+        problem = (
+            f"It read '{read[0]}', which is not a field of {identity_type.__name__}."
+        )
+    elif returned is not answer:
+        problem = f"It did more than return '{read[0]}'."
+    return read, problem
+
+
+def _probe_refusal(
+    identity_type: type,
+    accessor: object,
+    read: list[str],
+    problem: str,
+    words: _MarkerWords,
+) -> str:
+    """The refusal of an accessor that *problem* says is wrong, with one to write.
+
+    The suggested accessor reads the field it read, or the field closest to it, or
+    the first field of *identity_type*. *words* say how the marker is written.
+    """
+    names = _identity_field_names(identity_type)
     target = read[0] if read else accessor if isinstance(accessor, str) else None
     if target in names:
         suggested = target
@@ -708,12 +813,12 @@ def _probe_accessor(identity_type: type, accessor: object) -> str:  # noqa: C901
     else:
         suggested = names[0] if names else "<field>"
     name = identity_type.__name__
-    raise TypeError(
-        f"Resolvable({name}, accessor) needs an accessor that reads one field of "
-        f"{name} and returns it. {problem} An accessor that does anything else cannot "
-        "be checked against the type of the field it goes on, so a name resolved "
-        "through it could give a value the field refuses. Write it as "
-        f"Resolvable({name}, lambda i: i.{suggested})."
+    return (
+        f"{words.written.format(name=name, accessor='accessor')} needs an accessor "
+        f"that reads one field of {name} and returns it. {problem} An accessor that "
+        "does anything else cannot be checked against the type of the field it goes "
+        f"on, so {words.consequence}. Write it as "
+        f"{words.written.format(name=name, accessor=f'lambda i: i.{suggested}')}."
     )
 
 
@@ -771,44 +876,44 @@ class Secret:
 
 
 @dataclass(frozen=True, slots=True)
-class OwnsRef:
+class OwnsRef[IdentityT]:
     """Annotated marker: this data field holds an identity that a ref row goes with.
 
     A row of ref name *name* goes with the identity. *identity* is
     the identity type, whose resolver gives the ``object_id`` a new row needs;
-    *by* is the attribute of it that the data holds, and *row* the row field
-    that value is compared with (``"logicalId"``, ``"data.segmentId"``).
-    *value* is the path from the annotated field to that value, when the marker
-    sits on an object and not on the scalar. *per_segment* is true for a ref
-    that is kept per segment. *level* limits the declaration to one config
-    level; None is both.
+    *by* is an accessor that reads the field of the identity whose value the data
+    holds, as ``Resolvable``'s does, and *row* the row field that value is compared
+    with (``"logicalId"``, ``"data.segmentId"``). *value* is the path from the
+    annotated field to that value, in field names, when the marker sits on an
+    object and not on the scalar. *per_segment* is true for a ref that is kept per
+    segment. *level* limits the declaration to one config level; None is both.
 
-    Validates at class creation time that *by* exists on *identity*, as
-    ``Resolvable`` does.
+    *by* is probed when the marker is built, as ``Resolvable``'s accessor is: it
+    must read exactly one field of *identity* and return it, and that field's name
+    is kept as ``attribute``. Two markers that differ only in the accessor object
+    are equal. ``apply_vco_markers`` then refuses, at class creation, a field (or
+    the field *value* names) whose type cannot hold that attribute.
 
     Usage: ``logical_id: Annotated[uuid.UUID | Literal[""],
     OwnsRef("deviceSettings:css:provider", NetworkServiceIdentity,
-    by="logical_id", row="logicalId", per_segment=True)] = ""``
+    by=lambda i: i.logical_id, row="logicalId", per_segment=True)] = ""``
     """
 
     name: str
-    identity: type
+    identity: type[IdentityT]
     _: KW_ONLY
-    by: str
+    by: Callable[[IdentityT], object] = field(compare=False)
     row: str
     value: str | None = None
     per_segment: bool = False
     level: ConfigContext | None = None
+    attribute: str = field(init=False, default="")
 
     def __post_init__(self) -> None:
-        """Raise ``TypeError`` when *by* is not a field of the *identity* dataclass."""
-        if dataclasses.is_dataclass(self.identity):
-            field_names = {f.name for f in dataclasses.fields(self.identity)}
-            if self.by not in field_names:
-                raise TypeError(
-                    f"{self.identity.__name__} has no field '{self.by}'. "
-                    f"Available: {', '.join(sorted(field_names))}"
-                )
+        """Probe *by* for the field of *identity* it reads, kept as ``attribute``."""
+        object.__setattr__(
+            self, "attribute", _probe_accessor(self.identity, self.by, _OWNS_REF_WORDS)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -961,11 +1066,11 @@ class _LiteralValue:
 def _type_atoms(tp: object) -> frozenset[object]:
     """The types *tp* allows, apart from ``None`` and ``MISSING``.
 
-    ``Annotated``, ``type`` aliases and unions are taken apart, and each ``Literal``
-    value is an atom.
+    ``Annotated``, ``type`` aliases and unions are taken apart, a ``NewType`` counts
+    as its supertype, and each ``Literal`` value is an atom.
     """
-    while get_origin(tp) is Annotated:
-        tp = get_args(tp)[0]
+    while isinstance(tp, NewType) or get_origin(tp) is Annotated:
+        tp = tp.__supertype__ if isinstance(tp, NewType) else get_args(tp)[0]
     if isinstance(tp, TypeAliasType):
         return _type_atoms(tp.__value__)
     if get_origin(tp) is Literal:
@@ -1003,6 +1108,20 @@ def _atoms_text(atoms: frozenset[object]) -> str:
     return " | ".join([*named, *([f"Literal[{', '.join(values)}]"] if values else [])])
 
 
+def _fits(wanted: object, held: frozenset[object]) -> bool:
+    """Whether a field that holds the atoms *held* can hold the atom *wanted*.
+
+    It can when *wanted* is one of them, is a class that subclasses one of them, or is a
+    ``Literal`` value that is an instance of one of them.
+    """
+    if wanted in held:
+        return True
+    classes = tuple(h for h in held if isinstance(h, type))
+    if isinstance(wanted, _LiteralValue):
+        return isinstance(wanted.value, classes)
+    return isinstance(wanted, type) and issubclass(wanted, classes)
+
+
 def _check_resolvable(
     cls: type[BaseModel],
     field_name: str,
@@ -1011,37 +1130,61 @@ def _check_resolvable(
 ) -> None:
     """Refuse a field that cannot hold what its ``Resolvable`` accessor returns.
 
-    Every type the identity's attribute allows apart from ``None`` must be one
-    the field's ID type allows apart from ``None`` and ``MISSING`` (the type held
-    inside a field kind, ``Annotated`` and ``type`` aliases taken apart); a
-    ``Literal`` attribute fits a ``Literal`` field that holds all its values.
-    An attribute that allows ``None`` needs a field that allows it too (a field
-    that holds only ``MISSING`` besides its type does not). A
-    field that cannot is refused here because it would otherwise fail only
-    when a name resolved to a value it refuses.
+    The field's ID type is the type held inside its field kind; ``_check_holds``
+    says what it must allow. A field that cannot hold the attribute is refused here
+    because it would otherwise fail only when a name resolved to a value it refuses.
     """
     from .layers import field_kind  # noqa: PLC0415 (layers imports this module)
 
-    identity = marker.identity_type
+    _check_holds(
+        f"{cls.__name__}.{field_name}",
+        field_kind(fi).inner_type,
+        marker.identity_type,
+        marker.attribute,
+        _RESOLVABLE_WORDS,
+    )
+
+
+def _check_holds(
+    owner: str,
+    held_type: object,
+    identity: type,
+    attribute: str,
+    words: _MarkerWords,
+) -> None:
+    """Refuse *held_type*, the field *owner*'s type, when it cannot hold *attribute*.
+
+    Each type the identity's *attribute* allows apart from ``None`` must fit
+    *held_type* apart from ``None`` and ``MISSING`` (``Annotated`` and ``type``
+    aliases taken apart): it fits when it is one of the field's types, or is a class
+    that subclasses one, or is a ``Literal`` value that is an instance of one. A
+    ``NewType`` counts as its supertype on both sides. A field that holds ``Any`` or
+    ``object`` is not checked at all. An attribute that allows ``None`` needs a
+    field that allows it too (a field that holds only ``MISSING`` besides its type
+    does not). The ``TypeError`` names the marker as *words* write it.
+    """
     hints = get_type_hints(identity)
-    wanted = _type_atoms(hints[marker.attribute])
-    held = _type_atoms(field_kind(fi).inner_type)
-    gives_none = _allows_none(hints[marker.attribute])
-    holds_none = _allows_none(field_kind(fi).inner_type)
-    if wanted <= held and (holds_none or not gives_none):
+    wanted = _type_atoms(hints[attribute])
+    held = _type_atoms(held_type)
+    if Any in held or object in held:
+        return
+    gives_none = _allows_none(hints[attribute])
+    holds_none = _allows_none(held_type)
+    if all(_fits(w, held) for w in wanted) and (holds_none or not gives_none):
         return
     fitting = [
         name
         for name in _identity_field_names(identity)
         if name in hints
         and (atoms := _type_atoms(hints[name]))
-        and atoms <= held
+        and all(_fits(a, held) for a in atoms)
         and (holds_none or not _allows_none(hints[name]))
     ]
     advice = (
         "Read a field that fits instead: "
         + " or ".join(
-            f"Resolvable({identity.__name__}, lambda i: i.{n})" for n in fitting
+            words.fitting.format(name=identity.__name__, accessor=f"lambda i: i.{n}")
+            for n in fitting
         )
         if fitting
         else (
@@ -1050,16 +1193,140 @@ def _check_resolvable(
         )
     )
     raise TypeError(
-        f"{cls.__name__}.{field_name} holds "
-        f"{_atoms_text(held)}{' or None' if holds_none else ''}, but its Resolvable "
-        f"reads {identity.__name__}.{marker.attribute}, which can be "
-        f"{_atoms_text(wanted)}{' or None' if gives_none else ''}. A name resolved "
-        "through it would give a value the field refuses, and that would show only "
-        f"when a name is merged in. {advice}"
+        f"{owner} holds {_atoms_text(held)}{' or None' if holds_none else ''}, but "
+        f"its {words.marker} reads {identity.__name__}.{attribute}, which can be "
+        f"{_atoms_text(wanted)}{' or None' if gives_none else ''}. {words.mismatch} "
+        f"{advice}"
     )
 
 
-def apply_vco_markers(cls: type[BaseModel]) -> None:  # noqa: C901, PLR0912 (existing: split it when it next changes)
+def _check_owns_ref(
+    cls: type[BaseModel],
+    field_name: str,
+    fi: FieldInfo,
+    marker: OwnsRef[Any],
+) -> None:
+    """Refuse a field that cannot hold what its ``OwnsRef`` accessor reads.
+
+    The field is the annotated one or, with ``value``, the field that path names:
+    its dotted parts are followed from the one model class the field holds, through
+    each model's fields. A part that is no field, or a step with no model class to
+    follow, raises ``TypeError``. The field found is then checked as
+    ``_check_holds`` says, and the refusal names it by the path.
+    """
+    from .layers import field_kind  # noqa: PLC0415 (layers imports this module)
+
+    owner = f"{cls.__name__}.{field_name}"
+    held_type = field_kind(fi).inner_type
+    for part in [] if marker.value is None else marker.value.split("."):
+        models = [
+            a
+            for a in _type_atoms(held_type)
+            if isinstance(a, type) and issubclass(a, BaseModel)
+        ]
+        if len(models) != 1 or part not in models[0].model_fields:
+            raise TypeError(
+                f"{owner}: OwnsRef(value={marker.value!r}) is no path to a field of "
+                "what the field holds, so the value a ref row goes with could not "
+                "be read. Give the path from this field to the value in field "
+                'names, as in value="segment_id".'
+            )
+        held_type = field_kind(models[0].model_fields[part]).inner_type
+    if marker.value is not None:
+        owner = f"{owner}.{marker.value}"
+    _check_holds(owner, held_type, marker.identity, marker.attribute, _OWNS_REF_WORDS)
+
+
+def _process_level_marker(fi: FieldInfo, m: object, already: set[type]) -> bool:
+    """Process *m* when it is ``EdgeOnly``, ``ProfileOnly``, a normalizer or a default.
+
+    The normalizer is a ``Normalizer`` and the default a ``ContextDefault``.
+    Whether *m* was processed: one of them is not when a marker of its kind was
+    processed before it (the first marker of a kind wins).
+    """
+    if (
+        m is EdgeOnly or (isinstance(m, type) and issubclass(m, EdgeOnly))
+    ) and _ProcessedCtxDefaults not in already:
+        fi.metadata.append(_ProcessedCtxDefaults(ContextDefaults(profile=MISSING)))
+        already.add(_ProcessedCtxDefaults)
+        return True
+    if (
+        m is ProfileOnly or (isinstance(m, type) and issubclass(m, ProfileOnly))
+    ) and _ProcessedCtxDefaults not in already:
+        fi.metadata.append(_ProcessedCtxDefaults(ContextDefaults(edge=MISSING)))
+        already.add(_ProcessedCtxDefaults)
+        return True
+    if isinstance(m, Normalizer) and _ProcessedNorm not in already:
+        fi.metadata.append(_ProcessedNorm(_wrap_normalizer(m.fn)))
+        already.add(_ProcessedNorm)
+        return True
+    if isinstance(m, ContextDefault) and _ProcessedCtxDefaults not in already:
+        fi.metadata.append(
+            _ProcessedCtxDefaults(ContextDefaults(edge=m.edge, profile=m.profile))
+        )
+        already.add(_ProcessedCtxDefaults)
+        return True
+    return False
+
+
+def _process_flag_marker(fi: FieldInfo, m: object, already: set[type]) -> bool:
+    """Process *m* when it is a ``KeyField``, an ``OverrideFlag`` or ``EdgeLocal``.
+
+    Whether *m* was processed: one of them is not when a marker of its kind was
+    processed before it (the first marker of a kind wins).
+    """
+    if isinstance(m, KeyField) and KeySpec not in already:
+        fi.metadata.append(KeySpec(m.key_paths, alt=m.alt, label=m.label))
+        already.add(KeySpec)
+        return True
+    if (
+        isinstance(m, OverrideFlag)
+        or (isinstance(m, type) and issubclass(m, OverrideFlag))
+    ) and _ProcessedOverrideFlag not in already:
+        fi.metadata.append(_ProcessedOverrideFlag())
+        already.add(_ProcessedOverrideFlag)
+        if _ProcessedCtxDefaults not in already:
+            fi.metadata.append(_ProcessedCtxDefaults(ContextDefaults(profile=MISSING)))
+            already.add(_ProcessedCtxDefaults)
+        fi.metadata.append(Lenient(_none_to_false))
+        return True
+    if (
+        isinstance(m, EdgeLocal) or (isinstance(m, type) and issubclass(m, EdgeLocal))
+    ) and _ProcessedEdgeLocal not in already:
+        fi.metadata.append(_ProcessedEdgeLocal())
+        already.add(_ProcessedEdgeLocal)
+        return True
+    return False
+
+
+def _process_identity_marker(
+    cls: type[BaseModel],
+    field_name: str,
+    fi: FieldInfo,
+    marker: object,
+    already: set[type],
+) -> None:
+    """Check *marker* when it is an ``OwnsRef``, or the field's first ``Resolvable``.
+
+    A ``Resolvable`` is then processed; nothing is added for an ``OwnsRef``, as
+    ``get_owns_ref`` reads the marker itself. It does nothing for any other marker.
+    """
+    if isinstance(marker, OwnsRef):
+        _check_owns_ref(cls, field_name, fi, cast("OwnsRef[Any]", marker))
+    elif isinstance(marker, Resolvable) and _ProcessedResolvable not in already:
+        resolvable = cast("Resolvable[Any]", marker)
+        _check_resolvable(cls, field_name, fi, resolvable)
+        fi.metadata.append(
+            _ProcessedResolvable(
+                identity_type=resolvable.identity_type,
+                accessor=resolvable.accessor,
+                attribute=resolvable.attribute,
+            )
+        )
+        already.add(_ProcessedResolvable)
+
+
+def apply_vco_markers(cls: type[BaseModel]) -> None:
     """Scan FieldInfo.metadata for VCO markers.
 
     The processed results are stored back in metadata.
@@ -1090,59 +1357,10 @@ def apply_vco_markers(cls: type[BaseModel]) -> None:  # noqa: C901, PLR0912 (exi
                 fi.validation_alias = m.key
                 fi.serialization_alias = m.key
                 needs_rebuild = True
-            elif (
-                m is EdgeOnly or (isinstance(m, type) and issubclass(m, EdgeOnly))
-            ) and _ProcessedCtxDefaults not in already:
-                fi.metadata.append(
-                    _ProcessedCtxDefaults(ContextDefaults(profile=MISSING))
-                )
-                already.add(_ProcessedCtxDefaults)
-            elif (
-                m is ProfileOnly or (isinstance(m, type) and issubclass(m, ProfileOnly))
-            ) and _ProcessedCtxDefaults not in already:
-                fi.metadata.append(_ProcessedCtxDefaults(ContextDefaults(edge=MISSING)))
-                already.add(_ProcessedCtxDefaults)
-            elif isinstance(m, Normalizer) and _ProcessedNorm not in already:
-                fi.metadata.append(_ProcessedNorm(_wrap_normalizer(m.fn)))
-                already.add(_ProcessedNorm)
-            elif isinstance(m, ContextDefault) and _ProcessedCtxDefaults not in already:
-                fi.metadata.append(
-                    _ProcessedCtxDefaults(
-                        ContextDefaults(edge=m.edge, profile=m.profile)
-                    )
-                )
-                already.add(_ProcessedCtxDefaults)
-            elif isinstance(m, KeyField) and KeySpec not in already:
-                fi.metadata.append(KeySpec(m.key_paths, alt=m.alt, label=m.label))
-                already.add(KeySpec)
-            elif (
-                isinstance(m, OverrideFlag)
-                or (isinstance(m, type) and issubclass(m, OverrideFlag))
-            ) and _ProcessedOverrideFlag not in already:
-                fi.metadata.append(_ProcessedOverrideFlag())
-                already.add(_ProcessedOverrideFlag)
-                if _ProcessedCtxDefaults not in already:
-                    fi.metadata.append(
-                        _ProcessedCtxDefaults(ContextDefaults(profile=MISSING))
-                    )
-                    already.add(_ProcessedCtxDefaults)
-                fi.metadata.append(Lenient(_none_to_false))
-            elif (
-                isinstance(m, EdgeLocal)
-                or (isinstance(m, type) and issubclass(m, EdgeLocal))
-            ) and _ProcessedEdgeLocal not in already:
-                fi.metadata.append(_ProcessedEdgeLocal())
-                already.add(_ProcessedEdgeLocal)
-            elif isinstance(m, Resolvable) and _ProcessedResolvable not in already:
-                marker = cast("Resolvable[Any]", m)
-                _check_resolvable(cls, field_name, fi, marker)
-                fi.metadata.append(
-                    _ProcessedResolvable(
-                        identity_type=marker.identity_type,
-                        accessor=marker.accessor,
-                        attribute=marker.attribute,
-                    )
-                )
-                already.add(_ProcessedResolvable)
+            elif not (
+                _process_level_marker(fi, m, already)
+                or _process_flag_marker(fi, m, already)
+            ):
+                _process_identity_marker(cls, field_name, fi, m, already)
     if needs_rebuild:
         cls.model_rebuild(force=True)

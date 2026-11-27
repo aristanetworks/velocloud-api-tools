@@ -755,3 +755,19 @@ def test_validation_messages_name_fields_as_a_patch_writes_them() -> None:
 def test_a_field_value_has_no_name_in_its_message() -> None:
     error = raises_at(Root(), {"count": "abc"}, "count")
     assert error.message == f"invalid value: {INT}"
+
+
+def test_null_on_a_field_that_holds_empty_text_says_to_give_empty_text() -> None:
+    class Dhcp(VcoModel):
+        base: int | Literal[""] = ""
+
+    held = Dhcp(base=5)
+    with pytest.raises(PatchError) as refused:
+        _ = held.merge_patch({"base": None})
+
+    assert refused.value.kind == "null"
+    assert refused.value.message == (
+        'null is not a value of base: it holds "" when there is none, which is '
+        'what the VCO writes. To clear it, give "" in place of null'
+    )
+    assert held.base == 5

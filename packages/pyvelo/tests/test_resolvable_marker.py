@@ -1,12 +1,14 @@
 """Tests for the Resolvable Annotated marker."""
 
 import copy
+import enum
 import importlib
 import pickle
 import pkgutil
 import uuid
 from collections.abc import Callable
-from typing import Annotated, Literal, get_type_hints
+from dataclasses import dataclass
+from typing import Annotated, Any, Literal, NewType, get_type_hints
 
 import pytest
 import pyvelo
@@ -270,3 +272,80 @@ def test_a_model_with_resolvable_fields_pickles_and_copies() -> None:
     assert get_resolvable(OutboundRuleMatch.model_fields["application_id"]) is not None
     assert pickle.loads(pickle.dumps(rule)) == rule
     assert copy.deepcopy(rule) == rule
+
+
+UserId = NewType("UserId", int)
+
+
+class Colour(enum.StrEnum):
+    RED = "red"
+
+
+@dataclass(frozen=True)
+class ThingIdentity:
+    name: str
+    id: int
+    code: UserId
+    colour: Colour
+    kind: Literal["a", "b"]
+    flag: bool
+    maybe: int | None
+
+
+def holder(annotation: object) -> type[VcoModel]:
+    """A model whose one field has *annotation*; the type rule runs as it is made."""
+
+    class Holder(VcoModel):
+        value: annotation  # pyright: ignore[reportInvalidTypeForm]  # the annotation is the test's input
+
+    return Holder
+
+
+SOUND = {
+    "str over a Literal": Annotated[str, Resolvable(HubIdentity, lambda i: i.type_)],
+    "str over a StrEnum": Annotated[str, Resolvable(ThingIdentity, lambda i: i.colour)],
+    "int over a bool": Annotated[int, Resolvable(ThingIdentity, lambda i: i.flag)],
+    "Any": Annotated[Any, Resolvable(ThingIdentity, lambda i: i.id)],
+    "object": Annotated[object, Resolvable(ThingIdentity, lambda i: i.id)],
+    "Any over an optional": Annotated[
+        Any, Resolvable(ThingIdentity, lambda i: i.maybe)
+    ],
+    "a NewType over its supertype": Annotated[
+        UserId, Resolvable(ThingIdentity, lambda i: i.id)
+    ],
+    "the supertype over a NewType": Annotated[
+        int, Resolvable(ThingIdentity, lambda i: i.code)
+    ],
+}
+
+UNSOUND = {
+    "bool over an int": Annotated[bool, Resolvable(ThingIdentity, lambda i: i.id)],
+    "int over a str": Annotated[int, Resolvable(ThingIdentity, lambda i: i.name)],
+    "int over a str Literal": Annotated[
+        int, Resolvable(ThingIdentity, lambda i: i.kind)
+    ],
+    "a narrower Literal": Annotated[
+        Literal["a"], Resolvable(ThingIdentity, lambda i: i.kind)
+    ],
+    "str over an optional": Annotated[
+        str, Resolvable(ThingIdentity, lambda i: i.maybe)
+    ],
+    "int over an optional": Annotated[
+        int, Resolvable(ThingIdentity, lambda i: i.maybe)
+    ],
+}
+
+
+@pytest.mark.parametrize("annotation", SOUND.values(), ids=SOUND.keys())
+def test_a_field_that_can_hold_what_the_accessor_returns_is_accepted(
+    annotation: object,
+) -> None:
+    model = holder(annotation)
+
+    assert get_resolvable(model.model_fields["value"]) is not None
+
+
+@pytest.mark.parametrize("annotation", UNSOUND.values(), ids=UNSOUND.keys())
+def test_a_field_that_cannot_hold_it_is_still_refused(annotation: object) -> None:
+    with pytest.raises(TypeError, match="a value the field refuses"):
+        _ = holder(annotation)

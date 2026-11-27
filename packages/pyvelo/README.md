@@ -33,7 +33,7 @@ pyvelo = { git = "https://github.com/aristanetworks/velocloud-api-tools.git", su
 | `pyvelo.core` | `VcoModel` base class (with `.merge_patch()`), layer models (`Layered`, generic over a layer: `Edge`, `Profile`, `Effective` or `Composed`) and their field kinds (`Inheritable`, `Additive`, `Unconverted`, and `EdgeOnly` / `ProfileOnly` subscripted), `Default` (the display default of an `Inheritable` field), `Owned` with its encodings `ByPresence` and `ByFlag` (`Encoding` is either) and its intents `set_local`, `inherit` and `localize`, coupled groups (`MemberOf`, `OwnedGroup`, `GroupHandle`), `bind_layers` (links an edge layer to its profile, which `localize` copies from), `effective_view` (computes `Data[Effective]` from an edge layer and its profile layer: each value a `Resolved` with its `Origin` `EDGE`, `PROFILE` or `FACTORY` and its `source`, read-only), `effective_dump` (the view as wire JSON, and the `Resolved` of each wire path in it) and `Authority` (marks an `Inheritable` field whose effective value is the profile's whenever a rule on the profile's value holds), `field_kind`, `FieldKind` and `Kind` (what a field of such a model is, and the names of its kinds), `kind_default` (the default of an `EdgeOnly`, `ProfileOnly`, `Additive` or `Unconverted` field), `layer_for` (the stored layer a `ConfigContext` level reads and writes) and `unwrap` (the value an `Owned` stores; any other value as it is), field markers (`KeyField`, `FixedList`, `Resolvable` (an identity type and an accessor of it, checked against the field's type at class creation), `NameOf`, `OverrideFlag`, `Alias`, `Normalizer`, `ConfigContext`, `ContextDefault`), defaulting helpers (`DefaultingModel`, `DefaultingScalar`), `Secret` (marks a field that holds a secret), `OwnsRef` and `RefOnly` (mark the data field a ref row goes with, and a field that stands for a ref row and is never dumped or read from data), `Provides` and `RefersTo` (mark a list whose items a set of names refers to, and a field that holds one of them), `HubRole` (marks a list of hubs by the role it gives), `get_owns_ref`, `get_ref_only`, `get_provides`, `get_refers_to`, `get_hub_role` and `get_fixed_list`, `is_secret` and `hide_secrets(model, path, value)` (the value with its secrets shown as `***`), identity types (`EdgeId`, `SegmentId`, `ProfileId`, …; for a hub `HubIdentity`, `HubName`, `HubLogicalId` and `HubService`, with `HubServiceNotFoundError`); the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`); `MendingPatch` and `MendingKind` (a patch that mends an error, as JSON data with the `apply` arguments that send it) and `backhaul_hub_mending` (the patch that makes a hub a backhaul hub of a segment, as `HubServiceNotFoundError` gives it); for a tool that works over patches, `Path` and `Key` (the parts of a change's location), `key_text` and `item_key_text`, `list_kind` and `ListKind`, `select_items` and `item_selector`, `key_selector` and `selector_of`, `nest_patch`, `position_of`, `is_positional` and `get_name_of`; facts about a field for a schema view: `wire_name` (the JSON key it is written under), `python_name` (the field a key names; `python_path` in `pyvelo.core.rebase` does the same for the path of a change), `field_models` (the model classes its value, its list items or its map values can be), and `Model.context(level)`, whose entries say whether a field exists at edge or at profile level (`is_present`) |
 | `pyvelo.client.module_write`, `pyvelo.client.module_check` | `plan_module` and `ModulePlan` (what a write of a module changes), `check_module_write` and `ModuleWrite` (a write that was stored: the module as stored, the changes `applied`, `left_out` and `server_changes`) |
 | `pyvelo.config` | `ConfigPipeline` and `build_default_pipeline` (load → apply → save, and revert), `ConfigState`, `ConfigPlan`, `SaveResult`, the patch helpers and the errors of a patch and a save: see [CONFIGURATION.md](CONFIGURATION.md) |
-| `pyvelo.config.resolver` | `Resolver` Protocol (one type parameter, the identity), `BaseResolver`, `ResolverRegistry` (`lookup`, `lookup_by`, `resolve`), `ResolverContext`, `ResolutionError` |
+| `pyvelo.config.resolver` | `Resolver` Protocol (one type parameter, the identity), `BaseResolver`, `ResolverRegistry` (`lookup`, `lookup_by`, `resolve`, `find`, `identities`), `ResolverContext`, `ResolutionError` |
 | `pyvelo.config.resolvers.*` | Concrete resolvers: edge, segment, profile, address_group, application, service_group, license, link, network_service, hub |
 | `pyvelo.config.validation` | `Validator` Protocol, `ValidatorRegistry`, `@validator` decorator, `ConfigStateLike` Protocol, `ValidationError`, `ValidationResult` |
 | `pyvelo.testing` | Test fixtures: `FakeEdge`, `FakeSegment`, `mock_vco_client_factory`, `make_jsonrpc_response`, `make_transport`; `ModuleStore`, a fake VCO that holds configuration module rows and serves their reads and writes (`store_of`, `as_stored`); `network_segment_wire`, one item of a `getEnterpriseNetworkSegments` answer in wire keys, to parse with `NetworkSegment.model_validate` and hand a segment resolver as the VCO gives it (`make_segment_resolver` builds one) |
@@ -51,8 +51,11 @@ that type. After `await resolver.load(context)` (the pipeline does it for a
 state), `registry.lookup(SegmentId(2))` and
 `registry.lookup(SegmentIdentity, "Guest")` answer from the loaded tables,
 without an event loop; `await registry.resolve(...)` answers the same. A resolver
-subclass of `BaseResolver[SegmentIdentity]` overrides `lookup_key` and `load`;
-`lookup` is optional (`BaseResolver`'s serves name lookups), and its `resolve` and
+subclass of `BaseResolver[SegmentIdentity]` overrides `lookup_key` and `_load`;
+`load` is final: it runs `_load` and then sets `loaded`, which every resolver has
+(the `Resolver` protocol declares `loaded` and `requires_load`; `registry.register`
+refuses a resolver that lacks either with `TypeError`). `lookup` is
+optional (`BaseResolver`'s serves name lookups), and its `resolve` and
 `resolve_key` are final and return what the lookups return.
 
 `registry.lookup_by(SegmentIdentity, lambda s: s.object_id, 7)` finds the first
@@ -60,7 +63,16 @@ loaded identity for which the accessor returns the value, whatever the field: on
 that has no key type, or that an identity of the same name hides from the name
 lookups (an Edge and a hub cluster that share a name). It scans every loaded
 identity, raises `ResolverNotLoadedError` when the type has no resolver or its
-resolver is not loaded, and `ResolutionError` when no identity has the value.
+resolver is not loaded, and `ResolutionError` when no identity has the value
+(`No segment has the value 7.`; a UUID is printed as its text).
+
+`registry.find(...)` takes what `lookup` takes and returns `None` where no loaded
+identity has the name or the ID, so the name for an ID is
+`found.name if (found := registry.find(NetworkServiceLogicalId(u))) else None`; it
+still raises for a name several identities share. It raises `ResolverNotLoadedError`
+for any resolver that is not loaded (load it with `load_resolvers`), so `None` always
+means that no loaded identity has the name or the ID.
+`registry.identities(SegmentIdentity)` lists the loaded identities of a type.
 
 A model field that takes a name where it holds an ID declares it with
 `Resolvable(SegmentIdentity, lambda i: i.segment_id)`: the identity type and an
@@ -71,16 +83,26 @@ it reads, so it must read one field of the identity and return it; anything else
 string form) raises `TypeError` with the accessor to write. At class creation
 the field's type is checked against the field the accessor reads: every type the
 identity's field allows apart from `None` must be one the field allows apart from
-`None` and `MISSING` (a `Literal` attribute fits a `Literal` field that holds all
-its values), so a `uuid.UUID` field over `SegmentIdentity.segment_id` is refused with
-the accessors that would fit, instead of failing the first time a name is merged
-into it.
+`None` and `MISSING` (a type fits a field that holds it or a class it subclasses, so
+a `StrEnum` fits `str`; a `Literal` value fits a `Literal` field that holds it or a
+field of its class, so `Literal["edgeHub"]` fits `str`; a `NewType` counts as its
+supertype; a field typed `Any` or `object` is not checked), so a `uuid.UUID` field
+over `SegmentIdentity.segment_id` is refused with the accessors that would fit,
+instead of failing the first time a name is merged into it.
 
 An ID the loaded tables do not hold raises `ResolutionError` (a `KeyError`), as an unknown
-name does, with a message such as `No segment has segment_id 99.`. For `lookup` and
-`resolve`, a type with no registered resolver raises `LookupError`, which is not a
-`ResolutionError`; `lookup_by` raises `ResolverNotLoadedError` for it. A lookup
-that needs a load not yet done raises `ResolverNotLoadedError`.
+name does, with a message such as `No segment has segment_id 99.`. An ID key returns
+the identity registered under that ID, also when another identity of the same name was
+registered after it. For `lookup` and `resolve`, a type with no registered resolver
+raises `LookupError`, which is not a `ResolutionError`; `lookup_by` raises
+`ResolverNotLoadedError` for it. A lookup that needs a load not yet done raises
+`ResolverNotLoadedError`. A `ResolutionError` has `name`, `identity_type` (always the
+identity class), `candidates` (the names its message lists), `path` (the field, when
+the lookup was for a field of a patch or a plan; else `None`) and `wanted` (the type of
+service a provider field takes; else `None`). When a patch gives a name for a field that
+takes an identity's ID through its resolver, the error starts with the field's path, as a
+`PatchError` does; a name for a field that mirrors an identity's name, and a name used as
+a list key, raise one without a path.
 
 ## Writing a configuration module
 
@@ -375,14 +397,20 @@ name for the segment the provider sits in (`deviceSettings:authentication`,
 the stub has none). It is never part of `data` on the wire, and a `service` key
 in the data is not read. A provider given as a list owns no row.
 
+A field of the first kind is declared with `OwnsRef(name, Identity, by=lambda i:
+i.logical_id, row=...)`: `by` is an accessor, probed and checked against the
+field's type as `Resolvable`'s is.
+
 A row for a new provider is added only for a service of the type its ref
-names. `SERVICE_TYPES` in `pyvelo.client.derived_refs` gives it: `dns` for
+names. `SERVICE_TYPES` in `pyvelo.core.identity` gives it: `dns` for
 `deviceSettings:dns:primaryProvider` and `deviceSettings:dns:backupProvider`,
 `authentication` for `deviceSettings:authentication`, and `cloudSecurityService`
-for `deviceSettings:css:provider` (tags of `EnterpriseServiceType`). A service
-of another type raises `ResolutionError` that names the field, the service, its
-type and the wanted type, and gives the patch that sets the field; a ref name
-outside that table is not checked.
+for `deviceSettings:css:provider` (tags of `EnterpriseServiceType`).
+`service_type_of(model, field_name)` in `pyvelo.core.fields` gives the type one
+field takes. A service of another type raises `ResolutionError` that names the
+field, the service, its type and the wanted type (the error's `wanted` is that
+type and its `candidates` the services of it), and gives the patch that sets the
+field; a ref name outside that table is not checked.
 
 A module is filled when it is validated with both its data and its refs: `None`
 means the segment has no row. A module from `getConfigurationModules` or from an

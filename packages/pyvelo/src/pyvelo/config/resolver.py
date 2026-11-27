@@ -4,8 +4,8 @@ import contextlib
 import copy
 import difflib
 import uuid
-from collections.abc import Callable, Collection, Generator, Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Generator
+from dataclasses import dataclass, fields, is_dataclass
 from typing import (
     Any,
     ClassVar,
@@ -18,7 +18,12 @@ from typing import (
 )
 
 from pyvelo.client.protocol import VcoClientProtocol
-from pyvelo.core.identity import IdentityKey, ResolverNotLoadedError, entity_label
+from pyvelo.core.identity import (
+    IdentityKey,
+    ResolverNotLoadedError,
+    entity_label,
+    resolution_error,
+)
 
 # ResolutionError lives in pyvelo.core.identity; re-exported so this import path keeps
 # working.
@@ -47,6 +52,13 @@ class Resolver[IdentityT](Protocol):
     """
 
     identity_type: type[IdentityT]
+    requires_load: ClassVar[bool]
+    """A resolver whose answers would be wrong before a load sets ``requires_load``."""
+
+    @property
+    def loaded(self) -> bool:
+        """Whether ``load()`` has filled the tables."""
+        ...
 
     def lookup(self, name: str) -> IdentityT:
         """Name -> typed identity object with all ID fields, from the loaded tables."""
@@ -83,17 +95,21 @@ class BaseResolver[IdentityT]:
     - Set ``identity_type`` as a class attribute.
     - Implement ``lookup_key()`` to dispatch on key type, answering an ID key
       with ``_by_key()``.
-    - Implement ``load()`` to fetch entities and call ``_register()``.
+    - Implement ``_load()`` to fetch entities and call ``_register()``.
 
-    ``resolve()`` and ``resolve_key()`` are final: they return what ``lookup()``
-    and ``lookup_key()`` return, so a subclass overrides the lookups and the
-    awaitable forms cannot disagree with them.
+    ``resolve()``, ``resolve_key()`` and ``load()`` are final. The first two
+    return what ``lookup()`` and ``lookup_key()`` return, so a subclass
+    overrides the lookups and the awaitable forms cannot disagree with them.
+    ``load()`` awaits ``_load()`` and then sets ``loaded``, so every resolver
+    says whether it is loaded; a ``_load()`` that raises leaves ``loaded`` as
+    it was.
 
     A resolver whose answers would be wrong before a load (it holds every
     identity of an enterprise, not those a name asks for) sets
-    ``requires_load``: until its ``load()`` sets ``loaded``, ``lookup``,
+    ``requires_load``: until a ``load()`` has finished, ``lookup``,
     ``lookup_key`` and ``resolve`` raise ``ResolverNotLoadedError``.
-    ``unloaded()`` and ``_clear()`` set ``loaded`` back to ``False``.
+    ``loaded`` is read-only; ``unloaded()`` and ``_clear()`` set it back to
+    ``False``.
     """
 
     identity_type: type[IdentityT]  # pyright: ignore[reportUninitializedInstanceVariable]
@@ -102,14 +118,14 @@ class BaseResolver[IdentityT]:
     def __init__(self, client: VcoClientProtocol) -> None:
         """An empty resolver that loads its tables through *client*."""
         self._client: VcoClientProtocol = client
-        self.loaded: bool = False
+        self._loaded: bool = False
         self._by_name: dict[str, IdentityT] = {}
-        self._reverse: dict[str, dict[int | str | uuid.UUID, str]] = {}
+        self._reverse: dict[str, dict[int | str | uuid.UUID, IdentityT]] = {}
 
     def lookup(self, name: str) -> IdentityT:
         """The identity loaded under *name*, matched exactly or ignoring case."""
         self._require_loaded()
-        _, identity = resolve_name(name, self._by_name, self._entity_label)
+        _, identity = resolve_name(name, self._by_name, self.identity_type)
         return identity
 
     def lookup_key(self, key: IdentityKey[IdentityT]) -> IdentityT:
@@ -127,7 +143,21 @@ class BaseResolver[IdentityT]:
         """The awaitable form of ``lookup_key``."""
         return self.lookup_key(key)
 
+    @property
+    def loaded(self) -> bool:
+        """Whether ``load()`` has filled the tables."""
+        return self._loaded
+
+    @final
     async def load(self, context: ResolverContext) -> None:
+        """Run ``_load`` for *context*, then set ``loaded``.
+
+        A ``_load`` that raises leaves ``loaded`` as it was.
+        """
+        await self._load(context)
+        self._loaded = True
+
+    async def _load(self, context: ResolverContext) -> None:
         """Fetch the entities of *context* and register them; a subclass does this."""
         del context
         raise NotImplementedError
@@ -146,39 +176,65 @@ class BaseResolver[IdentityT]:
         twin = copy.copy(self)
         twin._by_name = {}
         twin._reverse = {}
-        twin.loaded = False
+        twin._loaded = False
         return twin
 
     def _register(
         self, name: str, identity: IdentityT, **reverse_keys: int | str | uuid.UUID
     ) -> None:
-        """Register an identity with forward and reverse indexes."""
+        """Register *identity* under *name* and under each of *reverse_keys*.
+
+        Each reverse key is a field of the identity type; the identity is kept
+        under its value, so an ID finds it also when a later identity of the
+        same name took its place under *name*.
+        """
+        for attr in reverse_keys:
+            self._check_field(attr)
         self._by_name[name] = identity
         for attr, value in reverse_keys.items():
-            self._reverse.setdefault(attr, {})[value] = name
+            self._reverse.setdefault(attr, {})[value] = identity
 
     def _by_key(self, attribute: str, value: object) -> IdentityT:
         """The identity registered under ``attribute=value``.
 
         Raises ``ResolutionError`` when no loaded identity has the value, so an
-        ID that is not there is told from a name that is not.
+        ID that is not there is told from a name that is not, and
+        ``TypeError`` when *attribute* is no field of the identity type.
         """
+        self._check_field(attribute)
         self._require_loaded()
-        name = self._reverse.get(attribute, {}).get(cast("Any", value))
-        if name is None:
+        identity = self._reverse.get(attribute, {}).get(cast("Any", value))
+        if identity is None:
             raise ResolutionError(
                 name=str(value),
                 identity_type=self.identity_type,
                 candidates=[],
                 message=f"No {self._entity_label} has {attribute} {value}.",
             )
-        return self._by_name[name]
+        return identity
+
+    def _check_field(self, attribute: str) -> None:
+        """Raise ``TypeError`` when *attribute* is no field of the identity type.
+
+        Only a dataclass identity type is checked.
+        """
+        if not is_dataclass(self.identity_type):
+            return
+        names = [field.name for field in fields(self.identity_type)]
+        if attribute in names:
+            return
+        raise TypeError(
+            f"{type(self).__name__}: {self.identity_type.__name__} has no field "
+            f"{attribute!r} (it has {', '.join(names)}). This is a mistake in the "
+            "resolver, not an unknown ID: register and look up identities under "
+            "the names of the identity's fields."
+        )
 
     def _clear(self) -> None:
         """Clear all lookup tables before a reload."""
         self._by_name.clear()
         self._reverse.clear()
-        self.loaded = False
+        self._loaded = False
 
     def _require_loaded(self) -> None:
         """Raise ``ResolverNotLoadedError`` if this resolver is not loaded.
@@ -207,7 +263,29 @@ class ResolverRegistry:
         self._context: ResolverContext | None = None
 
     def register[T](self, resolver: Resolver[T]) -> None:
-        """Register a resolver, keyed by its identity_type."""
+        """Register a resolver, keyed by its identity_type.
+
+        A resolver without ``requires_load`` or ``loaded`` raises ``TypeError``:
+        every lookup of the registry reads both, and would fail at the first
+        lookup instead.
+        """
+        missing = [
+            member
+            for member, held in (
+                ("requires_load", hasattr(type(resolver), "requires_load")),
+                ("loaded", hasattr(resolver, "loaded")),
+            )
+            if not held
+        ]
+        if missing:
+            raise TypeError(
+                f"{type(resolver).__name__} lacks {', '.join(missing)}: a resolver "
+                "has `requires_load: ClassVar[bool]`, a class attribute that is "
+                "True when its answers are wrong before a load, and a read-only "
+                "`loaded`, a property that says whether load() has filled its "
+                "tables. The registry reads both on every lookup: subclass "
+                "BaseResolver, which has them, or add them, then register it."
+            )
         self._resolvers[resolver.identity_type] = resolver
 
     def get_resolver[R: Resolver[Any]](self, resolver_type: type[R]) -> R:
@@ -350,29 +428,99 @@ class ResolverRegistry:
         the value.
         """
         resolver = self.resolver_for(identity_type)
-        if resolver is None or (
-            getattr(resolver, "requires_load", False)
-            and not getattr(resolver, "loaded", False)
-        ):
+        if resolver is None or (resolver.requires_load and not resolver.loaded):
             raise ResolverNotLoadedError(identity_type)
         for identity in resolver.identities():
             if accessor(identity) == value:
                 return identity
         raise ResolutionError(
-            name=str(value), identity_type=identity_type, candidates=[]
+            name=str(value),
+            identity_type=identity_type,
+            candidates=[],
+            message=(
+                f"No {entity_label(identity_type)} has the value {_value_text(value)}."
+            ),
+        )
+
+    @overload
+    def find[T](self, key: IdentityKey[T]) -> T | None: ...
+    @overload
+    def find[T](self, key: type[T], name: str) -> T | None: ...
+
+    def find(self, key: Any, name: str | None = None) -> Any:
+        """The identity ``lookup`` returns, or ``None`` where none has the name or ID.
+
+        Supports the two calling conventions of ``lookup``:
+          find(SegmentName("Global Segment"))   # key-based dispatch
+          find(SegmentIdentity, "Global Segment")  # identity type + name
+
+        ``None`` says that no loaded identity has the name or the ID, never
+        that several identities share the name, and never that the lookups are
+        not loaded: a resolver that is not loaded raises
+        ``ResolverNotLoadedError`` before any lookup, whether or not it sets
+        ``requires_load``; load it with ``load_resolvers``. ``LookupError`` (no
+        resolver) and the ``ResolutionError`` for a name some loaded identity
+        has are raised as ``lookup`` raises them. The name for an ID is the
+        ``name`` of ``registry.find(NetworkServiceLogicalId(u))``, when it is not
+        ``None``.
+        """
+        identity_type = self._identity_type_of(key)
+        resolver = self._resolvers.get(identity_type)
+        if resolver is None:
+            raise LookupError(f"No resolver registered for {identity_type.__name__}")
+        if not resolver.loaded:
+            raise ResolverNotLoadedError(identity_type)
+        try:
+            return self.lookup(key) if name is None else self.lookup(key, name)
+        except ResolverNotLoadedError:
+            raise
+        except ResolutionError:
+            text: object = (
+                name if isinstance(key, type) else getattr(key, "value", None)
+            )
+            if isinstance(text, str) and self._has_name(identity_type, text):
+                raise
+            return None
+
+    def identities[T](self, identity_type: type[T]) -> Collection[T]:
+        """The loaded identities of *identity_type*.
+
+        Empty when no resolver is registered for the type, or its resolver
+        requires a load and has none. It never raises.
+        """
+        resolver = self.resolver_for(identity_type)
+        if resolver is None or (resolver.requires_load and not resolver.loaded):
+            return ()
+        return resolver.identities()
+
+    @staticmethod
+    def _identity_type_of(key: Any) -> type:
+        """The identity type a ``find`` key names: the key itself, or its key type's."""
+        return key if isinstance(key, type) else type(key).identity_type
+
+    def _has_name(self, identity_type: type, name: str) -> bool:
+        """Whether a loaded identity of *identity_type* has *name*, ignoring case."""
+        lowered = name.lower()
+        return any(
+            isinstance(found := getattr(identity, "name", None), str)
+            and found.lower() == lowered
+            for identity in self.identities(identity_type)
         )
 
 
-def resolve_name[T](  # noqa: PLR0913 (existing: split it when it next changes)
+def _value_text(value: object) -> str:
+    """*value* as a refusal prints it: a UUID as its text, anything else as its repr."""
+    return str(value) if isinstance(value, uuid.UUID) else repr(value)
+
+
+def resolve_name[T](
     name: str,
     by_name: dict[str, T],
-    entity_label: str,
+    identity_type: type,
     *,
     fuzzy: bool = False,
-    n: int = 5,
-    cutoff: float = 0.6,
 ) -> tuple[str, T]:
-    """Resolve a name on an exact or case-insensitive match.
+    """Resolve a name of an *identity_type* on an exact or case-insensitive match.
 
     Returns ``(canonical_name, value)`` on success.
 
@@ -380,8 +528,8 @@ def resolve_name[T](  # noqa: PLR0913 (existing: split it when it next changes)
     1. Exact match
     2. Case-insensitive match
     3. Anything else raises ``ResolutionError`` whose ``candidates`` hold the
-       close matches. With ``fuzzy=True`` a single close match is accepted
-       instead of raising.
+       close matches, else the names of *by_name* its message lists. With
+       ``fuzzy=True`` a single close match is accepted instead of raising.
     """
     # 1. Exact match
     if name in by_name:
@@ -396,58 +544,11 @@ def resolve_name[T](  # noqa: PLR0913 (existing: split it when it next changes)
     # 3. Opt-in fuzzy match: accept only a single close candidate
     if fuzzy:
         suggestions = difflib.get_close_matches(
-            name.lower(), lower_map.keys(), n=n, cutoff=cutoff
+            name.lower(), lower_map.keys(), n=5, cutoff=0.6
         )
         if len(suggestions) == 1:
             matched = lower_map[suggestions[0]]
             return matched, by_name[matched]
 
     # No match, or a near miss that was not opted into: raise with candidates
-    raise resolution_error(entity_label, name, by_name.keys(), n=n, cutoff=cutoff)
-
-
-_MAX_AVAILABLE_SHOWN = 20
-"""How many of the available names an unknown-name error lists, at most."""
-
-
-def resolution_error(
-    entity_label: str,
-    name: str,
-    available: Iterable[str],
-    *,
-    n: int = 5,
-    cutoff: float = 0.6,
-) -> ResolutionError:
-    """Build a ResolutionError with fuzzy 'did you mean?' suggestions.
-
-    Uses case-insensitive similarity matching via ``difflib.get_close_matches``
-    to suggest the most likely intended names. Returns a ``ResolutionError``
-    (subclass of ``KeyError`` for backwards compatibility).
-    """
-    available_list = sorted(available)
-
-    # Case-insensitive matching: build lowercase -> original map
-    lower_map = {k.lower(): k for k in available_list}
-    suggestions = difflib.get_close_matches(
-        name.lower(), lower_map.keys(), n=n, cutoff=cutoff
-    )
-    original_suggestions = [lower_map[s] for s in suggestions]
-
-    parts = [f"Unknown {entity_label}: {name!r}."]
-    if original_suggestions:
-        formatted = "\n".join(f"  - {s}" for s in original_suggestions)
-        parts.append(f"Did you mean:\n{formatted}")
-    elif len(available_list) > _MAX_AVAILABLE_SHOWN:
-        shown = ", ".join(available_list[:_MAX_AVAILABLE_SHOWN])
-        parts.append(
-            f"Available ({len(available_list)} total, "
-            f"showing first {_MAX_AVAILABLE_SHOWN}): {shown}"
-        )
-    else:
-        parts.append(f"Available: {', '.join(available_list)}")
-    return ResolutionError(
-        name=name,
-        identity_type=entity_label,
-        candidates=original_suggestions,
-        message="\n".join(parts),
-    )
+    raise resolution_error(identity_type, name, by_name.keys())

@@ -6,12 +6,21 @@ The markers of the data fields that a ref row goes with.
 import copy
 import json
 import uuid
-from typing import Annotated, ClassVar, Literal
+from collections.abc import Callable
+from typing import Annotated, Any, ClassVar, Literal, cast
 from uuid import UUID
 
 import pytest
 from pydantic import MISSING, ConfigDict, Field
+from pyvelo.client.enums.enterprise import EnterpriseServiceType
 from pyvelo.client.exceptions import DetachedObjectError
+from pyvelo.client.models.configuration.device_settings.segment import (
+    CssProviderRef,
+    DeviceSegment,
+    DnsPrimaryProvider,
+    SegmentAuthentication,
+)
+from pyvelo.client.models.configuration.qos.rule import BackhaulEdge
 from pyvelo.core import (
     ConfigContext,
     NetworkServiceIdentity,
@@ -26,6 +35,8 @@ from pyvelo.core.base import (
     _REF_FILLING_HOOKS,  # pyright: ignore[reportPrivateUsage]
     ref_only_fields,
 )
+from pyvelo.core.fields import service_type_of
+from pyvelo.core.identity import SERVICE_TYPES
 from pyvelo.core.rebase import carry_unset_defaults, find_lossy_assignments
 
 DNS_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -332,7 +343,7 @@ class WithOwnsRef(VcoModel):
         OwnsRef(
             "deviceSettings:css:provider",
             NetworkServiceIdentity,
-            by="logical_id",
+            by=lambda i: i.logical_id,
             row="logicalId",
             per_segment=True,
         ),
@@ -344,7 +355,7 @@ def test_owns_ref_keeps_its_declaration() -> None:
     assert owns == OwnsRef(
         "deviceSettings:css:provider",
         NetworkServiceIdentity,
-        by="logical_id",
+        by=lambda i: i.logical_id,
         row="logicalId",
         per_segment=True,
     )
@@ -364,7 +375,7 @@ def test_owns_ref_takes_a_path_and_a_level() -> None:
     owns = OwnsRef(
         "deviceSettings:segment",
         SegmentIdentity,
-        by="segment_id",
+        by=lambda i: i.segment_id,
         value="segment_id",
         row="data.segmentId",
         level=ConfigContext.PROFILE,
@@ -374,18 +385,125 @@ def test_owns_ref_takes_a_path_and_a_level() -> None:
     assert owns.per_segment is False
 
 
-def test_owns_ref_checks_by_against_the_identity() -> None:
-    with pytest.raises(TypeError, match="no field 'nope'"):
-        OwnsRef("x", SegmentIdentity, by="nope", row="logicalId")
+def test_owns_ref_reads_its_identity_through_an_accessor() -> None:
+    owns = OwnsRef(
+        "x", SegmentIdentity, by=lambda i: i.segment_id, row="data.segmentId"
+    )
+
+    assert owns.attribute == "segment_id"
+    assert owns == OwnsRef(
+        "x", SegmentIdentity, by=lambda i: i.segment_id, row="data.segmentId"
+    )
+    assert hash(owns) == hash(
+        OwnsRef("x", SegmentIdentity, by=lambda i: i.segment_id, row="data.segmentId")
+    )
+    assert owns != OwnsRef(
+        "x", SegmentIdentity, by=lambda i: i.object_id, row="data.segmentId"
+    )
 
 
-def test_owns_ref_by_is_checked_when_the_class_is_created() -> None:
-    with pytest.raises(TypeError, match="no field 'nope'"):
+@pytest.mark.parametrize(
+    "by",
+    ["segment_id", lambda i: i.nope, lambda i: i.segment_id + 1, lambda i: i.name or 0],  # pyright: ignore[reportUnknownLambdaType, reportUnknownMemberType]  # what a wrong accessor looks like
+)
+def test_owns_ref_refuses_an_accessor_that_is_not_one_plain_read(by: object) -> None:
+    with pytest.raises(TypeError) as refused:
+        _ = OwnsRef("x", SegmentIdentity, by=cast("Any", by), row="logicalId")
 
-        class Bad(VcoModel):  # pyright: ignore[reportUnusedClass]
-            value: Annotated[
-                int, OwnsRef("x", SegmentIdentity, by="nope", row="logicalId")
-            ] = 0
+    assert str(refused.value).startswith(
+        "OwnsRef(..., SegmentIdentity, by=accessor, ...) needs an accessor that "
+        "reads one field of SegmentIdentity and returns it."
+    )
+    assert "by=lambda i: i." in str(refused.value)
+
+
+def test_an_owns_ref_the_field_cannot_hold_is_refused_at_class_creation() -> None:
+    with pytest.raises(
+        TypeError, match=r"its OwnsRef reads SegmentIdentity\.logical_id"
+    ):
+
+        class Wrong(VcoModel):  # pyright: ignore[reportUnusedClass]  # a class made only to be refused at creation
+            segment_id: Annotated[
+                int,
+                OwnsRef(
+                    "x", SegmentIdentity, by=lambda i: i.logical_id, row="logicalId"
+                ),
+            ]
+
+
+def test_an_owns_ref_on_an_object_is_checked_at_the_field_its_value_names() -> None:
+    class Inner(VcoModel):
+        segment_id: int = 0
+
+    def marked(by: Callable[[SegmentIdentity], object], value: str) -> type[VcoModel]:
+        class Outer(VcoModel):
+            inner: Annotated[
+                Inner,
+                OwnsRef("x", SegmentIdentity, by=by, value=value, row="data.segmentId"),
+            ]
+
+        return Outer
+
+    with pytest.raises(
+        TypeError,
+        match=(
+            r"^Outer\.inner\.segment_id holds int, but its OwnsRef reads "
+            r"SegmentIdentity\.logical_id"
+        ),
+    ):
+        _ = marked(lambda i: i.logical_id, "segment_id")
+    with pytest.raises(TypeError, match="is no path to a field"):
+        _ = marked(lambda i: i.segment_id, "nope")
+    right = marked(lambda i: i.segment_id, "segment_id")
+    owns = get_owns_ref(right.model_fields["inner"])
+    assert owns is not None
+    assert owns.attribute == "segment_id"
+
+
+def test_an_owns_ref_value_path_follows_an_optional_model_but_not_a_list() -> None:
+    class Inner(VcoModel):
+        segment_id: int = 0
+
+    class Optional(VcoModel):
+        inner: Annotated[
+            Inner | None,
+            OwnsRef(
+                "x",
+                SegmentIdentity,
+                by=lambda i: i.segment_id,
+                value="segment_id",
+                row="data.segmentId",
+            ),
+        ] = None
+
+    owns = get_owns_ref(Optional.model_fields["inner"])
+    assert owns is not None
+    assert owns.attribute == "segment_id"
+    with pytest.raises(TypeError, match="is no path to a field"):
+
+        class Listed(VcoModel):  # pyright: ignore[reportUnusedClass]  # a class made only to be refused at creation
+            inners: Annotated[
+                list[Inner],
+                OwnsRef(
+                    "x",
+                    SegmentIdentity,
+                    by=lambda i: i.segment_id,
+                    value="segment_id",
+                    row="data.segmentId",
+                ),
+            ]
+
+
+def test_the_owns_ref_sites_of_pyvelo_read_these_fields() -> None:
+    sites: list[tuple[type[VcoModel], str, str]] = [
+        (CssProviderRef, "logical_id", "logical_id"),
+        (DeviceSegment, "segment", "segment_id"),
+        (BackhaulEdge, "logical_id", "logical_id"),
+    ]
+    for model, name, attribute in sites:
+        owns = get_owns_ref(model.model_fields[name])
+        assert owns is not None, (model.__name__, name)
+        assert owns.attribute == attribute
 
 
 def test_a_ref_only_assignment_is_not_lossy() -> None:
@@ -448,3 +566,13 @@ def test_validated_json_does_not_read_a_ref_only_key() -> None:
 def test_the_constructor_hook_does_not_make_pydantic_validate_through_init() -> None:
     assert not Stub.__pydantic_custom_init__
     assert not SubStub.__pydantic_custom_init__
+
+
+def test_service_type_of_says_what_a_provider_field_takes() -> None:
+    assert service_type_of(CssProviderRef, "logical_id") == "cloudSecurityService"
+    assert service_type_of(DnsPrimaryProvider, "service") == "dns"
+    assert service_type_of(SegmentAuthentication, "service") == "authentication"
+    assert service_type_of(CssProviderRef(), "logical_id") == "cloudSecurityService"
+    assert service_type_of(CssProviderRef, "ref") is None
+    assert service_type_of(DeviceSegment, "segment") is None
+    assert set(SERVICE_TYPES.values()) <= {t.value for t in EnterpriseServiceType}

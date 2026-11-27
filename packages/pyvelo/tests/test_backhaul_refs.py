@@ -487,7 +487,7 @@ def test_a_hub_with_no_service_in_that_segment_raises() -> None:
 
     error = caught.value
     assert (error.hub, error.segment) == ("Hub-A", "Guest")
-    assert error.path.startswith("segments[Guest].rules[v1].")
+    assert str(error.path).startswith("segments[Guest].rules[v1].")
     message = str(error)
     assert "has no service for this profile in the segment 'Guest'" in message
     assert "save the hub first and the rule after" in message

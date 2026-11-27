@@ -3,7 +3,7 @@
 import asyncio
 import uuid
 from dataclasses import dataclass
-from typing import assert_type, cast, override
+from typing import Any, ClassVar, assert_type, cast, override
 
 import pytest
 from pyvelo.client.protocol import VcoClientProtocol
@@ -13,18 +13,28 @@ from pyvelo.config.resolver import (
     ResolverContext,
     ResolverRegistry,
 )
+from pyvelo.config.resolvers.address_group import AddressGroupResolver
+from pyvelo.config.resolvers.application import ApplicationResolver
+from pyvelo.config.resolvers.edge import EdgeResolver
 from pyvelo.config.resolvers.hub import HubResolver
+from pyvelo.config.resolvers.license import LicenseResolver
+from pyvelo.config.resolvers.link import LinkResolver
+from pyvelo.config.resolvers.network_service import NetworkServiceResolver
+from pyvelo.config.resolvers.profile import ProfileResolver
 from pyvelo.config.resolvers.segment import SegmentResolver
+from pyvelo.config.resolvers.service_group import ServiceGroupResolver
 from pyvelo.core.identity import (
     HubIdentity,
     HubName,
     IdentityKey,
+    NetworkServiceIdentity,
     ResolutionError,
     ResolverNotLoadedError,
     SegmentId,
     SegmentIdentity,
     SegmentName,
 )
+from pyvelo.testing import make_network_service_resolver
 
 from ._type_support import SegmentResolverFactory
 
@@ -101,7 +111,7 @@ class MockFooResolver(BaseResolver[FooIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         _ = context
         self.load_count += 1
         self._data = {
@@ -132,7 +142,7 @@ class MockBarResolver(BaseResolver[BarIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         _ = context
         self._data = {
             "first": BarIdentity(name="first", id=10),
@@ -144,6 +154,8 @@ class NoCopyResolver:
     """A resolver written against the protocol alone: it has no ``unloaded()``."""
 
     identity_type: type[BarIdentity] = BarIdentity
+    requires_load: ClassVar[bool] = False
+    loaded: bool = True
 
     def lookup(self, name: str) -> BarIdentity:
         return BarIdentity(name=name, id=1)
@@ -174,8 +186,26 @@ class WrongIdentityResolver(BaseResolver[FooIdentity]):
     identity_type = BarIdentity  # pyright: ignore[reportAssignmentType, reportUnannotatedClassAttribute]
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         _ = context
+
+
+class CountingResolver(BaseResolver[FooIdentity]):
+    """Registers ``alpha`` on each load, or fails when told to."""
+
+    identity_type: type[FooIdentity] = FooIdentity
+
+    def __init__(self) -> None:
+        super().__init__(_no_client())
+        self.fail: bool = False
+
+    @override
+    async def _load(self, context: ResolverContext) -> None:
+        _ = context
+        if self.fail:
+            raise RuntimeError("the VCO did not answer")
+        self._clear()
+        self._register("alpha", FooIdentity("alpha", 1, uuid.UUID(int=1)), id=1)
 
 
 class OnlyLookupsResolver(BaseResolver[FooIdentity]):
@@ -328,7 +358,7 @@ class TestResolverRegistry:
                 super()._clear()
 
             @override
-            async def load(self, context: ResolverContext) -> None:
+            async def _load(self, context: ResolverContext) -> None:
                 _ = context
                 self._register(
                     "alpha",
@@ -465,3 +495,282 @@ def test_a_resolver_that_defines_only_the_lookups_resolves() -> None:
     resolver = OnlyLookupsResolver()
     assert asyncio.run(resolver.resolve("foo")) == FOO
     assert asyncio.run(resolver.resolve_key(FooName("foo"))) == FOO
+
+
+async def test_a_load_sets_loaded_and_a_failed_load_leaves_it() -> None:
+    resolver = CountingResolver()
+    assert not resolver.loaded
+
+    await resolver.load(ResolverContext())
+
+    assert resolver.loaded
+    assert not resolver.unloaded().loaded
+    resolver.fail = True
+    with pytest.raises(RuntimeError):
+        await resolver.load(ResolverContext())
+    assert resolver.loaded  # the tables of the load before are still there
+    assert [i.name for i in resolver.identities()] == ["alpha"]
+
+
+async def test_a_cleared_resolver_is_not_loaded() -> None:
+    resolver = CountingResolver()
+    registry = ResolverRegistry()
+    registry.register(resolver)
+    await resolver.load(ResolverContext())
+
+    with registry.context(ResolverContext(enterprise_id=2)):
+        assert not resolver.loaded
+        assert list(resolver.identities()) == []
+
+
+def test_no_stock_resolver_overrides_load() -> None:
+    stock: list[type[BaseResolver[Any]]] = [
+        AddressGroupResolver,
+        ApplicationResolver,
+        EdgeResolver,
+        HubResolver,
+        LicenseResolver,
+        LinkResolver,
+        NetworkServiceResolver,
+        ProfileResolver,
+        SegmentResolver,
+        ServiceGroupResolver,
+    ]
+    for resolver in stock:
+        assert "load" not in vars(resolver), resolver.__name__
+        assert "_load" in vars(resolver), resolver.__name__
+
+
+class DupResolver(BaseResolver[FooIdentity]):
+    """Two identities share the name ``dup``; the base keeps one per name."""
+
+    identity_type: type[FooIdentity] = FooIdentity
+
+    def __init__(self) -> None:
+        super().__init__(_no_client())
+
+    @override
+    def lookup_key(self, key: IdentityKey[FooIdentity]) -> FooIdentity:
+        match key:
+            case FooName(value=name):
+                return self.lookup(name)
+            case FooId(value=value):
+                return self._by_key("id", value)
+            case _:
+                raise TypeError(f"Unsupported key type: {type(key).__name__}")
+
+    @override
+    async def _load(self, context: ResolverContext) -> None:
+        _ = context
+        self._clear()
+        for number in (1, 2):
+            identity = FooIdentity("dup", number, uuid.UUID(int=number))
+            self._register(identity.name, identity, id=identity.id)
+
+    def typo(self) -> FooIdentity:
+        return self._by_key("idd", 1)
+
+    def typo_at_registration(self) -> None:
+        self._register("x", FOO, idd=1)
+
+
+async def dup_registry() -> tuple[ResolverRegistry, DupResolver]:
+    resolver = DupResolver()
+    await resolver.load(ResolverContext())
+    registry = ResolverRegistry()
+    registry.register(resolver)
+    return registry, resolver
+
+
+async def test_an_id_key_returns_the_identity_registered_under_that_id() -> None:
+    registry, _ = await dup_registry()
+
+    assert registry.lookup(FooId(1)).id == 1
+    assert registry.lookup(FooId(2)).id == 2
+    with pytest.raises(ResolutionError, match=r"No foo has id 3\."):
+        _ = registry.lookup(FooId(3))
+
+
+async def test_an_attribute_that_is_no_field_of_the_identity_is_a_type_error() -> None:
+    _, resolver = await dup_registry()
+
+    with pytest.raises(TypeError, match="FooIdentity has no field 'idd'"):
+        _ = resolver.typo()
+    with pytest.raises(TypeError, match="FooIdentity has no field 'idd'"):
+        resolver.typo_at_registration()
+
+
+def test_lookup_by_names_the_label_and_the_value_it_did_not_find(
+    segment_registry: ResolverRegistry,
+) -> None:
+    with pytest.raises(ResolutionError) as unknown:
+        _ = segment_registry.lookup_by(SegmentIdentity, lambda s: s.object_id, 999)
+
+    assert str(unknown.value) == "No segment has the value 999."
+    assert unknown.value.name == "999"
+
+
+def test_find_returns_none_where_no_identity_has_the_name_or_the_id(
+    segment_registry: ResolverRegistry,
+) -> None:
+    guest = segment_registry.lookup(SegmentIdentity, "Guest")
+
+    assert segment_registry.find(SegmentIdentity, "guest") == guest
+    by_id = segment_registry.find(SegmentId(guest.segment_id))
+    _ = assert_type(by_id, SegmentIdentity | None)
+    assert by_id == guest
+    assert segment_registry.find(SegmentIdentity, "nope") is None
+    assert segment_registry.find(SegmentId(999)) is None
+
+
+def test_find_raises_what_lookup_raises_for_anything_but_a_miss() -> None:
+    with pytest.raises(LookupError):
+        _ = ResolverRegistry().find(SegmentName("x"))
+    hubs = ResolverRegistry()
+    hubs.register(HubResolver(_no_client()))
+    with pytest.raises(ResolverNotLoadedError):
+        _ = hubs.find(HubName("x"))
+
+
+def test_the_registry_lists_the_loaded_identities_of_a_type(
+    segment_registry: ResolverRegistry,
+) -> None:
+    names = sorted(i.name for i in segment_registry.identities(SegmentIdentity))
+
+    assert "Guest" in names
+    assert list(segment_registry.identities(HubIdentity)) == []  # no resolver
+    hubs = ResolverRegistry()
+    hubs.register(HubResolver(_no_client()))
+    assert list(hubs.identities(HubIdentity)) == []  # not loaded
+
+
+async def test_find_raises_for_a_resolver_that_is_not_loaded_whatever_the_resolver(
+    make_segment_resolver: SegmentResolverFactory,
+) -> None:
+    resolver = (
+        await make_segment_resolver([{"name": "Guest", "segment_id": 1}])
+    ).unloaded()
+    registry = ResolverRegistry()
+    registry.register(resolver)
+
+    assert not resolver.requires_load
+    assert not resolver.loaded
+    with pytest.raises(ResolverNotLoadedError) as by_type:
+        _ = registry.find(SegmentIdentity, "Guest")  # a name the VCO would know
+    assert by_type.value.identity_type is SegmentIdentity
+    with pytest.raises(ResolverNotLoadedError):
+        _ = registry.find(SegmentIdentity, "nope")
+    with pytest.raises(ResolverNotLoadedError) as by_key:
+        _ = registry.find(SegmentName("Guest"))
+    assert by_key.value.identity_type is SegmentIdentity
+    with pytest.raises(ResolverNotLoadedError):
+        _ = registry.find(SegmentId(1))
+
+
+async def test_find_answers_from_a_resolver_once_it_is_loaded(
+    make_segment_resolver: SegmentResolverFactory,
+) -> None:
+    resolver = (
+        await make_segment_resolver([{"name": "Guest", "segment_id": 1}])
+    ).unloaded()
+    registry = ResolverRegistry()
+    registry.register(resolver)
+
+    await resolver.load(ResolverContext())  # the same client answers
+
+    found = registry.find(SegmentIdentity, "Guest")
+    assert found is not None
+    assert found.segment_id == 1
+    assert registry.find(SegmentName("Guest")) == found
+    assert registry.find(SegmentId(1)) == found
+    assert registry.find(SegmentIdentity, "nope") is None
+    assert registry.find(SegmentId(999)) is None
+
+
+async def test_find_raises_again_for_a_resolver_set_back_to_not_loaded(
+    segment_registry: ResolverRegistry,
+) -> None:
+    resolver = segment_registry.resolver_for(SegmentIdentity)
+    assert resolver is not None
+    assert resolver.loaded
+    assert segment_registry.find(SegmentIdentity, "Guest") is not None
+
+    unloaded = segment_registry.unloaded()
+
+    with pytest.raises(ResolverNotLoadedError):
+        _ = unloaded.find(SegmentIdentity, "Guest")
+    with pytest.raises(ResolverNotLoadedError):
+        _ = unloaded.find(SegmentId(1))
+
+
+async def test_lookup_by_prints_an_unknown_uuid_as_its_text() -> None:
+    registry = ResolverRegistry()
+    registry.register(await make_network_service_resolver([]))
+    unknown = uuid.UUID(int=99)
+
+    with pytest.raises(ResolutionError) as raised:
+        _ = registry.lookup_by(NetworkServiceIdentity, lambda s: s.logical_id, unknown)
+
+    assert str(raised.value) == f"No network service has the value {unknown}."
+    assert raised.value.name == str(unknown)
+
+
+class BareResolver:
+    """The lookups of a resolver written against the protocol alone, and no more."""
+
+    identity_type: type[BarIdentity] = BarIdentity
+
+    def lookup(self, name: str) -> BarIdentity:
+        return BarIdentity(name=name, id=1)
+
+    def lookup_key(self, key: IdentityKey[BarIdentity]) -> BarIdentity:
+        _ = key
+        raise NotImplementedError
+
+    async def resolve(self, name: str) -> BarIdentity:
+        return self.lookup(name)
+
+    async def resolve_key(self, key: IdentityKey[BarIdentity]) -> BarIdentity:
+        return self.lookup_key(key)
+
+    async def load(self, context: ResolverContext) -> None:
+        _ = context
+
+    def identities(self) -> list[BarIdentity]:
+        return []
+
+
+class NoLoadedResolver(BareResolver):
+    """It says whether it must be loaded, and not whether it is."""
+
+    requires_load: ClassVar[bool] = False
+
+
+class NoRequiresLoadResolver(BareResolver):
+    """It says whether it is loaded, and not whether it must be."""
+
+    loaded: bool = True
+
+
+@pytest.mark.parametrize(
+    ("resolver", "missing"),
+    [
+        (BareResolver(), "requires_load, loaded"),
+        (NoLoadedResolver(), "loaded"),
+        (NoRequiresLoadResolver(), "requires_load"),
+    ],
+    ids=["neither", "no loaded", "no requires_load"],
+)
+def test_register_refuses_a_resolver_without_loaded_or_requires_load(
+    resolver: object, missing: str
+) -> None:
+    registry = ResolverRegistry()
+
+    with pytest.raises(TypeError) as refused:
+        registry.register(cast("Any", resolver))
+
+    message = str(refused.value)
+    assert message.startswith(f"{type(resolver).__name__} lacks {missing}: ")
+    assert "`requires_load: ClassVar[bool]`" in message
+    assert "a read-only `loaded`" in message
+    assert registry.resolver_for(BarIdentity) is None

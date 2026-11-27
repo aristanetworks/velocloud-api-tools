@@ -45,7 +45,7 @@ class SegmentResolver(BaseResolver[SegmentIdentity]):
                 raise TypeError(f"Unsupported key type: {type(key).__name__}")
 
     @override
-    async def load(self, context: ResolverContext) -> None:
+    async def _load(self, context: ResolverContext) -> None:
         """Fetch all segments for the enterprise and populate lookup tables."""
         request = GetEnterpriseNetworkSegments()
         if context.enterprise_id is not None:
