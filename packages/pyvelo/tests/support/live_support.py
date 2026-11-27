@@ -117,13 +117,20 @@ back. A delete that was sent and not answered as done (an error, a row count
 of 0, or no answer) leaves the module there or gone, and the restore puts
 either right. The run holds such a delete until a restore sees the module
 still there, and no longer than its block: a later block that finds the
-module gone did not delete it. An insert that was sent and got no answer (it
-raised, and not with a refusal the Orchestrator states) may have stored a
-module whose ID the run was never told. The restore of the block it was sent
-in takes a module it finds there for that one, and undoes it as a module this
-run inserted, where the module was not there when the block opened and its ID
-is higher than every module ID the run has found, inserted or deleted: the
-Orchestrator numbers modules upward. That module counts as this run's own on
+module gone did not delete it. An insert that ended with no answer on what
+became of it may have stored a module whose ID the run was never told: one cut
+off on its way or on the way back (a read or write timeout or error, a
+connection closed mid-answer), one interrupted or cancelled mid-call, one
+answered with an HTTP status of 500 or above, and one whose answer cannot be
+read. No other failed insert counts: not one that was never transmitted, and
+not one the Orchestrator answered with an error or with a lower HTTP status,
+after which an unknown module is another writer's. The restore of the block
+such an insert was sent in takes a module it finds there for that one, and
+undoes it as a module this run inserted, where the module was not there when
+the block opened, its ID is higher than every module ID the run has found,
+inserted or deleted by then (the Orchestrator numbers modules upward), and,
+where the block found a module, the run deleted that one or sent a delete of
+it. That module counts as this run's own on
 one assumption, which the suite cannot check: that no other writer inserted
 that module on the same marked edge while the block was open. The run holds
 such an insert no longer than its block either: a module a later block finds
@@ -798,6 +805,74 @@ def _stored_nothing(exc: BaseException, *, unsent: bool) -> bool:
     )
 
 
+_CUT_OFF = (
+    httpx.ReadTimeout,
+    httpx.ReadError,
+    httpx.WriteTimeout,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+    httpx.CloseError,
+)
+"""The transport errors of a request that was on its way, or whose answer was."""
+
+_SERVER_ERROR = 500
+"""The first HTTP status that says nothing of what the Orchestrator did."""
+
+
+def _says_not_inserted(exc: ValidationError) -> bool:
+    """Whether the answer that *exc* could not read says that nothing was inserted.
+
+    So it is where the result holds an ``error``, or a row count of 0, in
+    place of the new module's ID.
+    """
+    for entry in exc.errors():
+        given: object = entry.get("input")
+        if isinstance(given, dict):
+            result = cast("dict[str, object]", given)
+            if result.get("error") or result.get("rows") == 0:
+                return True
+    return False
+
+
+def _left_unanswered(exc: BaseException, *, begun: bool) -> bool:
+    """Whether an insert that raised *exc* ended with no answer on what became of it.
+
+    Only then may the Orchestrator hold a module that this run was never told
+    of, and only then may a restore take an unknown module for this run's own
+    (``LiveRun.take_unanswered``). So this is a list of what counts, and
+    whatever is not on it does not:
+
+    * the request was cut off on its way, or its answer was (``_CUT_OFF``);
+    * the call was interrupted once it had begun: a cancellation, Ctrl-C, any
+      ``BaseException`` that is not an ``Exception``;
+    * the answer was an HTTP status of 500 or above;
+    * an answer came that cannot be read as the insert's: no result, or a
+      result that does not validate and does not itself say that nothing was
+      inserted (``_says_not_inserted``).
+
+    Not on it: a call that never began (*begun* is false); a transport error
+    that means nothing was transmitted (no connection, no connection free); an
+    HTTP status below 500; and every error the Orchestrator answered the
+    method with, with or without a list of codes. After any of those a module
+    of the name that the run does not know is another writer's, and the
+    Orchestrator's error may be its answer to exactly that module.
+
+    This asks more than ``_stored_nothing`` does for an update. There, a wrong
+    "may be stored" only skips a comparison of a module the run already owns;
+    here, a wrong "may be stored" lets the restore delete or overwrite a
+    module the run has never seen.
+    """
+    if not begun:
+        return False
+    if isinstance(exc, VcoHttpError):
+        return exc.status_code >= _SERVER_ERROR
+    if isinstance(exc, ValidationError):
+        return not _says_not_inserted(exc)
+    return not isinstance(exc, Exception) or isinstance(
+        exc, (*_CUT_OFF, VcoEmptyResultError)
+    )
+
+
 def _redacted(exc: VcoOperationError) -> VcoOperationError:
     """*exc* with each error code and field kept and no message.
 
@@ -1100,9 +1175,10 @@ class LiveRun:
     still has open.
     """
     unanswered_inserts: list[Block] = field(default_factory=list[Block])
-    """The block of each insert that was sent and got no answer saying what it
-    stored: the innermost one that was open on its configuration and module
-    name. Such an insert may have left a module whose ID this run was never
+    """The block of each insert that ended with no answer on what became of it
+    (``_left_unanswered`` says which failures those are, and no other failed
+    insert is kept): the innermost one that was open on its configuration and
+    module name. Such an insert may have left a module whose ID this run was never
     told, and the restore of that block takes one for this run's own
     (``take_unanswered``). An entry goes when its block closes: a module that a
     later block finds there is not known to be this run's.
@@ -1165,21 +1241,29 @@ class LiveRun:
         return found.union(self.seen, self.inserted, self.deleted, self.maybe_deleted)
 
     def take_unanswered(
-        self, configuration_id: int, name: str, module_id: int, beside: Iterable[int]
+        self, block: Block, module_id: int, beside: Iterable[int]
     ) -> None:
-        """Take module *module_id*, which a restore found, as one this run inserted.
+        """Take module *module_id*, which the restore of *block* found, as this run's.
 
-        Only where an insert that got no answer can have left it. The module
-        is that configuration's *name* module, and *beside* holds the IDs of
-        the modules of that name that were there when the block opened and
-        that the block did not find (``Original.beside``). It is taken where:
+        That is, as one *block* inserted, where an insert that got no answer
+        can have left it. *beside* holds the IDs of the modules of the name
+        that were there when the block opened and that the block did not find
+        (``Original.beside``). The module is taken where all of this holds:
 
-        * the innermost open block on that module, which is the one being
-          restored, sent an insert that got no answer (``unanswered_inserts``); and
+        * *block* sent an insert that ended with no answer on what became of
+          it (``unanswered_inserts``);
+        * where the block found a module, this run removed that one: an
+          answer said it was deleted, or a delete of it was sent and not
+          answered as done (``deleted``, ``maybe_deleted``). With the found
+          module not deleted by this run, another module in its place is
+          another writer's doing, and a second one beside it is not undone by
+          writing the original over it;
         * its ID is greater than every module ID this run has found, inserted
           or deleted, and than each of *beside*. The Orchestrator numbers
-          modules upward, so a module that insert stored is newer than all of
-          them; one that is not was there before, or is known already.
+          modules upward, so a module that insert stored is newer than all
+          that were there before it. The test is made when the restore runs,
+          so an ID the run learned after that insert counts as well: the
+          module is then left alone, though it may be the run's.
 
         The module is then one the block inserted, and what it holds is not
         known (``inserted``, ``seen``). Otherwise no record changes.
@@ -1187,10 +1271,11 @@ class LiveRun:
         Nothing here tells that module from one another writer inserted there
         while the block was open: that no one did is taken on trust.
         """
-        block = self.block_for(configuration_id, name)
-        if block is None or not any(
-            block is other for other in self.unanswered_inserts
-        ):
+        if not any(block is other for other in self.unanswered_inserts):
+            return
+        found = block[1]
+        removed = found in self.deleted or found in self.maybe_deleted
+        if found is not None and not removed:
             return
         if any(module_id <= known for known in self._known().union(beside)):
             return
@@ -1564,13 +1649,15 @@ def _guarded_insert(
     answered, or ``_UNKNOWN``. A refusal of the Orchestrator carries its codes
     alone.
 
-    An insert that raises once it was sent, a cancellation or an interrupt
-    included, may be stored all the same, and no answer gave the ID of what it
-    made: the run keeps the block it was sent in
-    (``run.unanswered_inserts``), and the restore of that block looks for the
-    module. An insert that is known to have stored nothing
-    (``_stored_nothing``: never sent, or refused with errors the Orchestrator
-    states) leaves no record.
+    An insert that ends with no answer on what became of it
+    (``_left_unanswered``: cut off on its way or on the way back, interrupted
+    or cancelled mid-call, answered with an HTTP status of 500 or above, or
+    with an answer that cannot be read) may be stored all the same, and
+    nothing gave the ID of what it made: the run keeps the block it was sent
+    in (``run.unanswered_inserts``), and the restore of that block looks for
+    the module. Any other failed insert leaves no record: one that never
+    began or was not transmitted, and one the Orchestrator answered with an
+    error or with an HTTP status below 500.
     """
 
     async def guarded_insert(
@@ -1583,7 +1670,7 @@ def _guarded_insert(
                 inserted = await insert(request, level=level)
         except BaseException as exc:
             block = run.block_for(request.configuration_id, request.name)
-            if block is not None and not _stored_nothing(exc, unsent=run.sent == sent):
+            if block is not None and _left_unanswered(exc, begun=run.sent != sent):
                 run.unanswered_inserts.append(block)
             if isinstance(exc, VcoOperationError):
                 raise _redacted(exc) from None
@@ -2213,10 +2300,10 @@ async def write_data(site: Site, module: AnyStoredModule, data: object) -> None:
     )
 
 
-async def restore(site: Site, original: Original | None) -> None:
+async def restore(site: Site, original: Original | None, block: Block) -> None:
     """Put the module back as *original* and check that it is.
 
-    Undo only what this run did.
+    Undo only what this run did. *block* is the open block being restored.
 
     The raw data goes back as written, under the module's current version. A
     module this run inserted is deleted; one it deleted is inserted again; one
@@ -2225,17 +2312,21 @@ async def restore(site: Site, original: Original | None) -> None:
     removed it) nothing is written and the test fails.
 
     One module that the run was never told of counts as its own: the module
-    that an insert which got no answer left (``LiveRun.take_unanswered``).
-    Where such an insert was sent in this block, and the module now there was
-    not there when the block opened and has a higher ID than every module this
-    run has found, inserted or deleted, the module is taken for the one that
-    insert stored and undone as a module this run inserted: deleted where the
-    block found none, the original's data written over it where the block
-    found one. That rests on an assumption nothing here can check: that no
-    other writer inserted that module on the same marked edge while the block
-    was open. With no such insert in the block, or with an ID that is not
-    newer, the module is left as it is and the test fails, as for any module
-    of another writer.
+    that an insert left which ended with no answer on what became of it
+    (``_left_unanswered``: cut off, interrupted, answered with an HTTP status
+    of 500 or above, or with an answer that cannot be read; not an insert the
+    Orchestrator answered with an error, nor one that was not transmitted).
+    Where such an insert was sent in this block, the module now there was not
+    there when the block opened, it has a higher ID than every module this run
+    has found, inserted or deleted by the time of this restore, and, where the
+    block found a module, this run deleted that one or sent a delete of it,
+    the module is taken for the one that insert stored
+    (``LiveRun.take_unanswered``) and undone as a module this run inserted:
+    deleted where the block found none, the original's data written over it
+    where the block found one. That rests on an assumption nothing here can
+    check: that no other writer inserted that module on the same marked edge
+    while the block was open. Where any of those conditions fails, the module
+    is left as it is and the test fails, as for any module of another writer.
 
     One module of the name is read, and one is undone. If two inserts that got
     no answer each left a module, the other stays as the test left it: where
@@ -2251,7 +2342,7 @@ async def restore(site: Site, original: Original | None) -> None:
         _ = run.maybe_deleted.pop(current.id_, None)
         # And it may be what an insert that got no answer left.
         beside = original.beside if original is not None else frozenset[int]()
-        run.take_unanswered(site.configuration_id, name, current.id_, beside)
+        run.take_unanswered(block, current.id_, beside)
     if original is None:
         if current is None:
             return
@@ -2390,7 +2481,7 @@ async def restoring(site: Site) -> AsyncGenerator[Original | None]:
         finally:
             with interrupts_held():
                 try:
-                    await restore(site, original)
+                    await restore(site, original, entry)
                 except (Exception, pytest.fail.Exception) as exc:
                     if backup is None and ended is None:
                         raise
