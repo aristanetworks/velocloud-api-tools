@@ -580,7 +580,7 @@ async def test_a_module_write_after_a_step_fails_as_a_save_step_error() -> None:
     assert progress is not None
     assert (progress.completed, progress.failed) == ((), DS)
     assert progress.pending == ()
-    assert "the write of the module deviceSettings" in str(error)
+    assert "the write of the module device_settings" in str(error)
     assert state.plan().changed  # the state keeps the edits
 
     store.requests.clear()

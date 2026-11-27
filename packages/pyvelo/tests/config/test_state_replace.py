@@ -285,7 +285,7 @@ def test_in_place_edits_of_two_replaced_modules_are_one_report() -> None:
     assert exc.value.paths == [outbound_path("new"), removed]
     assert str(exc.value) == (
         f"firewall: {IN_PLACE}{outbound_path('new')}{REDO}\n"
-        f"QOS: {IN_PLACE}{removed}{REDO}"
+        f"business_policy: {IN_PLACE}{removed}{REDO}"
     )
     assert state.plan().changed == ()
 

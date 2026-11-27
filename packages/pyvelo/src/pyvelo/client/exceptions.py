@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, cast, override
 
 from pydantic import MISSING
 
+from pyvelo.client.enums.configuration import python_module_name
 from pyvelo.core.base import VcoModel, field_models, is_list, wire_name
 from pyvelo.core.changes import patch_of
 from pyvelo.core.patch import selector_of
@@ -259,10 +260,13 @@ class LossyFieldError(VcoError):
     its default), so assigning that default changes nothing in what is written;
     and this library writes some sections at one configuration level only, so
     an edit to one at the other level is not written either.
-    ``paths`` locates each such edit; ``fields`` is the same, as text.
-    ``override_flags`` are those paths that are override flags: an edit to a
-    sibling sets the flag, but the document as read has no key for it and it
-    already reads as on, so there is nothing to write.
+    ``module`` is the module's python name. ``paths`` locates each such edit,
+    as its raiser gives it (a plan gives each as pyvelo shows a path: fields
+    by attribute name, items by what names them in the data as edited);
+    ``fields`` is the same, as text. ``override_flags`` are those paths that
+    are override flags: an edit to a sibling sets the flag, but the document
+    as read has no key for it and it already reads as on, so there is nothing
+    to write.
     """
 
     def __init__(
@@ -273,14 +277,16 @@ class LossyFieldError(VcoError):
     ) -> None:
         """The error for the edits to *module* at *paths*, *override_flags* among them.
 
-        The message says why a save writes none of them and what to do instead.
+        *module* is the module's name, the VCO's or the python one. The
+        message says why a save writes none of them and what to do instead.
         """
-        self.module: str = module
+        self.module: str = python_module_name(module)
         self.paths: list[Path] = list(paths)
         self.fields: list[str] = [str(path) for path in self.paths]
         self.override_flags: list[Path] = list(override_flags)
         message = (
-            f"{module}: a save cannot write these edits: {', '.join(self.fields)}. "
+            f"{self.module}: a save cannot write these edits: "
+            f"{', '.join(self.fields)}. "
             "A save sends what differs from the module as read, and at these "
             "fields nothing would. Either this library does not write the field "
             "at this configuration level (some sections are written for a "
@@ -307,9 +313,10 @@ class FixedListError(VcoError):
     The ``defaults`` rules of a segment have fixed entries, keys and order, and
     only their ``action`` can change. A plan compares the payload with the
     module as read, so the edit is refused however it was made (an attribute
-    assignment, a plain-dict data, a patch). ``module_name`` is the module;
-    ``paths`` are the places that changed, raw, each at the rule or at the
-    list (the reason of each is in the message).
+    assignment, a plain-dict data, a patch). ``module_name`` is the module's
+    python name; ``paths`` are the places that changed, as the raiser gives
+    them (a plan gives each as pyvelo shows a path), each at the rule or at
+    the list (the reason of each is in the message).
     """
 
     module_name: str
@@ -318,12 +325,15 @@ class FixedListError(VcoError):
     def __init__(
         self, module_name: str, violations: Sequence[tuple[Path, str]]
     ) -> None:
-        """The error for *module_name*: *violations* are each changed place and why."""
-        self.module_name = module_name
+        """The error for *module_name*: *violations* are each changed place and why.
+
+        *module_name* is the module's name, the VCO's or the python one.
+        """
+        self.module_name = python_module_name(module_name)
         self.paths = tuple(path for path, _ in violations)
         found = "; ".join(f"{path}: {reason}" for path, reason in violations)
         super().__init__(
-            f"{module_name}: the edit changes a fixed part of a list whose "
+            f"{self.module_name}: the edit changes a fixed part of a list whose "
             f"entries are fixed: {found}. Only the actions of the `defaults` "
             "rules can change: send "
             '{"segments": {"<segment>": {"defaults": {"<rule>": {"action": {...}}}}}} '
@@ -341,7 +351,8 @@ class SegmentSetError(VcoError):
     changes the three together. ``module_name`` is the module planned, or
     None when the error is about several; ``segments`` are the names of the
     segments added or removed; ``modules`` are the modules the rule found
-    wanting. The message says what happened and how to do it instead.
+    wanting. A module is named by its python name, here and in the message,
+    which says what happened and how to do it instead.
     """
 
     module_name: str | None
@@ -356,10 +367,15 @@ class SegmentSetError(VcoError):
         segments: Sequence[str] = (),
         modules: Sequence[str] = (),
     ) -> None:
-        """The error with *message* and the module, segments and modules it is about."""
-        self.module_name = module_name
+        """The error with *message* and the module, segments and modules it is about.
+
+        A module is given by its name, the VCO's or the python one.
+        """
+        self.module_name = (
+            None if module_name is None else python_module_name(module_name)
+        )
         self.segments = tuple(segments)
-        self.modules = tuple(modules)
+        self.modules = tuple(python_module_name(module) for module in modules)
         super().__init__(message)
 
 
@@ -711,8 +727,9 @@ class RefsNotLoadedError(VcoError):
     answer) carries no refs. An edit to an owner of a ref row then cannot be
     written, because the row that goes with it is not known, and a write of
     a device settings or QoS module with segments would let the VCO replace its
-    refs. ``module_name`` is the module; ``paths`` are the owners the edit
-    changed (empty when the write alone is refused).
+    refs. ``module_name`` is the module's python name; ``paths`` are the
+    owners the edit changed (empty when the write alone is refused), as the
+    raiser gives them (a plan gives each as pyvelo shows a path).
     """
 
     module_name: str
@@ -721,12 +738,13 @@ class RefsNotLoadedError(VcoError):
     def __init__(self, module_name: str, paths: Sequence[Path] = ()) -> None:
         """The error for *module_name*, with the owners at *paths* the edit changed.
 
-        The message says how to read the module with its refs.
+        *module_name* is the module's name, the VCO's or the python one. The
+        message says how to read the module with its refs.
         """
-        self.module_name = module_name
+        self.module_name = python_module_name(module_name)
         self.paths = tuple(paths)
         read = (
-            f"{module_name} was read without its refs (it came from "
+            f"{self.module_name} was read without its refs (it came from "
             "configuration/getConfigurationModules)"
         )
         how = (
@@ -755,7 +773,7 @@ class VersionRequiredError(VcoError):
     """Raised for an update of a module that has no version.
 
     It is raised when nothing asked for an unchecked write (``unconditional``).
-    ``module_name`` is the module.
+    ``module_name`` is the module's python name.
     """
 
     module_name: str
@@ -763,12 +781,14 @@ class VersionRequiredError(VcoError):
     def __init__(self, module_name: str) -> None:
         """The error for *module_name*.
 
-        The message says how to read the module with a version, and how to ask
+        *module_name* is the module's name, the VCO's or the python one. The
+        message says how to read the module with a version, and how to ask
         for the unchecked write.
         """
-        self.module_name = module_name
+        self.module_name = python_module_name(module_name)
         super().__init__(
-            f"{module_name}: this module has no version, so the VCO cannot check "
+            f"{self.module_name}: this module has no version, so the VCO cannot "
+            "check "
             "that it still holds what was read: an update would overwrite whatever "
             "another writer stored since, and that change would be lost without a "
             "word. Nothing was sent. Every module the VCO stores has a version, so "
@@ -1851,15 +1871,15 @@ class ComposedModuleError(VcoError):
     left out of the answer. Either way there is nothing to check the effective
     view against, so the comparison of that module stops with this error
     instead of reporting every key as missing. ``module`` is the module's
-    wire name. Open the edge in the VCO to see why its modules do not compose,
-    or compare the other modules.
+    python name. Open the edge in the VCO to see why its modules do not
+    compose, or compare the other modules.
     """
 
     module: str
 
     def __init__(self, message: str, *, module: str) -> None:
-        """The error with *message* and the wire name of the *module*."""
-        self.module = module
+        """The error with *message* for *module*, given by either of its names."""
+        self.module = python_module_name(module)
         super().__init__(message)
 
 
@@ -1875,7 +1895,10 @@ class DetachedObjectError(VcoError):
     that was there before, which a write or a revert replaced. Take the object
     again from the module the state holds now. ``paths`` are where in the
     module such edits were found, when they were found by comparison; they may
-    come from several modules, which the message names, a line each. An
+    come from several modules, which the message names by their python names,
+    a line each. A path names a field by its attribute; an item is named by
+    what names it where the raiser holds the data, else by the key or the
+    position the comparison found it at. An
     assignment or ``merge_patch`` through a replaced object names the object
     and leaves them empty, and so does the refusal of ``update_module`` to
     write a module an earlier ``update_module`` replaced. A ``merge_patch``,

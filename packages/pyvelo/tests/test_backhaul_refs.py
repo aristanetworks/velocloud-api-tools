@@ -529,7 +529,7 @@ def test_an_entry_without_its_service_raises() -> None:
     assert (error.hub, error.segment) == ("Hub-A", "Global Segment")
     message = str(error)
     assert "names the hub 'Hub-A' and no service for it" in message
-    assert "logicalId" in message
+    assert "Give the entry's logical_id" in message
     assert "apply" in message
     assert '"logical_id": "<' in message
 

@@ -113,3 +113,20 @@ def test_a_copy_does_not_share_the_error_s_notes() -> None:
     shallow = copy.copy(error)
     shallow.add_note("two")
     assert error.__notes__ == ["one"]
+
+
+def test_a_save_step_error_names_the_modules_by_their_python_names() -> None:
+    written = SaveStepError(
+        "VcoOperationError: boom",
+        step=a_step(),
+        written=["deviceSettings", "QOS", "firewall"],
+    )
+    stopped = SaveStepError("VcoOperationError: boom", module_name="QOS")
+
+    assert (
+        "modules known to be written: device_settings, business_policy, firewall"
+        in str(written)
+    )
+    # The field holds the names as the save has them: they are compared.
+    assert written.written == ("deviceSettings", "QOS", "firewall")
+    assert "the write of the module business_policy, which failed" in str(stopped)

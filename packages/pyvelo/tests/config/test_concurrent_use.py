@@ -218,8 +218,11 @@ async def test_an_edit_of_a_later_module_during_a_save_is_reported_too() -> None
     with pytest.raises(DetachedObjectError) as exc:
         _ = await saving
 
-    link = Key(("00000000-0000-0000-0000-000000000001", "IPv4"))
-    assert exc.value.paths == [Path(("data", "links", link, "description"))]
+    assert exc.value.paths == [Path(("data", "links", Key("Internet"), "description"))]
+    assert str(exc.value).startswith(
+        "wan: the module was edited while this save was writing it, at: "
+        "data.links[Internet].description."
+    )
     assert methods(client.store) == ["updateConfigurationModule"] * 2
     assert data_of(client.store, 5)["links"][0]["description"] == "first"
     assert state.plan().changed == ()

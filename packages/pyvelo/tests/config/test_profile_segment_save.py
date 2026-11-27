@@ -246,7 +246,7 @@ async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segme
     assert [store.rows[p["id"]]["name"] for p in updates(store)] == [DS, QOS]
     with pytest.raises(SegmentSetError) as raised:
         _ = state.plan()
-    assert QOS in raised.value.modules
+    assert "business_policy" in raised.value.modules
     assert raised.value.segments == ("Guest",)
 
 

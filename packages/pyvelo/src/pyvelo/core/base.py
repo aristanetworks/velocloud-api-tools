@@ -704,6 +704,7 @@ class VcoModel(BaseModel):
         """
         from pyvelo.client.exceptions import DetachedObjectError  # noqa: PLC0415 (it imports pyvelo.core)
 
+        from .names import named_path  # noqa: PLC0415 (names imports this module)
         from .rebase import Path  # noqa: PLC0415 (rebase imports this module)
 
         for place, model in _models_inside(self, ()):
@@ -711,7 +712,8 @@ class VcoModel(BaseModel):
                 continue
             if not place:
                 _raise_detached(self, name)
-            where = Path(place)
+            # Shown as every path is: fields by attribute, the item by its name.
+            where = named_path(Path(place), self)
             raise DetachedObjectError(
                 f"{type(self).__name__}.{name}: the {type(model).__name__} at "
                 f"{where} is a detached object (it belongs to a module the state "

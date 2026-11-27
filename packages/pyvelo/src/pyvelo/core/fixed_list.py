@@ -143,6 +143,15 @@ def _walk_list(
             yield from _walk(node.item, None, item, path.child(pay_parts[j]))
 
 
+def _field_name(item: Node, key: object) -> object:
+    """The attribute the items of a list read the JSON key *key* as.
+
+    *key* itself where they read it as none (a key the model does not declare).
+    """
+    found = node_field(item, key)
+    return key if found is None else found[0]
+
+
 def _check_fixed(
     fixed: FixedList,
     node: KeyedList,
@@ -183,7 +192,7 @@ def _check_fixed(
                 for k in {**kept_old, **kept_new}
                 if not same_json(kept_old.get(k, _ABSENT), kept_new.get(k, _ABSENT))
             )
-            yield path.child(part), f"{first} differs"
+            yield path.child(part), f"{_field_name(node.item, first)} differs"
 
 
 def fixed_list_violations(
@@ -203,8 +212,9 @@ def fixed_list_violations(
       baseline lacks it (for an item paired, or one the payload alone has);
     - ``"an item added, removed, renamed or moved"``, at the field: the lists
       differ in length, or in the key at some position;
-    - ``"<key> differs"``, at the item: an item differs outside the editable
-      fields, compared with their wire keys removed.
+    - ``"<field> differs"``, at the item: an item differs outside the editable
+      fields, compared with their wire keys removed. The field is named by
+      its python attribute; a key the model does not declare by itself.
 
     Only ``FixedList`` fields are looked at: a change anywhere else is none.
     """

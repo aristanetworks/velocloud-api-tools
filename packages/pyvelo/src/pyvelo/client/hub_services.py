@@ -40,6 +40,7 @@ from pyvelo.core.identity import (
     ResolverNotLoadedError,
     SegmentIdentity,
 )
+from pyvelo.core.names import named_path
 from pyvelo.core.rebase import Path
 from pyvelo.core.show import patch_text
 from pyvelo.core.walk import can_hold_field, walk_fields
@@ -347,7 +348,9 @@ def fill_services(
         )
         if service is None:
             raise HubServiceNotFoundError(
-                hub=hub_name(entry), segment=_segment_name(segment), path=path
+                hub=hub_name(entry),
+                segment=_segment_name(segment),
+                path=named_path(path, data),
             )
         found.append((entry, service.logical_id))
     for entry, logical_id in found:
@@ -363,8 +366,10 @@ def missing_service_error(
 
     An entry that was so as *as_read* is left out: the module as it stands
     was stored with it, and an edit that does not touch it is no cause to
-    refuse. The message says to give the entry its ``logicalId``, or to add
-    the hub through ``apply``, which fills it.
+    refuse. The message says to give the entry its ``logical_id``, or to add
+    the hub through ``apply``, which fills it. The entry is named as pyvelo
+    shows a path (``named_path``), in the error's ``path``, in the message and
+    in the patch the message gives.
     """
     known: frozenset[Path] | None = None
     for path, entry, segment in _unserved(data):
@@ -377,16 +382,17 @@ def missing_service_error(
         hub = hub_name(entry)
         metadata: object = getattr(segment, "segment", None)
         name: object = getattr(metadata, "name", None)
+        shown = named_path(path, data)
         return HubServiceNotFoundError(
             hub=hub,
             segment=name if isinstance(name, str) else "",
-            path=path,
+            path=shown,
             message=(
-                f"{path} names the hub {hub!r} and no service for it: the row "
+                f"{shown} names the hub {hub!r} and no service for it: the row "
                 "that goes with the rule points at the hub's service for this "
                 "profile and segment, so it cannot be added. Give the entry's "
-                "logicalId, the hub's service: "
-                f"{patch_text(path.child('logical_id'))}, "
+                "logical_id, the hub's service: "
+                f"{patch_text(shown.child('logical_id'))}, "
                 "or add the hub through apply, which fills it."
             ),
         )

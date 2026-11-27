@@ -183,7 +183,10 @@ that does not parse, `WriteOutcomeUnknownError`) or delete, or a delete
 answered with an error or a row count of 0 (`VcoOperationError`), leaves the
 state as it was, and `revert` can be called again; an answer with no row count
 is taken as the delete done. `state.revert_module(name)` sends nothing, so it
-refuses such a module and names `pipeline.revert`.
+refuses such a module and names `pipeline.revert`. Each of these refusals
+starts with the module's python name (`business_policy: the VCO holds a module
+of this name ...`), and a place it names (`it differs at ...`, `it also holds
+...`) is shown as a plan shows a path.
 `revert` takes back edits, not what a save already did: a role step a save
 sent before it stopped (see "Hubs", "When a step fails") stays on the VCO, and
 a state whose device settings edits are taken back plans nothing that mends
@@ -846,10 +849,15 @@ firewall: update
   they were read. An edit that adds a segment to one or two of the three
   raises it too, naming the segments and the modules that lack them, with the
   patch `{"segments": {"Guest": {"_op": "add"}}}` and the call
-  `pipeline.assign_segment(state, "Guest")` that complete it. Modules that
+  `pipeline.assign_segment(state, "Guest")` that complete it. The modules are
+  named by their python names, in the text (`adds the segment 'Guest' to
+  device_settings and business_policy but not to firewall ... Send the patch
+  ... to firewall`) and in `error.modules`, so each is a name `apply` takes as
+  `module=`. Modules that
   already disagreed when read, with nothing added, are left as they are: each
   such segment is a warning with the code `segments_disagree`, at
-  `segments["Guest"]`, in `ConfigPlan.segment_warnings` (also in
+  `segments[Guest]` (its `path`; `segment` holds the name, and `module` is
+  `None`, since it is about three), in `ConfigPlan.segment_warnings` (also in
   `ConfigPlan.warnings` and `SaveResult.warnings`), and `render()` ends with a
   `warning: <message>` line for it. A profile that lacks one of the three
   modules has nothing to compare.
@@ -1019,7 +1027,10 @@ firewall: update
   edit made by assigning to the models is found later: `plan()`,
   `get_changed_modules()` and `save()` raise it, before anything is sent, until
   the assignment is changed to a value that can be written or the state is
-  loaded again. The message names the fields. `LossyFieldError` is exported by
+  loaded again. The message names the module by its python name and the
+  fields as every path is shown, in the data as edited
+  (`device_settings: a save cannot write these edits: lan.networks[Corp].cost`);
+  `error.module` and `error.paths` hold the same. `LossyFieldError` is exported by
   `pyvelo.config` (and by `pyvelo`, `pyvelo.client` and
   `pyvelo.client.exceptions`).
 - Names resolve on an exact or case-insensitive match; a near miss raises with
@@ -1173,7 +1184,7 @@ segment the view has and the composed module lacks is `ignored` with that
 reason; one the composed module has and the view lacks is `server_only`. The
 composed read also returns `null` for a module it could not compose, which it
 does without saying why: that is `ComposedModuleError` (its `module` is the
-module's name), not a finding.
+module's python name), not a finding.
 
 The call does not ask the VCO for encrypted keys (`encryptKeys`), which a VCO
 may refuse. A secret is never compared: a path that holds one is `ignored` with
@@ -1469,7 +1480,8 @@ edit needs, then writes the module.
   raised as `SaveStepError` (from `pyvelo.config`), from the VCO's error: `step`
   is the step whose call failed, or `None` when a module write failed
   (`module_name` names it), `steps_done` and `steps_in_place` list the others,
-  and `written` the modules stored; `save_progress(error)` gives the modules
+  and `written` the modules stored (the message lists them by their python
+  names); `save_progress(error)` gives the modules
   not written. A failure before any step was sent (the version read, the
   services read, a write of a module before the steps, a write when every step
   was in place) propagates as it is, and so does a cancellation. Nothing a step
@@ -1855,7 +1867,8 @@ object as a new item, put a deep copy of it in the state
 (`copy.deepcopy(rule)`): the copy is not detached. A detached object put back
 as it is makes its module refuse every patch (`merge_patch`, `apply`,
 `assign_segment`) with `DetachedObjectError`, which names where it sits
-(`paths`) and changes nothing, also for a patch that would not reach it: put a
+(`paths`, as every path is shown: `segments[Guest]`) and changes nothing, also
+for a patch that would not reach it: put a
 deep copy there, take the object from the state again, or take the module's
 edits back with `pipeline.revert(state, module=...)`.
 
@@ -1948,7 +1961,10 @@ Known limits:
   state as stored, and a second `save` writes only what still differs. An edit
   made by assigning to the models while a save is writing is not waited for.
   The save stores the module without it, puts the module as stored in the
-  state, and raises `DetachedObjectError` with the paths of such edits: redo
+  state, and raises `DetachedObjectError` with the paths of such edits
+  (`wan: the module was edited while this save was writing it, at:
+  data.links[Internet].description`: the module by its python name, each path
+  from the module's row, a field by its attribute and an item by its name): redo
   them. A path that is a placeholder a lookup added (`segment(name)`, for a
   segment the edge only inherits) is no edit and needs no redo. The save stops
   at that module: the error's note names the modules written, and the next

@@ -48,6 +48,7 @@ from pyvelo.core.identity import (
     SegmentIdentity,
     entity_label,
 )
+from pyvelo.core.names import named_path
 from pyvelo.core.show import patch_text
 
 if TYPE_CHECKING:
@@ -588,11 +589,40 @@ def changed_owners(
     identity is no change. It needs no resolver, no refs and no rows: for a
     module whose refs were not read, it says which edit would need them.
     """
+    gone, new = _owners_apart(baseline, current, level)
+    return (*gone, *new)
+
+
+def _owners_apart(
+    baseline: VcoModel, current: VcoModel, level: ConfigContext | None
+) -> tuple[tuple[RefOwner, ...], tuple[RefOwner, ...]]:
+    """The owners only *baseline* has, and those only *current* has."""
     before = _by_key(ref_owners(baseline, level))
     now = _by_key(ref_owners(current, level))
     return (
-        *(owner for key, owner in before.items() if key not in now),
-        *(owner for key, owner in now.items() if key not in before),
+        tuple(owner for key, owner in before.items() if key not in now),
+        tuple(owner for key, owner in now.items() if key not in before),
+    )
+
+
+def changed_owner_paths(
+    baseline: VcoModel, current: VcoModel, level: ConfigContext | None
+) -> tuple[Path, ...]:
+    """The path of each owner ``changed_owners`` gives, as pyvelo shows it.
+
+    Each once, in that order. An owner only *baseline* has is named in
+    *baseline*, where its item may be gone from *current*, and one only
+    *current* has in *current*: an item is shown by what names it there
+    (``named_path``), and a position is one of the list it counts in.
+    """
+    gone, new = _owners_apart(baseline, current, level)
+    return tuple(
+        dict.fromkeys(
+            (
+                *(named_path(owner.path, baseline) for owner in gone),
+                *(named_path(owner.path, current) for owner in new),
+            )
+        )
     )
 
 

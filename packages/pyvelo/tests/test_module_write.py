@@ -1780,7 +1780,7 @@ async def test_a_module_whose_refs_were_not_read_refuses_an_owner_edit() -> None
     set_primary_provider(current, uuid.UUID(DNS_A))
     with pytest.raises(RefsNotLoadedError) as caught:
         plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
-    assert caught.value.module_name == "deviceSettings"
+    assert caught.value.module_name == "device_settings"
     assert caught.value.paths == (PRIMARY_PATH,)
     message = str(caught.value)
     assert PRIMARY_PATH in message
@@ -1798,7 +1798,7 @@ def test_a_module_whose_refs_were_not_read_refuses_a_write_with_segments() -> No
     an_edit_of_the_data(current)
     with pytest.raises(RefsNotLoadedError) as caught:
         plan_module(module, current)
-    assert (caught.value.module_name, caught.value.paths) == ("deviceSettings", ())
+    assert (caught.value.module_name, caught.value.paths) == ("device_settings", ())
     assert NOT_READ in str(caught.value)
     assert "replace" in str(caught.value)
 
@@ -2163,3 +2163,32 @@ def test_a_keyed_list_of_several_kinds_of_item_dumps_each_item_as_its_own_kind()
     unmarked = mod.data.model_dump(mode="json", by_alias=True)
     lag.mark_added()
     assert mod.data.model_dump(mode="json", by_alias=True) == unmarked
+
+
+def test_a_lossy_edit_names_its_module_and_the_item_as_the_edited_data_has_it() -> None:
+    # Two networks share a VLAN ID, so the edit is found at a position as read.
+    def network(name: str, vlan: int) -> dict[str, object]:
+        return {"name": name, "vlanId": vlan, "segmentId": 0}
+
+    raw = {
+        "lan": {
+            "networks": [network("A", 1), network("B", 5), network("C", 5)],
+            "interfaces": [],
+        },
+        "segments": [{"segment": desc(0, "Global Segment")}],
+    }
+    module = DeviceSettingsConfigurationModule.model_validate(
+        make_module_json("deviceSettings", raw), context={"config_level": EDGE}
+    )
+    networks = module.data.lan.networks
+    del networks[0]  # the third network as read is the second now
+    networks[1].cost = 10  # absent as read, and its default
+
+    with pytest.raises(LossyFieldError) as exc:
+        plan_module(module, level=EDGE)
+
+    assert exc.value.module == "device_settings"
+    assert exc.value.fields == ["lan.networks[C].cost"]
+    assert str(exc.value).startswith(
+        "device_settings: a save cannot write these edits: lan.networks[C].cost. "
+    )

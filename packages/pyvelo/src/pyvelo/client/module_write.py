@@ -84,7 +84,7 @@ from pyvelo.client.derived_refs import (
     DerivedRefs,
     PlanWarning,
     RefChange,
-    changed_owners,
+    changed_owner_paths,
     derive_refs,
     sends_refs_always,
 )
@@ -972,17 +972,22 @@ def _segment_set_error(
 ) -> SegmentSetError:
     """The refusal of a one-module plan that changes its segments.
 
-    The plan adds the segments *added* or removes *removed*.
+    The plan adds the segments *added* or removes *removed*. The modules are
+    named by their python names.
     """
+    module = python_module_name(module_name)
+    settings, qos, firewall = (
+        python_module_name(name) for name in ("deviceSettings", "QOS", "firewall")
+    )
     did = [
         f"{verb} {', '.join(map(repr, names))}"
         for verb, names in (("adds", added), ("removes", removed))
         if names
     ]
     message = (
-        f"{module_name}: the edit {' and '.join(did)}, but the segments of a "
-        "profile are the same in its three modules (deviceSettings, QOS and "
-        "firewall), and one module alone cannot change them."
+        f"{module}: the edit {' and '.join(did)}, but the segments of a "
+        f"profile are the same in its three modules ({settings}, {qos} and "
+        f"{firewall}), and one module alone cannot change them."
     )
     if added:
         patch = json.dumps({"segments": {name: {"_op": "add"} for name in added}})
@@ -1259,6 +1264,33 @@ class _Planned:
     ref_baseline: VcoModel | None
 
 
+def _shown_paths(
+    paths: Sequence[Path],
+    models: tuple[VcoModel | None, VcoModel | None],
+    documents: tuple[object, object],
+    model_type: type[VcoModel] | None,
+) -> list[Path]:
+    """*paths*, of an edit from the data as read to the data as edited, as shown.
+
+    Each path names an item as the changes of the edit do: by its key as read,
+    or its position as read where that key does not name it alone. *models*
+    are the data as read and as edited and *documents* the JSON the paths were
+    found in, in that order. The items of each keyed list are paired as the
+    changes pair them (``raw_changes``), so an item both have is shown as the
+    data as edited names it, at its place there: a position as read is never
+    printed against the list as edited (``ChangeNames``). With only one of the
+    models, or neither, the fields are named by *model_type* and each item
+    keeps the part it is written with.
+    """
+    read, edited = models
+    if read is None or edited is None:
+        return [named_path(path, model_type) for path in paths]
+    paired: dict[Path, PairedList] = {}
+    _ = raw_changes(*documents, model_type, lists=paired)
+    names = ChangeNames(read, edited, paired)
+    return [names.path(path) for path in paths]
+
+
 def _planned_payload(
     module: ConfigurationModuleBase,
     current: object,
@@ -1301,8 +1333,16 @@ def _planned_payload(
         )
         lossy = find_lossy_assignments(baseline, current, before, after, level)
         if lossy:
-            flags = [path for path in lossy if is_override_flag(model_type, path)]
-            raise LossyFieldError(name, lossy, flags)
+            shown = _shown_paths(
+                lossy, (baseline, current), (before, after), model_type
+            )
+            # A flag is told by the path as found, and held as shown.
+            flags = [
+                named
+                for path, named in zip(lossy, shown, strict=True)
+                if is_override_flag(model_type, path)
+            ]
+            raise LossyFieldError(name, shown, flags)
     else:
         baseline = ref_baseline = None
         model_type = None
@@ -1331,12 +1371,29 @@ def _check_fixed_lists(
     fixed_model: type[VcoModel] | None,
     planned_from: object,
     payload: dict[str, Any],
+    models: tuple[VcoModel | None, VcoModel | None],
 ) -> None:
-    """Raise ``FixedListError`` if *payload* changes a fixed part of a ``FixedList``."""
+    """Raise ``FixedListError`` if *payload* changes a fixed part of a ``FixedList``.
+
+    *models* are the data as read and as edited, where the plan has them: the
+    places the error names are shown in them (``_shown_paths``).
+    """
     if fixed_model is not None and not same_json(payload, planned_from):
         broken = fixed_list_violations(fixed_model, planned_from, payload)
         if broken:
-            raise FixedListError(name, broken)
+            shown = _shown_paths(
+                [path for path, _ in broken],
+                models,
+                (planned_from, payload),
+                fixed_model,
+            )
+            raise FixedListError(
+                name,
+                [
+                    (path, reason)
+                    for path, (_, reason) in zip(shown, broken, strict=True)
+                ],
+            )
 
 
 def _plan_level(
@@ -1425,9 +1482,9 @@ def _planned_refs(
             segment_object_ids=context.segment_ids,
         )
     if ref_baseline is not None and isinstance(current, VcoModel):
-        moved = changed_owners(ref_baseline, current, context.level)
+        moved = changed_owner_paths(ref_baseline, current, context.level)
         if moved:
-            raise RefsNotLoadedError(name, tuple(dict.fromkeys(o.path for o in moved)))
+            raise RefsNotLoadedError(name, moved)
     return DerivedRefs(None, (), ())
 
 
@@ -1610,7 +1667,13 @@ def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its c
 
     _check_profile_segments(name, level, raw, payload, via_pipeline=via_pipeline)
 
-    _check_fixed_lists(name, _document_model(model_type, module), planned_from, payload)
+    _check_fixed_lists(
+        name,
+        _document_model(model_type, module),
+        planned_from,
+        payload,
+        (planned.baseline, current if isinstance(current, VcoModel) else None),
+    )
 
     restored: list[dict[str, Any]] = []
     if inherited is not None:

@@ -129,8 +129,11 @@ that changes anything else in them (a rule's `match`, a rule added, removed,
 renamed or moved, the list built or dropped), whatever made the change: an
 attribute assignment, a plain-dict `data` or a patch. It does so at every level,
 an edge's raw `defaults` included, and `validate=False` does not skip it. The
-error lists each path with its reason. A missing entry is repaired when the
-module is written, never built by an edit.
+error lists each path with its reason, as every path is shown
+(`business_policy: ... segments[Guest].defaults[Default-Internet-UDP]: match
+differs`: the module by its python name, which `error.module_name` holds too, a
+field by its attribute, an item by its name). A missing entry is repaired when
+the module is written, never built by an edit.
 
 Every QoS segment of a profile holds the template's four `defaults` rules
 (`Default-Internet-UDP`, `Default-Internet-Other`, `Default-Any-UDP`,
@@ -161,7 +164,9 @@ built from: a model read from the VCO, a model built by hand, or (for
 instead: a segment is assigned through the pipeline, as
 `{"segments": {"Guest": {"_op": "add"}}}` (`pipeline.assign_segment(state,
 "Guest")`), which makes its entry in all three modules; removing one from all
-three together is not supported. The pipeline records what it adds to a profile
+three together is not supported. The error names a module by its python name,
+in its text (`business_policy: the edit adds 'Guest', ...`) and in
+`error.module_name` and `error.modules`. The pipeline records what it adds to a profile
 module (`module.additions`, made with `add_segment_entry` and
 `add_default_entries`), and `plan_module` plans the module against its raw data
 plus those entries. An added entry nobody edited is written exactly as it was
@@ -330,7 +335,8 @@ reads the configuration with its modules and checks the module there against the
 plan: it returns that module as the write when it already holds the changes (a
 retry whose first copy was stored), and otherwise raises `ConfigConflictError`
 with nothing sent. The read narrows the race and does not close it, and a
-module with no `version` is not written: `VersionRequiredError`, unless the plan
+module with no `version` is not written: `VersionRequiredError` (its
+`module_name` is the module's python name), unless the plan
 is `unconditional` (`save(..., unconditional=True)`). A write that sends no refs
 makes no extra request.
 
@@ -450,7 +456,9 @@ always carries its refs, as read when nothing in them changed, because the VCO
 runs its processors on every such write. A module read without its refs
 (`refs_loaded` is `False`) cannot be written that way, nor with an edit to one
 of these fields: `RefsNotLoadedError` says to read it with
-`configuration/getConfiguration` and `modules`, or from the edge stack. The ref
+`configuration/getConfiguration` and `modules`, or from the edge stack (its
+`module_name` is the module's python name, and its `paths` name each field as
+every path is shown). The ref
 names that are not derived are written with `update_configuration_module`, the
 low-level request.
 

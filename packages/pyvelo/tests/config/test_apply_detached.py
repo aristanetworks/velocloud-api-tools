@@ -70,7 +70,7 @@ async def test_an_assignment_with_a_detached_model_changes_no_module(call: str) 
 
     with pytest.raises(
         DetachedObjectError,
-        match=r"assign_segment: the QosSegment\[Profile\] at segments\[#1\] is a "
+        match=r"assign_segment: the QosSegment\[Profile\] at segments\[Guest\] is a "
         "detached object",
     ):
         _ = await attempt

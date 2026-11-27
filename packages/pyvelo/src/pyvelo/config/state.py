@@ -233,7 +233,9 @@ class ConfigPlan:
             then ``segment_warnings``, then ``check_warnings``.
         segment_warnings: The segments of a profile that its three modules
             disagree about as read, which the edit does not settle: code
-            ``segments_disagree``, at ``segments["<name>"]``. Empty for an edge.
+            ``segments_disagree``, with the segment's name in ``segment`` and
+            ``segments[<name>]`` in ``path``, as every path is shown; it is
+            about three modules, so ``module`` is None. Empty for an edge.
         check_warnings: What the cross-module checks warn of and the save
             leaves as it is: the references that name nothing in the module
             as read and still name nothing (code ``reference_kept``), the
@@ -913,13 +915,14 @@ class ConfigState:
             return
         if module.is_new:
             if module.name in self.unconfirmed_inserts:
+                named = python_module_name(module.name)
                 raise ValueError(
-                    f"{module.name}: an insert of this module may have reached the "
+                    f"{named}: an insert of this module may have reached the "
                     "VCO (a save failed after it was sent), so its edits are not "
                     "taken back here, which sends nothing: the state would forget "
                     "the module, and a later save could insert it a second time. "
                     'Revert it with `await pipeline.revert(state, module="'
-                    f'{module.name}")`, which reads the configuration and deletes '
+                    f'{named}")`, which reads the configuration and deletes '
                     "the module on the VCO when it is the one this state holds; or "
                     "save again, which reads the configuration before it inserts; "
                     "or load the state again"
@@ -931,7 +934,8 @@ class ConfigState:
         found = None if snapshot is None else _find_module(snapshot, module.name)
         if found is None:
             raise ValueError(
-                f"{module.name}: this state holds no copy of the module as read "
+                f"{python_module_name(module.name)}: this state holds no copy of "
+                "the module as read "
                 "(take_snapshot() was not called when the state was built), so "
                 "its edits cannot be taken back. Load the state again"
             )
@@ -948,7 +952,9 @@ class ConfigState:
         """
         found: list[tuple[str, list[Path]]] = []
         for record in self._replaced:
-            paths = record.changed_paths()
+            # The module is no longer held: its class names the fields, and
+            # each item keeps the key or the position the comparison gave it.
+            paths = [named_path(path, record.model) for path in record.changed_paths()]
             if paths:
                 found.append((record.name, paths))
         self._replaced = [record for record in self._replaced if record.nodes]
@@ -956,8 +962,8 @@ class ConfigState:
             return
         raise DetachedObjectError(
             "\n".join(
-                f"{name}: objects taken from the state before a save or a revert "
-                "were changed "
+                f"{python_module_name(name)}: objects taken from the state before "
+                "a save or a revert were changed "
                 f"in place at: {', '.join(paths)}. The state holds the module as "
                 "stored; take the objects from the state again and redo the change"
                 for name, paths in found
@@ -1579,7 +1585,9 @@ def _segment_name(entry: object, segment_id: object) -> str:
     return name if isinstance(name, str) else str(segment_id)
 
 
-def _names_text(names: Sequence[str]) -> str:
+def _names_text(modules: Sequence[str]) -> str:
+    """The *modules* as a text lists them, each by its python name."""
+    names = [python_module_name(module) for module in modules]
     return (
         " and ".join(names)
         if len(names) < 3  # noqa: PLR2004  # two names are joined by "and" alone
@@ -1588,8 +1596,9 @@ def _names_text(names: Sequence[str]) -> str:
 
 
 def _add_hint(name: str, modules: Sequence[str]) -> str:
+    """How to give the segment *name* to *modules*, named as ``apply`` takes them."""
     patch = json.dumps({"segments": {name: {"_op": "add"}}})
-    where = " and ".join(modules)
+    where = " and ".join(python_module_name(module) for module in modules)
     return (
         f"Send the patch {patch} to {where}, or assign the segment to all three "
         f'with pipeline.assign_segment(state, "{name}")'
@@ -1664,7 +1673,7 @@ def _check_segment_set(
             has = [m for m in _SEGMENT_MODULES if m not in lacking]
             warnings.append(
                 ValidationWarning(
-                    path=f"segments[{json.dumps(name)}]",
+                    path=Path(("segments", Key(name))),
                     message=(
                         f"Segment {name!r} is in {_names_text(has)} but not in "
                         f"{_names_text(lacking)}, as read, and the segments of a "
@@ -1672,6 +1681,7 @@ def _check_segment_set(
                         f"leaves it as it is. {_add_hint(name, lacking)}."
                     ),
                     code="segments_disagree",
+                    segment=name,
                 )
             )
     if removals or incomplete:

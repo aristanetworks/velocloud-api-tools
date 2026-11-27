@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast, override
 
-from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.enums.configuration import (
+    ConfigurationModuleName,
+    python_module_name,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -127,7 +130,8 @@ class SaveStepError(IntentError):
     step was sent, and ``module_name`` then names that module. ``steps_done``
     are the steps sent before the failure and ``steps_in_place`` those found
     already in place and not sent, in the order of the plan; ``written`` are
-    the names of the modules stored, in order. The error is raised ``from``
+    the names of the modules stored, in order, as the VCO names them (the
+    message names each by its python name). The error is raised ``from``
     the error of the VCO, and ``save_progress(error)`` gives the modules not
     written. The state keeps its edits: a second ``save`` plans the steps
     again, skips those in place and sends the rest. ``revert`` of the device
@@ -161,8 +165,8 @@ class SaveStepError(IntentError):
             )
         elif self.module_name is not None:
             what = (
-                f"the save stopped at the write of the module {self.module_name}, "
-                f"which failed ({reason})"
+                "the save stopped at the write of the module "
+                f"{python_module_name(self.module_name)}, which failed ({reason})"
             )
         else:
             # A device settings write the version read found stored is done.
@@ -187,7 +191,8 @@ class SaveStepError(IntentError):
             else ""
         )
         stored = (
-            "; modules known to be written: " + ", ".join(self.written)
+            "; modules known to be written: "
+            + ", ".join(python_module_name(name) for name in self.written)
             if self.written
             else "; no module is known to be written"
         )

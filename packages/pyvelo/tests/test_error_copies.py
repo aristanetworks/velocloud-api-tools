@@ -139,7 +139,7 @@ def test_a_fixed_list_error_keeps_its_module_paths_and_message_through_copies() 
     error = FixedListError("QOS", [(paths[0], "the list is gone")])
     for copied in copies(error):
         assert type(copied) is FixedListError
-        assert (copied.module_name, copied.paths) == ("QOS", paths)
+        assert (copied.module_name, copied.paths) == ("business_policy", paths)
         assert str(copied) == str(error)
 
 
@@ -209,9 +209,9 @@ def test_a_segment_set_error_keeps_its_attributes_and_message_through_copies() -
     for copied in copies(error):
         assert type(copied) is SegmentSetError
         assert (copied.module_name, copied.segments, copied.modules) == (
-            "QOS",
+            "business_policy",
             ("Guest",),
-            ("QOS",),
+            ("business_policy",),
         )
         assert str(copied) == str(error)
 
@@ -567,3 +567,47 @@ def test_a_hub_service_message_names_the_hub_by_logical_id_when_it_has_no_name()
     assert '"logical_id"' not in str(named)
     assert f'"logical_id": "{logical_id}"' in str(unnamed)
     assert '"name"' not in str(unnamed)
+
+
+# --- an error names its module by its python name -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("given", "named"),
+    [
+        ("deviceSettings", "device_settings"),
+        ("QOS", "business_policy"),
+        ("business_policy", "business_policy"),
+        ("firewall", "firewall"),
+    ],
+)
+def test_an_error_names_its_module_by_the_python_name_in_its_field_and_its_text(
+    given: str, named: str
+) -> None:
+    path = Path(("segments", Key("Guest"), "defaults"))
+    lossy = LossyFieldError(given, [path])
+    fixed = FixedListError(given, [(path, "the list is gone")])
+    no_refs = RefsNotLoadedError(given, (path,))
+    no_version = VersionRequiredError(given)
+    composed = ComposedModuleError("no data", module=given)
+    segment_set = SegmentSetError("no", module_name=given, modules=(given, "firewall"))
+
+    assert (lossy.module, fixed.module_name, no_refs.module_name) == (named,) * 3
+    assert (no_version.module_name, composed.module) == (named, named)
+    assert (segment_set.module_name, segment_set.modules) == (
+        named,
+        (named, "firewall"),
+    )
+    for error in (lossy, fixed, no_version):
+        assert str(error).startswith(f"{named}: ")
+    assert str(no_refs).startswith(f"{named} was read without its refs")
+    assert str(RefsNotLoadedError(given)).startswith(
+        f"{named} was read without its refs"
+    )
+
+
+def test_a_segment_set_error_about_several_modules_names_none() -> None:
+    error = SegmentSetError("no", modules=("deviceSettings", "QOS"))
+
+    assert error.module_name is None
+    assert error.modules == ("device_settings", "business_policy")

@@ -12,7 +12,10 @@ from typing import Any, Final, Literal, Protocol, TypeIs, cast, runtime_checkabl
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
 
-from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.enums.configuration import (
+    ConfigurationModuleName,
+    python_module_name,
+)
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ComposedModuleError,
@@ -410,8 +413,10 @@ class _Sending:
         self.result.left_out[name] = write.left_out
         self.result.written = tuple(self.done)
         if paths:
+            paths = [_shown_edit(path, mod) for path in paths]
             error = DetachedObjectError(
-                f"{mod.name}: the module was edited while this save was writing "
+                f"{python_module_name(mod.name)}: the module was edited while "
+                "this save was writing "
                 f"it, at: {', '.join(paths)}. The write is stored without those "
                 "edits and the state holds the module as stored; take the objects "
                 "from the state again and redo them. A path that is a placeholder "
@@ -1123,7 +1128,8 @@ class ConfigPipeline:
         client = self._client
         if client is None:
             raise ValueError(
-                f"{module.name}: an insert of this module may have reached the VCO "
+                f"{python_module_name(module.name)}: an insert of this module may "
+                "have reached the VCO "
                 "(a save failed after it was sent), and this pipeline has no "
                 "client to read the configuration and delete the module with, so "
                 "its edits are not taken back: the state would forget the module, "
@@ -2963,6 +2969,20 @@ def _dump(mod: AnyStoredModule) -> object:
     return mod.model_dump(mode="json", by_alias=True)
 
 
+def _shown_edit(path: Path, mod: AnyStoredModule) -> Path:
+    """*path*, of an edit of *mod* made while it was written, as pyvelo shows it.
+
+    The path is one from the module as it was sent to the module as it is: it
+    names an item by its key as sent, which *mod* is asked for, so the item
+    is shown by what names it now. A path with a position is named by the
+    class alone, its fields by attribute: the position counts in the list as
+    it was sent, which this holds no model of, so it is kept as written and
+    read as no item of the list as it is.
+    """
+    by_position = any(isinstance(part, int) for part in path.parts)
+    return named_path(path, type(mod) if by_position else mod)
+
+
 def _require_writable(mod: AnyStoredModule) -> _WritableModule:
     """*mod*, if it is a module a save writes; else ``TypeError``."""
     if not isinstance(mod, _WRITABLE_MODULES):
@@ -3101,7 +3121,8 @@ def _plan_to_compare(state: ConfigState, module: AnyStoredModule) -> ModulePlan:
         if isinstance(error, ResolverNotLoadedError):
             raise
         raise ValueError(
-            f"{module.name}: an insert of this module may have reached the VCO, "
+            f"{python_module_name(module.name)}: an insert of this module may "
+            "have reached the VCO, "
             f"and this state's module cannot be planned ({error}), so it cannot "
             "be compared with a module the VCO may hold. Nothing was read or "
             "deleted. To go on, load the state again, which then holds the "
@@ -3121,7 +3142,8 @@ def _require_the_states(
     """
     if plan.operation != "insert":
         raise ValueError(
-            f"{module.name}: the VCO holds a module of this name (module "
+            f"{python_module_name(module.name)}: the VCO holds a module of this "
+            "name (module "
             f"{found.id_}), and this state's module holds nothing a save would "
             "insert, so it cannot be told whether the stored module is the one "
             "this state sent, and it was not deleted. To go on, load the state "
@@ -3131,11 +3153,16 @@ def _require_the_states(
         write = check_found_insert(module, plan, found)
     except ModuleWriteError as error:
         raise ValueError(
-            _not_this_states(module.name, found.id_, _how_it_differs(error))
+            _not_this_states(module.name, found.id_, _how_it_differs(error, plan))
         ) from error
     more = [c for c in write.server_changes if not is_vco_assigned(module, plan, c)]
     if more:
-        paths = [str(change.path) for change in more]
+        # Named in the plan's data: a key the model does not declare, and an
+        # item only the stored module has, keep the part they are written with.
+        paths = [
+            str(change.path if change.part == "refs" else plan.named(change.path))
+            for change in more
+        ]
         raise ValueError(
             _not_this_states(
                 module.name, found.id_, f"it also holds {_some_paths(paths)}"
@@ -3144,9 +3171,13 @@ def _require_the_states(
 
 
 def _not_this_states(name: str, module_id: int, what: str) -> str:
-    """The refusal to delete module *module_id*, which is not this state's."""
+    """The refusal to delete module *module_id*, which is not this state's.
+
+    *name* is the module's name; the text names it by its python name.
+    """
     return (
-        f"{name}: the VCO holds a module of this name (module {module_id}) that "
+        f"{python_module_name(name)}: the VCO holds a module of this name "
+        f"(module {module_id}) that "
         f"is not the one this state holds ({what}), so it was not deleted: "
         "deleting it could remove another writer's module. To go on, save again, "
         "which reads the configuration before it inserts and goes on from the "
@@ -3163,11 +3194,24 @@ def _some_paths(paths: Sequence[str]) -> str:
     return f"{', '.join(distinct[:_SHOWN_PATHS])}{tail}"
 
 
-def _how_it_differs(error: ModuleWriteError) -> str:
-    """In a few words, why the module *error* was raised for is not this state's."""
+def _how_it_differs(error: ModuleWriteError, plan: ModulePlan) -> str:
+    """In a few words, why the module *error* was raised for is not this state's.
+
+    The places it differs at are shown as *plan*, which holds the state's
+    module, names them: an item the plan removes in the data as read, any
+    other in the data as planned. The path of a refs entry is no path of the
+    data, and is kept.
+    """
     if isinstance(error, WriteOutcomeUnknownError):
         return error.detail
-    paths = [str(change.path) for change in error.lost_edits]
+    paths = [
+        str(
+            change.path
+            if change.part == "refs"
+            else plan.named(change.path, removed=change.intended is MISSING)
+        )
+        for change in error.lost_edits
+    ]
     if not paths:
         return "it does not hold what this state's module holds"
     return f"it differs at {_some_paths(paths)}"

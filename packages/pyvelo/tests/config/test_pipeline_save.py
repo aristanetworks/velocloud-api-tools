@@ -207,6 +207,6 @@ async def test_a_save_whose_second_module_has_no_version_sends_nothing() -> None
     with pytest.raises(VersionRequiredError) as exc:
         _ = await ConfigPipeline(client).save(state)
 
-    assert exc.value.module_name == "QOS"
+    assert exc.value.module_name == "business_policy"
     assert client.store.requests == []
     assert [p.name for p in state.plan().changed] == ["firewall", "QOS"]
