@@ -6,31 +6,57 @@ named ``40``, beside a network added with the VLAN ID 40. Under one selector
 the two entries would be one, and ``apply`` would write something other than
 the lost edits. There the stored item stays under its key or position, and
 the patch redoes what the write planned.
+
+A name is given to a stored item only. A segment of which nothing is stored
+keeps the plan's key, and so do the items in it: its key may read in the
+stored list as another segment's ID (a segment named ``4``, beside ``Voice``
+with the ID 4), and under that segment's name its edits would be written to
+that segment.
 """
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from profile_state import module_store_pipeline, profile_state
+from pyvelo.client.exceptions import ConfigConflictError, ModuleWriteError
 from pyvelo.client.models.configuration.profile_segments import new_segment_entry
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import QosConfigurationModule
 from pyvelo.config import add, at
+from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.core import Profile
+from pyvelo.core.identity import NetworkServiceIdentity
 from pyvelo.core.patch import PatchError
+from pyvelo.testing import MockVcoClient
+from refs_helpers import (
+    DNS_A,
+    QOS_ID,
+    dns,
+    ds_module,
+    segment_entry,
+    segment_row,
+    table_registry,
+)
+from refs_helpers import SEGMENT as SEGMENT_REF
 from segment_helpers import (
     GLOBAL,
     VOICE,
     Segment,
     ds_entry,
+    firewall_entry,
     identity,
     profile_rows,
     qos_entry,
 )
 from test_patch_real_models import (  # pyright: ignore[reportImplicitRelativeImport]
+    SEGMENT,
+    desc,
     firewall,
     fw_rule,
+    make_state,
 )
 from test_profile_segment_save import (  # pyright: ignore[reportImplicitRelativeImport]
     rule as template_rule,
@@ -41,6 +67,7 @@ from test_shown_plan import (  # pyright: ignore[reportImplicitRelativeImport]
 )
 from test_write_back_real_models import (  # pyright: ignore[reportImplicitRelativeImport]
     DENY,
+    MODULE,
     other_writer_edit,
     outbound_ops,
 )
@@ -57,7 +84,7 @@ from test_write_error_names import (  # pyright: ignore[reportImplicitRelativeIm
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from pyvelo.client.models.configuration.device_settings.lan import LanNetwork
     from pyvelo.client.schemas.configuration import AnyStoredModule
@@ -313,9 +340,32 @@ VOICE_TWIN: Segment = (6, "Voice", "66666666-6666-4666-8666-666666666666", 506)
 """A second segment named ``Voice``, which is therefore named by its ID, ``6``."""
 SIX: Segment = (9, "6", "99999999-9999-4999-8999-999999999999", 509)
 """A segment whose name is the ID of ``VOICE_TWIN``."""
+FOUR: Segment = (9, "4", "99999999-9999-4999-8999-999999999999", 509)
+"""A segment whose name is the ID of ``VOICE``."""
 
 
-def test_a_twin_segment_keeps_its_position_beside_a_segment_added_under_its_id() -> (
+async def qos_state(
+    entries: list[dict[str, Any]], more: tuple[Segment, ...]
+) -> ConfigState:
+    """A profile whose QoS module has *entries*; its registry knows *more* too."""
+    return await profile_state(
+        [ds_entry(GLOBAL)], entries, [firewall_entry(GLOBAL)], segments=(GLOBAL, *more)
+    )
+
+
+def as_stored_in(state: ConfigState, error: ModuleWriteError) -> Lost:
+    """*error* with *state*, which is given the module as stored for its QoS."""
+    state.replace_module(state.module("QOS"), cast("AnyStoredModule", error.module))
+    return Lost(error, state)
+
+
+def qos_text(planned: list[tuple[object, ...]]) -> object:
+    """The text of the QoS module's plan in what ``redone`` gives."""
+    (text,) = [text for name, *_, text in planned if name == "QOS"]
+    return text
+
+
+async def test_a_twin_segment_keeps_its_position_beside_a_segment_added_under_its_id() -> (  # noqa: E501 (a test's name)
     None
 ):
     """The redo adds a lost added segment again under its name, here ``6``."""
@@ -330,7 +380,8 @@ def test_a_twin_segment_keeps_its_position_beside_a_segment_added_under_its_id()
     entry = new_segment_entry("QOS", identity(SIX))
     new: Any = module.add_segment_entry(entry)
     new.rules[0].name = "New"
-    error = failed(module, plan_module(module, via_pipeline=True), raw_copy(module))
+    plan = plan_module(module, via_pipeline=True)
+    error = failed(module, plan, raw_copy(module))
 
     segments = cast("dict[str, dict[str, Any]]", error.redo_patch()["segments"])
 
@@ -341,3 +392,275 @@ def test_a_twin_segment_keeps_its_position_beside_a_segment_added_under_its_id()
         "rules": {entry["rules"][0]["name"]: {"name": "New"}},
     }
     assert error.not_redone() == ()
+    stored = await qos_state([qos_entry(GLOBAL), *twins], (VOICE, VOICE_TWIN, SIX))
+    lost = as_stored_in(stored, error)
+    assert qos_text(await redone(lost, error.redo_patch())) == plan.render()
+
+
+def segments_of(error: ModuleWriteError) -> dict[str, dict[str, Any]]:
+    """The entries the redo patch of *error* has for ``segments``."""
+    return cast("dict[str, dict[str, Any]]", error.redo_patch()["segments"])
+
+
+def rule_names(row: dict[str, Any]) -> dict[str, list[str]]:
+    """The names of the rules of each segment of the QoS *row* of a store."""
+    return {
+        entry["segment"]["name"]: [rule["name"] for rule in entry["rules"]]
+        for entry in row["data"]["segments"]
+    }
+
+
+def without_segment_nine(new: dict[str, Any], old: dict[str, Any] | None) -> None:
+    """The VCO stores the QoS row without the segment of ID 9."""
+    del old
+    if new["name"] == "QOS":
+        new["data"]["segments"] = [
+            entry
+            for entry in new["data"]["segments"]
+            if entry["segment"]["segmentId"] != FOUR[0]
+        ]
+
+
+async def test_the_rules_of_a_lost_added_segment_are_redone_in_it() -> None:
+    """A segment named ``4`` is added by text beside ``Voice``, whose ID is 4.
+
+    The VCO stores none of it. Its key reads in the stored list as ``Voice``,
+    which has the template's rules: the redo names it ``4`` all the same, so
+    its two rules are written to it and ``Voice`` keeps its own.
+    """
+    registry = (GLOBAL, VOICE, FOUR)
+    template = new_segment_entry("QOS", identity(VOICE))["rules"]
+    state = await profile_state(
+        [ds_entry(GLOBAL), ds_entry(VOICE)],
+        [qos_entry(GLOBAL), qos_entry(VOICE, rules=template)],
+        [firewall_entry(GLOBAL), firewall_entry(VOICE)],
+        segments=registry,
+    )
+    pipeline, store = module_store_pipeline(state, segments=registry)
+    rules = [template_rule("Box"), template_rule("Video")]
+    _ = await pipeline.apply(
+        state,
+        module="business_policy",
+        patch={"segments": {"4": add({"rules": rules})}},
+    )
+    store.on_store.append(without_segment_nine)
+    with pytest.raises(ModuleWriteError) as caught:
+        _ = await pipeline.save(state)
+    error = caught.value
+    store.on_store.remove(without_segment_nine)
+
+    segments = segments_of(error)
+
+    assert sorted(segments) == ["4"]
+    assert segments["4"]["_op"] == "add"
+    assert error.not_redone() == ()
+    _ = await pipeline.apply(state, module=error.module_name, patch=error.redo_patch())
+    _ = await pipeline.save(state)
+    assert rule_names(store.rows[QOS_ID]) == {
+        "Global Segment": [],
+        "Voice": [rule["name"] for rule in template],
+        "4": ["Box", "Video"],
+    }
+
+
+async def test_an_edit_of_the_segment_of_that_id_stays_beside_the_added_segments() -> (
+    None
+):
+    """``Voice`` and the lost segment ``4`` each had a rule renamed.
+
+    Under one entry the second rename would overwrite the first.
+    """
+    entries = [qos_entry(GLOBAL), new_segment_entry("QOS", identity(VOICE))]
+    state = await qos_state(entries, (VOICE, FOUR))
+    module = state.module("QOS")
+    data: Any = module.data
+    data.segments[1].rules[0].name = "StoredEdited"
+    entry = new_segment_entry("QOS", identity(FOUR))
+    new: Any = module.add_segment_entry(entry)
+    new.rules[0].name = "NewEdited"
+    plan = plan_module(module, via_pipeline=True)
+    error = failed(module, plan, raw_copy(module))
+    first = entry["rules"][0]["name"]
+
+    assert error.redo_patch() == {
+        "segments": {
+            "Voice": {"rules": {first: {"name": "StoredEdited"}}},
+            "4": {"_op": "add", "rules": {first: {"name": "NewEdited"}}},
+        }
+    }
+    assert error.not_redone() == ()
+    lost = as_stored_in(await qos_state(entries, (VOICE, FOUR)), error)
+    assert qos_text(await redone(lost, error.redo_patch())) == plan.render()
+
+
+def edge_segments(*segments: tuple[int, str, str]) -> dict[str, Any]:
+    """An edge's firewall data: each segment by ID and name, with one rule."""
+    return {
+        "segments": [
+            {"segment": desc(segment_id, name), "outbound": [fw_rule(rule)]}
+            for segment_id, name, rule in segments
+        ]
+    }
+
+
+def profile_segments(*segments: tuple[int, str]) -> dict[str, Any]:
+    """A profile's firewall data: each segment by ID and name, with no rule."""
+    return {
+        "segments": [
+            {"segment": desc(segment_id, name), "outbound": []}
+            for segment_id, name in segments
+        ]
+    }
+
+
+async def a_rule_added_in_a_reconciled_segment(
+    edge: dict[str, Any], profile: dict[str, Any], *, edited: int
+) -> Lost:
+    """A rule ``r`` added in the profile's last segment, which the edge lacks.
+
+    The first rule of the edge's segment at *edited* is edited too, and
+    another writer's key is stored. The new segment is reached through the
+    state: no text selects a segment whose name reads as another one's ID.
+    """
+    state = make_state({"firewall": edge}, {"firewall": profile})
+    client = MockVcoClient.for_state(state, conditional_check=True)
+    data = state.edge.firewall
+    rule = type(data.segments[0].outbound[0]).model_validate(fw_rule("r"))
+    data.segment(profile["segments"][-1]["segment"]["name"]).outbound.append(rule)
+    data.segments[edited].outbound[0].logging_enabled = True
+    client.store.other_writer(MODULE, other_writer_edit)
+    with pytest.raises(ConfigConflictError) as caught:
+        _ = await ConfigPipeline(client).save(state)
+    return Lost(caught.value, state)
+
+
+async def named_as_the_global_segments_id() -> Lost:
+    """The edge has the Global Segment; the profile also a segment named ``0``."""
+    return await a_rule_added_in_a_reconciled_segment(
+        edge_segments((0, SEGMENT, "a")),
+        profile_segments((0, SEGMENT), (2, "0")),
+        edited=0,
+    )
+
+
+async def named_as_the_id_of_voice() -> Lost:
+    """The edge has ``Voice`` with the ID 4; the profile also a segment named ``4``."""
+    return await a_rule_added_in_a_reconciled_segment(
+        edge_segments((0, SEGMENT, "a"), (4, "Voice", "v")),
+        profile_segments((0, SEGMENT), (4, "Voice"), (9, "4")),
+        edited=1,
+    )
+
+
+async def named_as_the_id_of_a_twin() -> Lost:
+    """The edge has two segments named ``Voice``; the profile also one named ``6``.
+
+    The second ``Voice`` has the ID 6, and is shown by it.
+    """
+    return await a_rule_added_in_a_reconciled_segment(
+        edge_segments((0, SEGMENT, "a"), (4, "Voice", "v"), (6, "Voice", "w")),
+        profile_segments((0, SEGMENT), (4, "Voice"), (6, "Voice"), (9, "6")),
+        edited=2,
+    )
+
+
+RECONCILED = [
+    pytest.param(
+        named_as_the_global_segments_id, "0", SEGMENT, "a", "Global Segment", id="0"
+    ),
+    pytest.param(named_as_the_id_of_voice, "4", "Voice", "v", "Voice", id="4"),
+    pytest.param(named_as_the_id_of_a_twin, "6", "#2", "w", "Voice", id="6"),
+]
+"""A write, the key of its reconciled segment, the selector of the stored
+segment that has its ID, the rule edited there, and that segment's name."""
+
+
+@pytest.mark.parametrize(("build", "new", "stored", "rule", "name"), RECONCILED)
+async def test_a_reconciled_segment_named_as_a_stored_segments_id_keeps_its_key(
+    build: Callable[[], Awaitable[Lost]], new: str, stored: str, rule: str, name: str
+) -> None:
+    """Its rule is not put into the entry of the stored segment.
+
+    ``apply`` reads the key as that segment and refuses two selectors for it,
+    as it refuses this patch in the VCO's keys: nothing is written.
+    """
+    lost = await build()
+
+    segments = segments_of(lost.error)
+
+    assert sorted(segments) == sorted([new, stored])
+    assert segments[stored] == {"outbound": {rule: {"logging_enabled": True}}}
+    assert list(segments[new]) == ["outbound"]
+    assert [(key, op["_op"]) for key, op in segments[new]["outbound"].items()] == [
+        ("r", "add")
+    ]
+    with pytest.raises(PatchError) as refused:
+        _ = await redone(lost, lost.error.redo_patch())
+    assert f"names segment {name!r} too: one selector per segment" in str(refused.value)
+
+
+def provider_stub(segment: Segment) -> dict[str, Any]:
+    """A device settings entry of *segment* with a primary provider not set."""
+    segment_id, name, logical_id, _ = segment
+    return segment_entry(segment_id, name, logical_id, dns=dns(primary=True))
+
+
+async def provider_lost(
+    stored: tuple[Segment, ...],
+    new: Segment,
+    *,
+    set_in: int,
+    also_stored: tuple[Segment, ...] = (),
+) -> ModuleWriteError:
+    """A provider and a DNS source interface set in one segment; nothing is stored.
+
+    The device settings have the segments *stored*, and *new* is added to
+    them. Both values are set in the segment at *set_in*. The module as
+    stored has the segments *also_stored* in front of the last of *stored*:
+    another writer's.
+    """
+    rows = [segment_row(segment[0], segment[3], segment[2]) for segment in stored]
+    module = ds_module(
+        [provider_stub(segment) for segment in stored], {SEGMENT_REF: rows}
+    )
+    entry = new_segment_entry("deviceSettings", identity(new))
+    entry["dns"] = dns(primary=True)
+    _ = module.add_segment_entry(entry)
+    section: Any = module.data.segments[set_in].dns
+    section.primary_provider.service = uuid.UUID(DNS_A)
+    section.source_interface = "GE1"
+    service = NetworkServiceIdentity("dns-a", uuid.UUID(DNS_A), 701, "dns")
+    resolvers = await table_registry(
+        service, *(identity(segment) for segment in (*stored, new))
+    )
+    plan = plan_module(module, via_pipeline=True, resolvers=resolvers)
+    raw = raw_copy(module)
+    raw["segments"][-1:-1] = [provider_stub(segment) for segment in also_stored]
+    return failed(module, plan, raw)
+
+
+PROVIDER_SET = {"source_interface": "GE1", "primary_provider": {"service": DNS_A}}
+
+
+async def test_a_provider_of_a_lost_added_segment_is_set_in_it() -> None:
+    """Its field is set in the entry that adds the segment, not in ``Voice``."""
+    error = await provider_lost((GLOBAL, VOICE), FOUR, set_in=2)
+
+    assert error.redo_patch() == {
+        "segments": {"4": {"_op": "add", "dns": PROVIDER_SET}}
+    }
+
+
+async def test_a_provider_is_set_under_the_position_its_twin_segment_keeps() -> None:
+    """Another writer stored a second ``Voice``, so the one edited is shown by its ID.
+
+    That is ``6``, the name of the segment the write added: the segment stays
+    under its position, and its provider is set there, not on the new segment.
+    """
+    error = await provider_lost(
+        (GLOBAL, VOICE_TWIN), SIX, set_in=1, also_stored=(VOICE,)
+    )
+
+    assert error.redo_patch() == {
+        "segments": {"#2": {"dns": PROVIDER_SET}, "6": {"_op": "add"}}
+    }

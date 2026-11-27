@@ -924,16 +924,17 @@ def _item_name(data: VcoModel, stored: Path) -> ItemPart:
     return part if isinstance(shown, str) else shown
 
 
-def _added_selectors(
-    changes: Iterable[RawChange], segments: Iterable[str]
+def _unstored_selectors(
+    changes: Iterable[RawChange], segments: Iterable[str], unstored: Iterable[Path]
 ) -> dict[Path, set[str]]:
-    """By the path of a list, the selectors the patch has for the items it adds there.
+    """By the path of a list, the selectors the patch has for items not stored there.
 
     They are those of the items *changes* add, each the selector of the part
-    its change names it by, and *segments*, the selectors of the segments
-    the redo adds again. The paths are in the names the changes use.
+    its change names it by; *segments*, the selectors of the segments the redo
+    adds again; and the last part of each path of *unstored*, the items the
+    redo names by the plan's key. The paths are in the names the changes use.
     """
-    added: dict[Path, set[str]] = {}
+    selectors: dict[Path, set[str]] = {}
     for change in changes:
         parts = change.path.parts
         if (
@@ -942,27 +943,39 @@ def _added_selectors(
             and change.before is MISSING
             and isinstance(change.after, dict)
         ):
-            added.setdefault(Path(parts[:-1]), set()).add(selector_of(parts[-1]))
+            selectors.setdefault(Path(parts[:-1]), set()).add(selector_of(parts[-1]))
     for selector in segments:
-        added.setdefault(Path(("segments",)), set()).add(selector)
-    return added
+        selectors.setdefault(Path(("segments",)), set()).add(selector)
+    for path in unstored:
+        *listed, part = path.parts
+        selectors.setdefault(Path(tuple(listed)), set()).add(
+            selector_of(cast("ItemPart", part))
+        )
+    return selectors
 
 
 @dataclass(frozen=True, eq=False)
 class _StoredNames(Mapping[Path, ItemPart]):
-    """``parts`` with each part as ``name`` gives it in ``data``.
+    """``parts`` with the part of each stored item as ``name`` gives it in ``data``.
 
     ``parts`` maps the path of an item, in the names the changes use, to the
     part that names it in the stored list. A part is converted when it is
     read: ``patch_of`` reads those of the items its changes name, and naming
     every item of a long list would read the list once for each.
+
+    The part at a path of ``unstored`` is the plan's key and is given as it
+    is, and so is every part below one: read in the stored list, the key of
+    a segment of which nothing is stored may be another segment's ID, and
+    under that segment's name the patch would write the edits to it.
     """
 
     data: VcoModel
     parts: Mapping[Path, ItemPart]
-    added: Mapping[Path, Collection[str]]
+    unstored: Collection[Path]
+    """The paths of ``parts`` that name no stored item (``_Redo.unstored``)."""
+    taken: Mapping[Path, Collection[str]]
     """By the path of a list, in the names the changes use, the selectors the
-    patch has for the items it adds there (``_added_selectors``)."""
+    patch has for items not stored there (``_unstored_selectors``)."""
 
     def name(self, listed: Path, stored: Path) -> ItemPart:
         """The part the patch names the item *stored* names by.
@@ -970,11 +983,13 @@ class _StoredNames(Mapping[Path, ItemPart]):
         *stored* is as ``_item_name`` takes it, and *listed* is the path of the
         item's list in the names the changes use. The part is ``_item_name`` of
         the item, unless the selector of that is one the patch has for an item
-        it adds to the list: then it is the last part of *stored*, as written.
+        of the list that is not stored (one it adds, or one of a segment of
+        which nothing is stored): then it is the last part of *stored*, as
+        written.
 
         Under one selector the two would be one entry of the patch, and
         ``apply`` may take it: an edit of the stored item is then set on the
-        added one, and its move is the added one's place. ``item_part`` proves
+        other one, and its move is the other one's place. ``item_part`` proves
         a name alone among the stored items only. The stored part is what
         ``patch_of`` writes without the names, and no name of another stored
         item has its selector: each selects one item alone in the stored list.
@@ -984,19 +999,19 @@ class _StoredNames(Mapping[Path, ItemPart]):
         """
         part = cast("ItemPart", stored.parts[-1])
         shown = _item_name(self.data, stored)
-        return part if selector_of(shown) in self.added.get(listed, ()) else shown
+        return part if selector_of(shown) in self.taken.get(listed, ()) else shown
 
     @override
     def __getitem__(self, path: Path) -> ItemPart:
         part = self.parts[path]  # KeyError: the stored list lacks the item
         stored: list[PathPart] = []
         for depth, step in enumerate(path.parts, 1):
-            found = (
-                step
-                if isinstance(step, str)
-                else self.parts.get(Path(path.parts[:depth]))
-            )
-            if found is None:
+            if isinstance(step, str):
+                stored.append(step)
+                continue
+            above = Path(path.parts[:depth])
+            found = self.parts.get(above)
+            if found is None or above in self.unstored:
                 return part
             stored.append(found)
         return self.name(Path(path.parts[:-1]), Path(stored))
@@ -1015,18 +1030,21 @@ class _Redo:
     """What the redo of a write error's lost edits is built from.
 
     The module as stored, its data, the plan that was written, and the part
-    that names each stored item by its path. ``stored_parts`` is the error's,
-    copied: the redo adds the items of a segment of which nothing is stored,
-    named as the plan names them. Its parts are the check's, a key of the
-    stored list or a position; the patch has each as ``_StoredNames`` gives
-    it: by its name, or as it is where the name is the selector of an item
-    the patch adds.
+    that names each item by its path. ``stored_parts`` is the error's, copied:
+    its parts are the check's, each a key of the stored list or a position
+    there. The redo adds the items of a segment of which nothing is stored,
+    under the plan's keys, and notes their paths in ``unstored``: those name
+    no stored item. The patch has each part as ``_StoredNames`` gives it: a
+    stored item by its name, or as it is where the name is the selector of an
+    item of the patch that is not stored; an item of ``unstored`` as it is.
     """
 
     data: VcoModel
     module: ConfigurationModuleBase
     plan: ModulePlan
     stored_parts: dict[Path, ItemPart]
+    unstored: set[Path] = field(default_factory=set[Path])
+    """The paths the redo itself put into ``stored_parts``."""
 
 
 class ModuleWriteError(VcoError):
@@ -1386,25 +1404,29 @@ class ModuleWriteError(VcoError):
         by in the stored list (``item_part``: its label, else its key, else its
         alt key, else its position), so a hub is ``Hub-A`` and a network its
         name; the names are those of ``module`` as it is when the patch is
-        built. Two kinds of item stay under the plan's key for them: an item
-        the patch itself adds, which no stored item names (a network added
-        with the VLAN ID 40 is ``"40"``), and the items in a segment of which
-        nothing is stored. A stored item whose name is the selector of an item
-        the patch adds to its list stays under its key in the stored list, or
-        its position, as ``stored_parts`` has it: beside that added network, a
-        stored network named ``40`` with the VLAN ID 10 is ``"10"``. Under
-        ``"40"`` the two would be one entry, and ``apply`` would set the edit
-        of the stored network on the added one. So one patch may name some
-        items by name and others by key. The values are complete, a secret
-        too: a patch holds the values it writes.
+        built. Only a stored item is given a name. Two kinds of item stay
+        under the plan's key for them: an item the patch itself adds, which no
+        stored item names (a network added with the VLAN ID 40 is ``"40"``),
+        and a segment of which nothing is stored, with every item in it (a
+        lost added segment named ``4`` is ``"4"``, and its rules are under
+        it, also where a stored segment has the ID 4: the redo does not look
+        such a key up in the stored list). A stored item whose name is the
+        selector of one of these in its list stays under its key in the stored
+        list, or its position, as ``stored_parts`` has it: beside that added
+        network, a stored network named ``40`` with the VLAN ID 10 is
+        ``"10"``. Under ``"40"`` the two would be one entry, and ``apply``
+        would set the edit of the stored network on the added one. So one
+        patch may name some items by name and others by key. The values are
+        complete, a secret too: a patch holds the values it writes.
 
         A clash is an edit whose value was also changed on the VCO, and
         redoing it overwrites that change: it is left out unless
         *include_clashes*. A ref row of a ``RefOnly`` field (a DNS or
         authentication provider) is redone by setting the field again, in the
-        segment as the stored list shows it: to the service's logical ID for a
-        row added, to ``null`` for a row removed, and to the row added when one
-        is removed and another added at the field. Any other ref row is left
+        segment under the selector the patch has for it (its name, or the key
+        kept as above): to the service's logical ID for a row added, to
+        ``null`` for a row removed, and to the row added when one is removed
+        and another added at the field. Any other ref row is left
         out (a patch changes data, not refs), and so is an edit no patch can
         make or whose item is no longer stored or cannot be named alone.
         ``not_redone`` lists what is left out. A key the VCO does not know,
@@ -1459,7 +1481,10 @@ class ModuleWriteError(VcoError):
             redo, include_clashes=include_clashes
         )
         shown = _StoredNames(
-            redo.data, redo.stored_parts, _added_selectors(changes, added)
+            redo.data,
+            redo.stored_parts,
+            redo.unstored,
+            _unstored_selectors(changes, added, redo.unstored),
         )
         patch, unwritten = patch_of(changes, type(redo.data), stored_parts=shown)
         left_out.update(id(owner[id(change)]) for change in unwritten)
@@ -1486,10 +1511,11 @@ class ModuleWriteError(VcoError):
         segments to add again; the ``id`` of each lost edit left out so far;
         and the lost refs entries of each ``RefOnly`` field, by its owner.
         The items of a segment of which nothing is stored are added to
-        ``redo.stored_parts``, named as the plan names them. An object a
-        change writes has its keys by attribute name (``_named_change``).
+        ``redo.stored_parts``, named as the plan names them, and their paths
+        to ``redo.unstored``. An object a change writes has its keys by
+        attribute name (``_named_change``).
         """
-        plan, stored_parts = redo.plan, redo.stored_parts
+        plan = redo.plan
         model = type(redo.data)
         changes: list[RawChange] = []
         owner: dict[int, PlannedChange] = {}
@@ -1511,7 +1537,7 @@ class ModuleWriteError(VcoError):
             ):
                 if is_added:
                     added.append(selector_of(cast("Key", edit.path.parts[1])))
-                for change in _unstored_segment_changes(plan, edit.path, stored_parts):
+                for change in _unstored_segment_changes(redo, edit.path):
                     named = _named_change(change, model)
                     owner[id(named)] = edit
                     changes.append(named)
@@ -1569,21 +1595,22 @@ def _changes_below(plan: ModulePlan, path: Path) -> list[RawChange]:
     ]
 
 
-def _unstored_segment_changes(
-    plan: ModulePlan, path: Path, stored_parts: dict[Path, ItemPart]
-) -> list[RawChange]:
-    """The changes of *plan* below *path*, a segment of which nothing is stored.
+def _unstored_segment_changes(redo: _Redo, path: Path) -> list[RawChange]:
+    """The changes of the plan below *path*, a segment of which nothing is stored.
 
-    Each item their paths name is added to *stored_parts* where it has no
-    part, named as the plan names it.
+    Each item their paths name is added to ``redo.stored_parts`` where it has
+    no part, named as the plan names it, and its path to ``redo.unstored``:
+    the part is no part of the stored list, and is not to be read in it.
     """
-    changes = _changes_below(plan, path)
+    changes = _changes_below(redo.plan, path)
     for change in changes:
         # Nothing of the segment is stored: its items are named as the plan
         # names them.
         for n, part in enumerate(change.path.parts, 1):
-            if not isinstance(part, str):
-                _ = stored_parts.setdefault(Path(change.path.parts[:n]), part)
+            named = Path(change.path.parts[:n])
+            if not isinstance(part, str) and named not in redo.stored_parts:
+                redo.stored_parts[named] = part
+                redo.unstored.add(named)
     return changes
 
 
@@ -1717,11 +1744,11 @@ def _stored_segment(
     """The part that names the segment the edits were made to.
 
     It is the part in the ``segments`` of ``redo.module`` as stored; None when
-    it cannot be proved.
+    it cannot be proved. It is for a segment that has no part in
+    ``redo.stored_parts``: the check walked no item of it.
 
-    The check records it for an item it walked (a data edit in the segment).
-    Otherwise the segment is found by identity, never by name: another segment
-    may have taken the name. A stored entry is the segment when its
+    The segment is found by identity, never by name: another segment may have
+    taken the name. A stored entry is the segment when its
     ``segmentId`` is that of the stored ``deviceSettings:segment`` row whose
     ``enterpriseObjectId`` is one of *object_ids* (the ``segmentObjectId`` of
     the refs entries). When that row has no ``segmentId``, its ``segmentLogicalId``
@@ -1729,9 +1756,6 @@ def _stored_segment(
     segment named *item*. Exactly one entry must match, and a key must name it
     alone.
     """
-    found = redo.stored_parts.get(Path(("segments", item)))
-    if found is not None:
-        return found
     node = node_child(type(redo.data), "segments")
     stored = _json_field(redo.module.raw_data, "segments")
     if not isinstance(node, KeyedList) or not is_list(stored):
@@ -1797,9 +1821,12 @@ def _set_provider(
     """Set the ``RefOnly`` field the refs entries *edits* go with to *value* in *patch*.
 
     The field is set in the segment the edits were made to, under the part
-    *shown* gives it (``_StoredNames.name``), which is the part a data entry
-    of the patch in that segment is under. False when the patch has no place
-    for it.
+    *shown* has for it, which is the part a data entry of the patch in that
+    segment is under: the plan's key for a segment of which nothing is
+    stored, else the stored segment's name or kept part
+    (``_StoredNames.name``). A segment *shown* has no part for is found in
+    the stored list by identity (``_stored_segment``). False when the patch
+    has no place for the field.
 
     The owner is ``segments[<segment>].<fields>`` in python names, and a
     ``RefOnly`` field is not in a raw dump, so the path is built from its parts.
@@ -1824,10 +1851,13 @@ def _set_provider(
         return False
     models = field_models(type(redo.data).model_fields["segments"])
     fields = _field_spellings(models, cast("list[str]", names))
-    part = _stored_segment(redo, segment, object_ids)
-    if fields is None or part is None:
+    listed = Path(("segments",))
+    named = shown.get(listed.child(segment))
+    if named is None:
+        part = _stored_segment(redo, segment, object_ids)
+        named = None if part is None else shown.name(listed, listed.child(part))
+    if fields is None or named is None:
         return False
-    named = shown.name(Path(("segments",)), Path(("segments", part)))
     node = _child(patch, ("segments",))
     for spellings in ((selector_of(named),), *fields[:-1]):
         if node is None or node.get("_op") == "delete":

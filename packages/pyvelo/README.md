@@ -315,17 +315,17 @@ the lost edits on that module (`error.module.data.merge_patch(error.redo_patch()
 It is written in the same names: every field by its attribute, in a path and in
 the body of an added item, and every stored item by the name the stored list
 shows it by (a hub is `Hub-A`), with the values complete. An item the patch
-itself adds, and the items of a segment of which nothing is stored, are under
-the plan's key for them, and a stored item whose name is the selector of an
-item the patch adds stays under its key or position, so one patch may name
-items both ways. It leaves out a clash unless asked, and
+itself adds, and a segment of which nothing is stored with every item in it,
+are under the plan's key for them, and a stored item whose name is the
+selector of one of those stays under its key or position, so one patch may
+name items both ways. It leaves out a clash unless asked, and
 `error.not_redone()` lists what it leaves out, each entry as the message shows
 it (read the values and `clash` from `lost_edits`). It redoes a lost provider
 row by setting the `RefOnly` field again
 (`{"segments": {"Global Segment": {"dns": {"primary_provider": {"service": "<logical ID>"}}}}}`,
 `null` to clear it) and leaves out any other ref row; the segment is the one
-the row was made for, found by its identity and named as the stored module shows
-it, and a row whose segment cannot be proved to be stored is left out. On a
+the row was made for, found by its identity and under the selector the patch
+has for it, and a row whose segment cannot be proved to be stored is left out. On a
 `WriteOutcomeUnknownError` the patch is empty: nothing is known to be lost.
 Where the VCO stores a value its own way (a field marked `ServerOwned`, and the
 rewrites per module in `MODULE_REWRITES`,
