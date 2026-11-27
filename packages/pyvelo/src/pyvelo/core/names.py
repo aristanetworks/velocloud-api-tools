@@ -8,8 +8,10 @@ attribute and an item by the text a reader knows it by, in the one form
 ``named_path`` converts a path, ``ChangeNames`` the paths of the changes
 between the data as read and as edited, ``named_error`` the path of a
 ``PatchError``, ``named_value`` the keys of a JSON value found at one, and
-``item_part`` gives the part that names one item of a list. ``vco_keys`` is
-the way back: a JSON value written in attribute names, in the VCO's keys.
+``item_part`` gives the part that names one item of a list. ``shown_value``
+is ``named_value`` with every secret hidden: what a value shown goes through.
+``vco_keys`` is the way back: a JSON value written in attribute names, in the
+VCO's keys.
 """
 
 import functools
@@ -58,6 +60,7 @@ from .rebase import (
     node_field,
     same_key,
 )
+from .secrets import hide_secrets
 
 
 def item_part(model: VcoModel, field_name: str, position: int) -> ItemPart | None:
@@ -1131,6 +1134,22 @@ def _named(value: object, place: _Place) -> object:
             name, below = found
             named[name if claims[name] == 1 else key] = _named(item, below)
     return named
+
+
+def shown_value(
+    value: object, model: type[VcoModel] | None, path: Path | None = None
+) -> object:
+    """*value* as pyvelo shows it: ``named_value`` of it, with every secret hidden.
+
+    *value* is what a document of *model* holds at *path* (the whole document
+    with no *path*), in the VCO's keys. The mask ``HIDDEN`` stands in place of
+    the value of every field marked ``Secret`` (``hide_secrets``), and is the
+    result when *path* is at or below such a field; then each key a class
+    declares is its attribute name. With *model* of None the value is copied
+    and nothing is hidden: nothing says where a secret is.
+    """
+    hidden = hide_secrets(model, Path(()) if path is None else path, value)
+    return named_value(hidden, model, path)
 
 
 _VCO_KEY_GIVEN: Final = (
