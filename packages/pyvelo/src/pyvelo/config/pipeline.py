@@ -682,7 +682,7 @@ class ConfigPipeline:
         module: str,
         patch: object,
         segment: str | None = None,
-        path: str | None = None,
+        path: str | Path | None = None,
     ) -> ConfigState:
         """Apply *patch* to the data of *module* on the state's target.
 
@@ -697,25 +697,37 @@ class ConfigPipeline:
         nested under the address, and nothing else:
 
         - ``path="a.b"`` is ``patch={"a": {"b": patch}}``;
+        - ``path="rules[Web].match"`` is
+          ``patch={"rules": {"Web": {"match": patch}}}``;
         - ``segment="S"`` is ``patch={"segments": {"S": patch}}``;
         - both are ``patch={"segments": {"S": {"a": {"b": patch}}}}``.
 
         With neither, *patch* must be a ``dict`` (``TypeError`` otherwise).
         With either, it is any JSON value; ``None`` means what ``null`` means
-        at that place. *path* is one or more field names joined by dots, each
-        by any name ``merge_patch`` accepts. Every part but the last must be
-        a field that holds a sub-model; where it holds a union of several, the
-        next part may name a field of any of them. *path* does not step into
-        list items, which the patch names. With *segment*, *path* starts at the
-        item class of the module's ``segments`` field, else at the module
-        data's class. *segment* is a selector of the ``segments`` list like
-        any other: the segment's name in any case (through the segment
-        resolver) or its ``segmentId``. The address is checked against the
-        model classes, not the instances (``nest_patch``), so an unset
-        intermediate field is fine. A part that names no field, a part before
-        the last that holds no sub-model, an empty *path* or part, and
-        *segment* for a module with no ``segments`` field (WAN, control
-        plane) raise ``PatchError``.
+        at that place. *path* is a ``Path`` or the text of one, in the form a
+        path is printed in: field names joined by dots, with an item in
+        brackets after its list (``rules[Web]``, ``rules[#0]``,
+        ``collectors["10.0.0.1",UDP,514]``). Its parts map one for one onto
+        patch keys. A field part is the key of that field, by any name
+        ``merge_patch`` accepts. The part after a list, or after a map of
+        models, is the selector of one of its items, whatever its kind: an
+        item in brackets, or a bare name (``rules.Web`` is ``rules[Web]``).
+        The parts below an item are its fields, and a path may end at an
+        item, whose patch is then the item's own (a plain object, or
+        ``{"_op": "delete"}``). Where a field holds a union of several
+        models, the next part may name a field of any of them, and the patch
+        reaches the variant the stored value is. With *segment*, *path*
+        starts at the item class of the module's ``segments`` field, else at
+        the module data's class. *segment* is a selector of the ``segments``
+        list like any other: the segment's name in any case (through the
+        segment resolver) or its ``segmentId``. The address is checked
+        against the model classes, not the instances (``nest_patch``), so an
+        unset intermediate field is fine, and an item its list lacks is
+        refused when the patch is merged (``no_item``). A text that is not a
+        path, an empty path, a part that names no field, an item where no
+        list or map is, a part below a plain value or a list of untyped
+        items, and *segment* for a module with no ``segments`` field (WAN,
+        control plane) raise ``PatchError``.
 
         **Steps.**
 
@@ -2495,7 +2507,7 @@ def _refuse_segment_ops_to_a_missing_module(
     module_name: str,
     patch: object,
     segment: str | None,
-    path: str | None,
+    path: str | Path | None,
 ) -> None:
     """Raise ``PatchError`` for segment operations to a module the profile lacks.
 
@@ -2571,7 +2583,7 @@ def _patched_module(
     module: str,
     patch: object,
     segment: str | None,
-    path: str | None,
+    path: str | Path | None,
 ) -> tuple[_WritableModule, bool]:
     """The module of *state* that ``apply``'s patch goes to, and whether this made it.
 
@@ -2605,7 +2617,7 @@ def _edit_of(
     mod: _WritableModule,
     patch: object,
     segment: str | None,
-    path: str | None,
+    path: str | Path | None,
 ) -> _Edit:
     """The ``_Edit`` of *patch* at its address to *mod* of *state*.
 

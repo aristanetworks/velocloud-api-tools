@@ -130,14 +130,15 @@ network services, a new resolver if the pipeline has none), and raises
 
 `apply` takes a module, a patch and, optionally, an address. The address is
 shorthand for nesting: `segment="Global Segment", path="outbound", patch=P` is
-`patch={"segments": {"Global Segment": {"outbound": P}}}`. `path` is field
-names joined by dots, each a field that holds one sub-model, except the last,
-which may be any field; it does not step into list items, which the patch
-names. A path goes through a field that holds one of several kinds of object
-(the cloud security configuration's GRE and IPsec forms) to a field any of
-them has. `segment` names a segment like any other selector of the `segments`
-list: by name, in any case, or by `segmentId`. Without an address, `patch`
-must be a `dict`.
+`patch={"segments": {"Global Segment": {"outbound": P}}}`. `path` is a path
+in the form pyvelo prints one: field names joined by dots, with an item in
+brackets after its list, so `path="outbound[allow-web].match"` steps into the
+rule `allow-web` (see "Paths" below). A path goes through a field that holds
+one of several kinds of object (the cloud security configuration's GRE and
+IPsec forms) to a field any of them has, and reaches the form that is stored.
+`segment` names a segment like any other selector of the `segments` list: by
+name, in any case, or by `segmentId`. Without an address, `patch` must be a
+`dict`.
 
 `apply` changes `state` in place and returns that same object: `candidate =
 await pipeline.apply(state, ...)` gives no second state to fall back on
@@ -554,6 +555,85 @@ patched: a patch naming `override` is refused, and `{"cosMapping": null}`
 inherits. A segment's `defaults` belong to the profile: a patch of `defaults`
 on an edge is refused (the VCO would add an edge's to the profile's); patch
 the profile's state.
+
+### Paths
+
+A path names a place in a module's data. `path` takes one as a `Path`
+(`pyvelo.core`) or as its text, which `Path.parse` reads. Its parts are
+written left to right:
+
+| Part | How it is written | Example |
+|---|---|---|
+| A field | Its Python attribute name. A dot joins it to the part before; the first part has none. | `vpn.backhaul_edges` |
+| An item of a list, by its name, its key or its alt key | The text in brackets after the list. It is bare when it is made of letters, digits, `_` and `-`, is not all digits, and does not read as a JSON number, `true` or `false`; else it is a JSON string. | `segments[Guest]`, `segments["Global Segment"]`, `rules["24"]`, `rules["a]b"]` |
+| An item whose key has several parts | The parts, each written by that rule, joined by commas in one pair of brackets. A number part is bare, and a text part that reads as a number is quoted. | `collectors["10.0.0.1",UDP,514]` (a syslog collector, by its `host`, `protocol` and `port`), `static["10.0.0.0","24","192.168.1.1",GE3]` (a static route, whose prefix is text) |
+| An item by its position | `[#n]`, counting from 0 in the list as it was read. This is for an item that no name or key names alone, and for an item of a list without a key. | `rules[#0]` |
+| An entry of a map, and a key the model does not declare | The key as stored, after a dot. It is bare when it is letters, digits and `_` and does not start with a digit; else it is a JSON string. | `refs."deviceSettings:backHaulEdge"` |
+
+A segment is an item of `segments` like any other: `segments[Guest]`.
+
+Given to `apply`, the parts of a path map one for one onto the keys of a
+patch, so `apply(path=P, patch=body)` is `apply(patch=...)` with the body
+nested under `P`:
+
+- A field part is the key of that field. `path` also takes any other name a
+  patch accepts for a field, such as the VCO's key.
+- The part after a list, or after a map of models, is the selector of one of
+  its items, whatever its kind. `[Web]` is the selector `"Web"`, a key of
+  several parts is `key_selector` of it (`"10.0.0.1,UDP,514"`), `[#0]` is
+  `"#0"`, and a bare name after a list is that text, so `rules.Web` is
+  `rules[Web]`.
+- A path may end at a field, at a list or at an item. A body sent to an item
+  is that item's own: an object of its fields, or an operation such as
+  `{"_op": "delete"}`.
+
+So a path read off a plan line, such as
+`~ segments["Global Segment"].outbound[allow-web].match.dport_high: 443 -> 8443`,
+names the same place when it is given back:
+
+```python
+await pipeline.apply(
+    state,
+    module="firewall",
+    path='segments["Global Segment"].outbound[allow-web].match',
+    patch={"dport_high": 8080},
+)
+# is
+await pipeline.apply(
+    state,
+    module="firewall",
+    patch={
+        "segments": {
+            "Global Segment": {
+                "outbound": {"allow-web": {"match": {"dport_high": 8080}}}
+            }
+        }
+    },
+)
+```
+
+So does the path of an error. `BackhaulWithoutHubError` names a route action
+as `segments[Guest].rules[Web].action.edge_to_cloud_route_action`, and the
+patch that routes the rule another way goes to that path:
+
+```python
+await pipeline.apply(
+    state,
+    module="business_policy",
+    path="segments[Guest].rules[Web].action.edge_to_cloud_route_action",
+    patch={"route_policy": "gateway"},
+)
+```
+
+A path is checked against the models before the patch is merged, and a bad
+one raises `PatchError` of kind `address`. A text that is not a path is
+refused with the form above. So is an empty path, which would send the patch
+to the whole module: leave `path` out for that. An item written where no list
+or map is (`vpn[Web]`) is refused with the field named: put the item after the
+list it is in. A part after a list of untyped items is refused too, since a
+patch replaces such a list whole. Whether a list has the item a path names is
+found when the patch is merged: a path to an item the list lacks raises
+`PatchError` of kind `no_item` at that item, `segments[Guest].rules[Nope]`.
 
 ## What a save writes
 

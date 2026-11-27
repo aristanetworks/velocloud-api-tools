@@ -133,12 +133,18 @@ def apply_patch(
     return model
 
 
+_PATH_FORM = (
+    "field names joined by dots, with an item in brackets after its list, as "
+    "pyvelo prints it: segments[Guest].rules[Web].match"
+)
+
+
 def nest_patch(
     model: type[VcoModel],
     patch: object,
     *,
     segment: str | None = None,
-    path: str | None = None,
+    path: str | Path | None = None,
 ) -> dict[str, object]:
     """The patch for *model* that an addressed call stands for.
 
@@ -150,24 +156,49 @@ def nest_patch(
     checked copy of the patch (``checked_patch``): it holds JSON values only,
     and an error is reported under the address.
 
-    A part of *path* names a field by any name ``merge_patch`` accepts; the
-    nested patch uses the python name. With *segment* the parts start at the
-    item type of the ``segments`` field, without at *model*. A part is looked
-    up in every class the value there can be: the variants of a union field,
-    and of the ``segments`` item type too. The nested patch uses the name of
-    the first class that has the field; the classes without it drop out.
-    Every part but the last must be a field that holds a sub-model, and the
-    next part is looked up in every model it can hold. Only the classes are
-    consulted, never an instance, so a patch for another variant than the
-    stored one is accepted here and refused by ``merge_patch``, as the nested
-    form is.
+    *path* is a ``Path`` or the text of one (``Path.parse``): field names
+    joined by dots, with an item in brackets after its list, as a path is
+    printed. Its parts map one for one onto the keys of the nested patch:
 
-    A bad address raises ``PatchError`` at the path of the part that failed,
-    in python names, under ``segments[S]`` when there is a *segment*: a part
-    that names no field of any class (the message gives the classes joined
-    with `` | ``, the part and the field names of them all), a part before the
-    last that holds no sub-model, an empty *path* or part, and *segment* for a
-    class with no ``segments`` field.
+    - a field part is the key of that field. It names the field by any name
+      ``merge_patch`` accepts, and the nested patch uses the python name;
+    - the part after a list field, or a field that holds a map of models, is
+      the key of one of its items, whatever its kind: an item part as its
+      selector (``rules[Web]`` gives ``{"rules": {"Web": ...}}``, a composite
+      key ``key_selector`` of it, ``rules[#0]`` gives ``"#0"``) and a bare
+      name as written (``rules.Web`` is ``rules[Web]``). The parts below it
+      are fields of the item.
+
+    So ``path='rules[Web].match'`` gives ``{"rules": {"Web": {"match":
+    patch}}}``. A path may end anywhere: at a field, at a list, or at an item,
+    whose patch is then an item's (a plain object, or an operation).
+
+    With *segment* the parts start at the item type of the ``segments``
+    field, without at *model*. A field part is looked up in every class the
+    value there can be: the variants of a union field, of the items of a
+    list, and of the ``segments`` item type too. The classes without the
+    field drop out, and the next part is looked up in every model the field
+    can hold in the classes that remain. Where every class that has the field
+    gives it one python name, that name is the key; where two variants read
+    one key into fields of different names, the key is the part as written,
+    and ``merge_patch``, which holds the value as read, takes the name of the
+    variant it is. Only the classes are consulted, never an instance, so a
+    patch for another variant than the stored one is accepted here and
+    refused by ``merge_patch``, as the nested form is. An item is not looked
+    up either: a part that names no item of its list is ``merge_patch``'s to
+    refuse (``no_item``).
+
+    A bad address raises ``PatchError`` of kind ``address``. A text that is
+    not a path, and a path with no parts, raise at the empty path. The others
+    raise at the path of the part that failed, in python names, under
+    ``segments[S]`` when there is a *segment*: a part that names no field of
+    any class (the message gives the classes joined with `` | ``, the part
+    and the field names of them all); an item part where no list or map is
+    (at the start, after an item, after a field that holds a model or a plain
+    value); any part after a list of untyped items, which a patch replaces
+    whole; a field part after a field or an item that holds no model (raised
+    at that field or item); and *segment* for a class with no ``segments``
+    field.
     """
     if segment is None and path is None:
         if not isinstance(patch, dict):
@@ -176,23 +207,53 @@ def nest_patch(
                 "give an object, or name the place a value goes with segment or path"
             )
         return cast("dict[str, object]", checked_patch(patch))
-    classes: tuple[type[VcoModel], ...] = (model,)
+    parts = () if path is None else _read_path(path).parts
+    place = _AddressPlace("model", (model,), None)
     walked = Path(())
     if segment is not None:
         walked = walked.child("segments")
-        classes = _segment_item_classes(model, walked)
+        place = _AddressPlace(
+            "model",
+            _segment_item_classes(model, walked),
+            f"an item of {model.__name__}.segments",
+        )
         walked = walked.child(Key(segment))
-    names = _address_names(classes, path, walked) if path is not None else []
     # Where the patch sits once nested, in python names, for its errors and its depth.
-    where_nested = Path(
-        (*(("segments", Key(segment)) if segment is not None else ()), *names)
-    )
+    keys, where_nested = _address_names(place, parts, walked)
     nested = checked_patch(patch, where_nested)
-    for name in reversed(names):
-        nested = {name: nested}
+    for key in reversed(keys):
+        nested = {key: nested}
     if segment is None:
         return cast("dict[str, object]", nested)
     return {"segments": {segment: nested}}
+
+
+def _read_path(path: str | Path) -> Path:
+    """*path* as a ``Path``: itself, or the path its text is (``Path.parse``).
+
+    A text that is not a path, and a path with no parts, raise ``PatchError``
+    of kind ``address`` at the empty path.
+    """
+    if isinstance(path, Path):
+        read = path
+    else:
+        try:
+            read = Path.parse(path)
+        except ValueError as exc:
+            raise PatchError(
+                f"the path {path!r} cannot be read: {exc}. A path is {_PATH_FORM}",
+                Path(()),
+                "address",
+            ) from exc
+    if not read.parts:
+        raise PatchError(
+            "the path is empty, so it names no place and the patch would go to "
+            "the whole of what it is sent to. Leave path out to send it there; "
+            f"else give {_PATH_FORM}",
+            Path(()),
+            "address",
+        )
+    return read
 
 
 def _segment_item_classes(
@@ -214,41 +275,114 @@ def _segment_item_classes(
     return item_type.variants
 
 
-def _address_names(
-    classes: tuple[type[VcoModel], ...], path: str, walked: Path
-) -> list[str]:
-    """The python name of each part of *path*, walked from *classes* at *walked*.
+@dataclass(frozen=True, slots=True)
+class _AddressPlace:
+    """Where the walk of an address stands: what its next part is a part of."""
 
-    *classes* are the classes the value at *walked* can be. A part is looked
-    up in each of them (``_part_name``); the classes without that field drop
-    out, and below it the classes are every model the field can hold, over
-    the classes that remain.
+    holds: Literal["model", "items", "untyped", "value"]
+    """What is there.
 
-    An empty part, a part that names no field of any class, and a part before
-    the last that holds no sub-model each raise ``PatchError`` at the path of
-    that part.
+    ``"model"`` is a model, and the next part names a field of it. ``"items"``
+    is a list or a map of models, and the next part names an item of it.
+    ``"untyped"`` is a list of untyped items and ``"value"`` a plain value: no
+    part can follow either.
     """
-    names: list[str] = []
-    parts = path.split(".")
-    for index, part in enumerate(parts):
-        where = walked.child(part)
-        if not part:
-            raise PatchError(f"the path {path!r} has an empty part", where, "address")
-        name = _part_name(classes, part, walked)
-        names.append(name)
-        if index < len(parts) - 1:
-            having = tuple(
-                cls
-                for cls in classes
-                if cls._alias_map().get(part) == name  # pyright: ignore[reportPrivateUsage]
-            )
-            classes = _sub_model_classes(having, name, where)
-        walked = where
-    return names
+    classes: tuple[type[VcoModel], ...]
+    """The classes the model there can be, or an item of the list or map there.
+
+    Empty where neither is a model.
+    """
+    name: str | None
+    """What is there, as a refusal names it: ``Mid.leaf``, ``an item of Seg.rules``.
+
+    None at the start of an address that names no segment.
+    """
+
+
+def _address_names(
+    place: _AddressPlace, parts: Sequence[PathPart], walked: Path
+) -> tuple[list[str], Path]:
+    """The patch key of each of *parts*, and the path they end at.
+
+    The parts are walked from *place*, which is at *walked*. A field part
+    gives the key of its field (``_part_name``), and what that field holds is
+    where the next part is read (``_field_place``); the part after a list or a
+    map gives the key of one of its items. The path is *walked* with each
+    part after it, a field by its key.
+
+    A part that names nothing where it stands raises ``PatchError``
+    (``_address_step``).
+    """
+    keys: list[str] = []
+    for part in parts:
+        key, place, walked = _address_step(place, part, walked)
+        keys.append(key)
+    return keys, walked
+
+
+def _address_step(
+    place: _AddressPlace, part: PathPart, walked: Path
+) -> tuple[str, _AddressPlace, Path]:
+    """The patch key of *part* at *place*, the place below it and its path.
+
+    *walked* is the path of *place*. After a list or a map, any part is the
+    key of an item: an item part as its selector, a name as written. At a
+    model, a name is a field. Everything else raises ``PatchError`` of kind
+    ``address``: a name after a value that holds no model at *walked*, since
+    it is that value the path cannot go below, and a part that names nothing
+    at the path of the part.
+    """
+    where = walked.child(part)
+    if place.holds == "items":
+        below = _AddressPlace(
+            "model" if place.classes else "value",
+            place.classes,
+            f"an item of {place.name}",
+        )
+        key = part if isinstance(part, str) else selector_of(part)
+        return key, below, where
+    if place.holds == "value" and isinstance(part, str):
+        raise PatchError(
+            f"{place.name} does not hold a single sub-model, so the path cannot "
+            "continue past it",
+            walked,
+            "address",
+        )
+    if place.holds != "model" or not isinstance(part, str):
+        raise PatchError(_names_nothing(place, part), where, "address")
+    key = _part_name(place.classes, part, walked)
+    return key, _field_place(place.classes, part), walked.child(key)
+
+
+def _names_nothing(place: _AddressPlace, part: PathPart) -> str:
+    """Why *part* names nothing at *place*, and what to write for it."""
+    shown = Path((part,))
+    if place.holds == "untyped":
+        return (
+            f"{place.name} is a list of untyped items, which a patch replaces "
+            f"whole, so {shown} names nothing there. End the path at the list "
+            "and give a list value"
+        )
+    if place.name is None:
+        return (
+            f"a path starts with a field name, so {shown} names nothing there. "
+            "Start with the field, and put the item after the list it is in"
+        )
+    advice = "Give a field name after it" if place.classes else "End the path at it"
+    return (
+        f"{place.name} is not a list or a map, so {shown} names nothing there. "
+        f"{advice}, or put the item after the list it is in"
+    )
 
 
 def _part_name(classes: tuple[type[VcoModel], ...], part: str, walked: Path) -> str:
-    """The python name *part* gives in the first of *classes* that has it.
+    """The patch key of the field that *part* names in *classes*.
+
+    Its python name, where every one of *classes* that has a field for *part*
+    gives it that name. Where they give it different names (two variants of a
+    union read one key into a field of their own each), *part* as written:
+    ``merge_patch``, which holds the value as read, then takes the name of
+    the variant it is.
 
     A part that names no field of any of *classes* raises ``PatchError`` at
     ``walked.child(part)``: the message names the classes (joined with
@@ -258,6 +392,13 @@ def _part_name(classes: tuple[type[VcoModel], ...], part: str, walked: Path) -> 
     for cls in classes:
         for key, name in cls._alias_map().items():  # pyright: ignore[reportPrivateUsage]
             _ = names.setdefault(key, name)
+    found = {
+        name
+        for cls in classes
+        if (name := cls._alias_map().get(part)) is not None  # pyright: ignore[reportPrivateUsage]
+    }
+    if len(found) > 1:
+        return part
     try:
         return _field_name(names, _variant_names(classes), part, walked)
     except PatchError as exc:
@@ -269,25 +410,47 @@ def _part_name(classes: tuple[type[VcoModel], ...], part: str, walked: Path) -> 
         ) from exc
 
 
-def _sub_model_classes(
-    having: tuple[type[VcoModel], ...], name: str, where: Path
-) -> tuple[type[VcoModel], ...]:
-    """Every model the field *name* of *having* can hold, in order, each once.
+def _field_place(classes: tuple[type[VcoModel], ...], part: str) -> _AddressPlace:
+    """What the field that *part* names in *classes* holds.
 
-    When it holds none, raises ``PatchError`` at *where*, named after the first
-    of *having*: the path cannot continue past it.
+    The classes without a field for *part* drop out; at least one has it. The
+    first that has it says what kind of field it is and names it in a
+    refusal. A list or a map is ``"items"``, with the classes of its items in
+    every class that remains; a list of untyped items is ``"untyped"``; any
+    other field is the ``"model"`` it can hold in those classes, or a
+    ``"value"`` when it holds none.
     """
-    found = dict.fromkeys(
-        sub for cls in having for sub in _field_model_types(cls.model_fields[name])
-    )
-    if not found:
-        raise PatchError(
-            f"{having[0].__name__}.{name} does not hold a single sub-model, "
-            "so the path cannot continue past it",
-            where,
-            "address",
+    having = [
+        (cls, name)
+        for cls in classes
+        if (name := cls._alias_map().get(part)) is not None  # pyright: ignore[reportPrivateUsage]
+    ]
+    first, name = having[0]
+    holder = f"{first.__name__}.{name}"
+    kind = list_kind(first.model_fields[name])
+    if kind == "untyped":
+        return _AddressPlace("untyped", (), holder)
+    below = _sub_model_classes(having, items=kind is not None)
+    if kind is not None:
+        return _AddressPlace("items", below, holder)
+    return _AddressPlace("model" if below else "value", below, holder)
+
+
+def _sub_model_classes(
+    having: Sequence[tuple[type[VcoModel], str]], *, items: bool
+) -> tuple[type[VcoModel], ...]:
+    """Every model the fields *having* can hold, in order, each once.
+
+    *having* is each class with the name of its field. With *items* the
+    fields are lists or maps, and the models are those of their items;
+    without, those the field itself holds. Empty when they hold none.
+    """
+    models = field_models if items else _field_model_types
+    return tuple(
+        dict.fromkeys(
+            sub for cls, name in having for sub in models(cls.model_fields[name])
         )
-    return tuple(found)
+    )
 
 
 # ---------------------------------------------------------------------------
