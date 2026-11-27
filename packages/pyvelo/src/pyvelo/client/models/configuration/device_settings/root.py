@@ -19,7 +19,6 @@ from pyvelo.client.models.configuration.common import (
 )
 from pyvelo.core import (
     Alias,
-    ConfigModel,
     ContextDefault,
     EdgeOnly,
     NoneIsFalse,
@@ -27,6 +26,7 @@ from pyvelo.core import (
     Positional,
     ProfileOnly,
     Secret,
+    VcoModel,
 )
 from pyvelo.core.fields import (
     KeyField,
@@ -50,14 +50,14 @@ from .routed_interface import RoutedInterface
 from .segment import DeviceSegment
 
 
-class EdgeHaNode(ConfigModel):
+class EdgeHaNode(VcoModel):
     serial_number: str | None = None
     instance_id: Literal[1, 2]
 
 
 # for edge, most fields are filled
 # for profile, this is just an empty object - all fields missing
-class EdgeHaSettings(ConfigModel):
+class EdgeHaSettings(VcoModel):
     enabled: Annotated[bool, EdgeOnly] = False
     interface: Annotated[str, EdgeOnly] = "GE1"
     unique_lan_macs: Annotated[bool, Alias("vmacoverride"), EdgeOnly] = False
@@ -68,7 +68,7 @@ class EdgeHaSettings(ConfigModel):
     preempt_switchover: Annotated[bool, Alias("preEmptSwitchover"), EdgeOnly] = False
 
 
-class EdgeBfdRule(ConfigModel):
+class EdgeBfdRule(VcoModel):
     peer_address: str | None = None
     local_address: str | None = None
     multihop: bool | None = None
@@ -77,26 +77,26 @@ class EdgeBfdRule(ConfigModel):
     transmit_interval: int | None = None
 
 
-class EdgeBfdSettings(ConfigModel):
+class EdgeBfdSettings(VcoModel):
     enabled: bool | None = None
     override: bool | None = None
     rules: list[EdgeBfdRule] | None = None
     rules_v6: list[EdgeBfdRule] | None = None
 
 
-class LoopbackOspf(ConfigModel):
+class LoopbackOspf(VcoModel):
     enabled: bool = False
     area: tuple[int | str] | list[Any] = Field(default_factory=list)
 
 
-class LoopbackV6Detail(ConfigModel):
+class LoopbackV6Detail(VcoModel):
     cidr_ip: str = ""
     cidr_prefix: Literal[128] = 128
     advertise: Annotated[bool, NoneIsFalse] = True
     ospf: LoopbackOspf = Field(default_factory=LoopbackOspf)
 
 
-class LoopbackInterface(ConfigModel):
+class LoopbackInterface(VcoModel):
     description: str | None | MISSING = MISSING
     cidr_ip: str
     cidr_prefix: Literal[32] = 32
@@ -111,11 +111,11 @@ class LoopbackInterface(ConfigModel):
     v6_detail: LoopbackV6Detail = Field(default_factory=LoopbackV6Detail)
 
 
-class NtpServerEntry(ConfigModel):
+class NtpServerEntry(VcoModel):
     server: str
 
 
-class Ntp(ConfigModel):
+class Ntp(VcoModel):
     override: Annotated[bool, OverrideFlag] = True
     enabled: bool = False
     servers: Annotated[list[NtpServerEntry], KeyField("server")] = Field(
@@ -124,19 +124,19 @@ class Ntp(ConfigModel):
     source_interface: Annotated[str | MISSING, NoneIsMissing] = MISSING
 
 
-class Md5AuthKey(ConfigModel):
+class Md5AuthKey(VcoModel):
     key_number: int | None = None
     key: Annotated[str, Secret()]
 
 
-class NtpServer(ConfigModel):
+class NtpServer(VcoModel):
     override: Annotated[bool, OverrideFlag] = True
     enabled: bool = False
     authentication: Literal["NONE", "MD5"] = "NONE"
     keys: list[Md5AuthKey] = Field(default_factory=list)
 
 
-class RadioSettingsItem(ConfigModel):
+class RadioSettingsItem(VcoModel):
     radio_id: int
     is_enabled: bool
     name: str
@@ -146,14 +146,14 @@ class RadioSettingsItem(ConfigModel):
     width: str
 
 
-class RadioSettings(ConfigModel):
+class RadioSettings(VcoModel):
     country: str
     radios: Annotated[list[RadioSettingsItem], Positional()] = Field(
         default_factory=list
     )
 
 
-class Layer2Settings(ConfigModel):
+class Layer2Settings(VcoModel):
     override_arp_timeout: Annotated[bool, Alias("overrideARPTimeout")] = False
     arp_stale_timeout_minutes: int = 2
     arp_dead_timeout_minutes: int = 25
@@ -161,7 +161,7 @@ class Layer2Settings(ConfigModel):
     neighbor_discovery_reachable_time: int = 30
 
 
-class GlobalIpv6SettingsAdvanced(ConfigModel):
+class GlobalIpv6SettingsAdvanced(VcoModel):
     disable_all_ipv6_traffic: Annotated[bool, Alias("disableAllIPv6Traffic")] = False
     drop_routing_header_type_zero_packets: bool = False
     drop_and_log_packets_for_rfc_reserved_fields: Annotated[
@@ -171,21 +171,21 @@ class GlobalIpv6SettingsAdvanced(ConfigModel):
     enforce_extension_header_validation: bool = False
 
 
-class IcmpV6Messages(ConfigModel):
+class IcmpV6Messages(VcoModel):
     disable_destination_unreachable: bool = False
     disable_parameter_problem: bool = False
     disable_redirect: bool = False
     disable_time_exceeded: bool = False
 
 
-class GlobalIpv6Settings(ConfigModel):
+class GlobalIpv6Settings(VcoModel):
     advanced_configuration: GlobalIpv6SettingsAdvanced = Field(
         default_factory=GlobalIpv6SettingsAdvanced
     )
     icmp_v6_messages: IcmpV6Messages = Field(default_factory=IcmpV6Messages)
 
 
-class EdgeSnmpV2c(ConfigModel):
+class EdgeSnmpV2c(VcoModel):
     enabled: bool = False
     community: Annotated[str, Secret()] = ""
     community_list: Annotated[list[str], Positional(), Secret()] = Field(
@@ -198,7 +198,7 @@ def _none_to_md5(v: Any) -> Any:
     return "MD5" if v is None or (isinstance(v, str) and v == "") else v
 
 
-class SnmpV3User(ConfigModel):
+class SnmpV3User(VcoModel):
     name: str
     passphrase: Annotated[str | None, Secret()] = None
     authentication_algorithm: Annotated[
@@ -209,30 +209,30 @@ class SnmpV3User(ConfigModel):
     privacy: bool = False
 
 
-class EdgeSnmpV3(ConfigModel):
+class EdgeSnmpV3(VcoModel):
     enabled: bool = False
     users: Annotated[list[SnmpV3User], Positional()] = Field(default_factory=list)
 
 
-class EdgeSnmp(ConfigModel):
+class EdgeSnmp(VcoModel):
     port: int = 161
     v2c: Annotated[EdgeSnmpV2c, Alias("snmpv2c")] = Field(default_factory=EdgeSnmpV2c)
     v3: Annotated[EdgeSnmpV3, Alias("snmpv3")] = Field(default_factory=EdgeSnmpV3)
 
 
-class EdgeZscaler(ConfigModel):
-    class ZscalerConfig(ConfigModel):
-        class Provider(ConfigModel):
+class EdgeZscaler(VcoModel):
+    class ZscalerConfig(VcoModel):
+        class Provider(VcoModel):
             ref: str | None = None
             logical_id: uuid.UUID | None = None
 
-        class Location(ConfigModel):
+        class Location(VcoModel):
             name: str | None = None
             gateway_properties: Annotated[
                 dict[str, Any] | Literal[""] | MISSING, Alias("gwProperties")
             ] = MISSING
 
-        class SubLocation(ConfigModel):
+        class SubLocation(VcoModel):
             gateway_properties: Annotated[
                 dict[str, Any] | Literal[""] | MISSING, Alias("gwProperties")
             ] = MISSING
@@ -263,24 +263,24 @@ class EdgeZscaler(ConfigModel):
     deployment: dict[str, Any] | MISSING = MISSING
 
 
-class EdgeAutoSimSwitchover(ConfigModel):
+class EdgeAutoSimSwitchover(VcoModel):
     enabled: bool = False
     switchover_interval: int = 60
 
 
-class EdgeCcFirewall(ConfigModel):
+class EdgeCcFirewall(VcoModel):
     enabled: bool = False
 
 
-class EdgeWirelessLinkManagement(ConfigModel):
+class EdgeWirelessLinkManagement(VcoModel):
     limit_control_traffic_frequency: bool = False
 
 
-class ModelLanInterfaces(ConfigModel):
+class ModelLanInterfaces(VcoModel):
     interfaces: Annotated[list[SerializeAsAny[LanInterface]], KeyField("name")]
 
 
-class ModelInterfaces(ConfigModel):
+class ModelInterfaces(VcoModel):
     routed_interfaces: Annotated[
         list[SerializeAsAny[RoutedInterface]], KeyField("name")
     ]
@@ -316,17 +316,17 @@ def _empty_string_to_zscaler(v: Any) -> Any:
     return EdgeZscaler() if v == "" else v
 
 
-class EdgeVnfRef(ConfigModel):
+class EdgeVnfRef(VcoModel):
     ref: DeviceSettingsRef = "deviceSettings:vnfs:edge"
     logical_id: uuid.UUID | None = None
 
 
-class EdgeVnfs(ConfigModel):
+class EdgeVnfs(VcoModel):
     has_vnfs: bool = False
     edge: EdgeVnfRef = Field(default_factory=EdgeVnfRef)
 
 
-class DeviceSettingsData(ConfigModel):
+class DeviceSettingsData(VcoModel):
     ha: Annotated[EdgeHaSettings, ContextDefault(profile=EdgeHaSettings)] = Field(
         default_factory=EdgeHaSettings
     )

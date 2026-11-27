@@ -4,19 +4,19 @@ from typing import Annotated
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import Alias, ConfigModel
+from pyvelo.core import Alias, VcoModel
 
 
-class QoeThreshold(ConfigModel):
+class QoeThreshold(VcoModel):
     yellow: int
     red: int
 
 
-class QoeLatencyThreshold(ConfigModel):
+class QoeLatencyThreshold(VcoModel):
     latency: QoeThreshold
 
 
-class QoeSettings(ConfigModel):
+class QoeSettings(VcoModel):
     voice: QoeLatencyThreshold = Field(
         default_factory=lambda: QoeLatencyThreshold(
             latency=QoeThreshold(yellow=25, red=65)

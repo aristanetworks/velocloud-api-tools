@@ -19,7 +19,6 @@ from pydantic import (
 from pyvelo.client.models.configuration.common import OverlayAddressPreferenceType
 from pyvelo.core import (
     Alias,
-    ConfigModel,
     ContextDefault,
     EdgeLocal,
     EdgeOnly,
@@ -31,6 +30,7 @@ from pyvelo.core import (
     Positional,
     Resolvable,
     Secret,
+    VcoModel,
 )
 from pyvelo.core.fields import Lenient, RefersTo
 from pyvelo.core.identity import SegmentIdentity
@@ -51,7 +51,7 @@ from .common import (
 )
 
 
-class RoutedInterfaceAddressing(ConfigModel):
+class RoutedInterfaceAddressing(VcoModel):
     type_: Annotated[IPv4AddressingType, Alias("type")] = "DHCP"
     username: str | None | MISSING = MISSING
     password: Annotated[str | None | MISSING, Secret()] = MISSING
@@ -68,7 +68,7 @@ class RoutedInterfaceAddressing(ConfigModel):
         return self
 
 
-class RoutedInterfaceAddressingV6(ConfigModel):
+class RoutedInterfaceAddressingV6(VcoModel):
     type_: Annotated[IPv6AddressingType, Alias("type")] = "DHCP_STATELESS"
     username: str | None | MISSING = MISSING
     password: Annotated[str | None | MISSING, Secret()] = MISSING
@@ -81,14 +81,14 @@ class RoutedInterfaceAddressingV6(ConfigModel):
     tag_logical_id: uuid.UUID | None = None
 
 
-class OspfRouteFilter(ConfigModel):
+class OspfRouteFilter(VcoModel):
     cidr_ip: str
     cidr_prefix: str
     exact_match: bool = True
     action: OspfRouteAction
 
 
-class OspfRoute(ConfigModel):
+class OspfRoute(VcoModel):
     default_action: OspfRouteAction
     filters: Annotated[list[OspfRouteFilter], Positional()] = Field(
         default_factory=list
@@ -103,7 +103,7 @@ def _normalize_ospf_area(v: Any) -> Any:
     return v
 
 
-class RoutedInterfaceOspfBase(ConfigModel):
+class RoutedInterfaceOspfBase(VcoModel):
     enabled: bool = False
     area: Annotated[
         list[int] | list[str],
@@ -136,7 +136,7 @@ class RoutedInterfaceOspf(RoutedInterfaceOspfBase):
     md5_authentication: bool = False
 
 
-class RoutedInterfaceDhcpServerV6(ConfigModel):
+class RoutedInterfaceDhcpServerV6(VcoModel):
     base_dhcp_address: Annotated[int, Alias("baseDhcpAddr")] = 2
     enabled: bool = False
     lease_time_seconds: int = 3600
@@ -146,20 +146,20 @@ class RoutedInterfaceDhcpServerV6(ConfigModel):
     prefix_delegation: PrefixDelegation = Field(default_factory=PrefixDelegation)
 
 
-class RoutedInterfaceClientPrefixDelegation(ConfigModel):
+class RoutedInterfaceClientPrefixDelegation(VcoModel):
     enabled: bool = False
     tag: str | None = None
     tag_logical_id: uuid.UUID | None = None
 
 
-class RouterAdvertisementHostSettings(ConfigModel):
+class RouterAdvertisementHostSettings(VcoModel):
     mtu: bool = True
     default_routes: bool = True
     specific_routes: bool = True
     nd6_timers: bool = True
 
 
-class RoutedInterfaceV6Detail(ConfigModel):
+class RoutedInterfaceV6Detail(VcoModel):
     addressing: RoutedInterfaceAddressingV6 = Field(
         default_factory=RoutedInterfaceAddressingV6
     )
@@ -185,7 +185,7 @@ CellularNetworks = Literal["ATT", "SPRINT", "VERIZON", "VODAFONE", "TELSTRA", "G
 CellularIpType = Literal["IPv4", "IPv4v6"]
 
 
-class RoutedInterfaceCellular(ConfigModel):
+class RoutedInterfaceCellular(VcoModel):
     sim_pin: Annotated[str, Secret()]
     network: CellularNetworks | Literal[""] = ""
     apn: str
@@ -197,7 +197,7 @@ class RoutedInterfaceCellular(ConfigModel):
 SfpType = Literal["dsl", "gpon", "standard"]
 
 
-class Adsl2Properties(ConfigModel):
+class Adsl2Properties(VcoModel):
     pvc: str
     vpi: str
     vci: str
@@ -208,7 +208,7 @@ class Adsl2Properties(ConfigModel):
     vlanoprx: str
 
 
-class AdslSettings(ConfigModel):
+class AdslSettings(VcoModel):
     mode: Literal["adsl2"]
     properties: Adsl2Properties
 
@@ -216,11 +216,11 @@ class AdslSettings(ConfigModel):
 Vdsl2Profile = Literal["17a", "30a"]
 
 
-class Vdsl2Properties(ConfigModel):
+class Vdsl2Properties(VcoModel):
     profile: Vdsl2Profile
 
 
-class VdslSettings(ConfigModel):
+class VdslSettings(VcoModel):
     mode: Literal["vdsl2"]
     properties: Vdsl2Properties
 
@@ -232,16 +232,16 @@ DslSettings = Annotated[
 GponLocationMode = Literal["ASCII", "HEX"]
 
 
-class GponSettings(ConfigModel):
+class GponSettings(VcoModel):
     subscriber_location_id: str
     subscriber_location_mode: GponLocationMode
 
 
-class RoutedInterfaceDhcpRelay(ConfigModel):
+class RoutedInterfaceDhcpRelay(VcoModel):
     servers: Annotated[list[str], EdgeOnly] = Field(default_factory=list)
 
 
-class RoutedInterfaceDhcpServer(ConfigModel):
+class RoutedInterfaceDhcpServer(VcoModel):
     base_dhcp_address: Annotated[
         int | Literal[""], Alias("baseDhcpAddr"), ContextDefault(profile=MISSING)
     ] = 13
@@ -260,13 +260,13 @@ class RoutedInterfaceDhcpServer(ConfigModel):
 LagMode = Literal["Active", "Passive"]
 
 
-class Lacp(ConfigModel):
+class Lacp(VcoModel):
     mode: LagMode = "Active"
     sys_priority: int = 65535
     lacp_rate: int = 0
 
 
-class SlaveInterface(ConfigModel):
+class SlaveInterface(VcoModel):
     name: str
     port_priority: int | MISSING = MISSING
 
@@ -275,7 +275,7 @@ def _none_is_missing_dhcp_server(v: Any) -> Any:
     return MISSING if v is None else v
 
 
-class RoutedInterfaceBase(ConfigModel):
+class RoutedInterfaceBase(VcoModel):
     advertise: bool = False
     disabled: bool = False
     disable_ipv4: Annotated[bool, Alias("disableV4")] = False

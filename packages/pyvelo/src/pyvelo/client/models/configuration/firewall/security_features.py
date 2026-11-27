@@ -2,26 +2,26 @@
 
 from pydantic import Field
 
-from pyvelo.core import ConfigModel
+from pyvelo.core import VcoModel
 
 
-class TcpBasedAttacks(ConfigModel):
+class TcpBasedAttacks(VcoModel):
     invalid_flags: bool = False
     enable_land: bool = False
     enable_syn_fragment: bool = False
 
 
-class IcmpBasedAttacks(ConfigModel):
+class IcmpBasedAttacks(VcoModel):
     enable_ping_of_death: bool = False
     enable_fragment: bool = False
 
 
-class IpBasedAttacks(ConfigModel):
+class IpBasedAttacks(VcoModel):
     enable_unknown_protocol: bool = False
     enable_insecure_options: bool = False
 
 
-class NetworkProtectionSettings(ConfigModel):
+class NetworkProtectionSettings(VcoModel):
     denylist_duration: int = 10
     new_connection_threshold: int = 25
     denylist: bool = False
@@ -39,7 +39,7 @@ class NetworkProtectionSettings(ConfigModel):
     tcp_half_open_threshold_enabled: bool = False
 
 
-class SecurityFeatureSettings(ConfigModel):
+class SecurityFeatureSettings(VcoModel):
     idps_enabled: bool = False
     url_filtering_enabled: bool = False
     malicious_ip_filtering_enabled: bool = False

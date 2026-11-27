@@ -11,12 +11,12 @@ from pydantic import MISSING, Discriminator, Field, SerializeAsAny, Tag
 
 from pyvelo.core import (
     Alias,
-    ConfigModel,
     EdgeOnly,
     NoneIsFalse,
     Positional,
     ProfileOnly,
     Secret,
+    VcoModel,
 )
 from pyvelo.core.fields import (
     DefaultingScalar,
@@ -40,12 +40,12 @@ from .common import (
 VisibilityMode = Literal["IP", "MAC"]
 
 
-class EdgeManagementTraffic(ConfigModel):
+class EdgeManagementTraffic(VcoModel):
     override: Annotated[bool, OverrideFlag] = True
     source_interface: Annotated[str, EdgeOnly] = ""
 
 
-class EdgeClientVisibility(ConfigModel):
+class EdgeClientVisibility(VcoModel):
     mode: VisibilityMode = "MAC"
     override: Annotated[bool, OverrideFlag] = True
 
@@ -58,7 +58,7 @@ LanPortMode = Literal["access", "trunk"]
 LanInterfaceType = Literal["wired", "wireless"]
 
 
-class LanInterfaceBase(ConfigModel):
+class LanInterfaceBase(VcoModel):
     override: Annotated[bool, OverrideFlag] = True
     name: str
     cwp: bool = False
@@ -70,12 +70,12 @@ class LanInterfaceBase(ConfigModel):
 WirelessSecurityMode = Literal["Open", "WPA2Enterprise", "WPA2Personal"]
 
 
-class AllowedMac(ConfigModel):
+class AllowedMac(VcoModel):
     mac_address: Annotated[str, Alias("address")]
     description: str = ""
 
 
-class MacAllowList(ConfigModel):
+class MacAllowList(VcoModel):
     enabled: bool = False
     allowed_macs: Annotated[list[AllowedMac], KeyField("mac_address")] = Field(
         default_factory=list
@@ -122,7 +122,7 @@ LanInterface = Annotated[
 ]
 
 
-class EdgeLanDhcpRelay(ConfigModel):
+class EdgeLanDhcpRelay(VcoModel):
     enabled: bool = False
     servers: list[str] = Field(default_factory=list)
     source_from_secondary_ip: bool = False
@@ -132,7 +132,7 @@ def _none_to_default_lease_time(v: Any) -> Any:
     return 86400 if v is None else v
 
 
-class EdgeLanDhcp(ConfigModel):
+class EdgeLanDhcp(VcoModel):
     dhcp_relay: EdgeLanDhcpRelay = Field(default_factory=EdgeLanDhcpRelay)
     enabled: bool = True
     lease_time_seconds: Annotated[int, Lenient(_none_to_default_lease_time)] = 86400
@@ -145,7 +145,7 @@ class EdgeLanDhcp(ConfigModel):
 # A reservation is its MAC. Its IP is a value, so two reservations can exchange
 # IPs, and a reservation with another MAC is another reservation. The VCO
 # matches a MAC whatever its letter case, so its lists fold case (KeyField).
-class LanFixedIP(ConfigModel):
+class LanFixedIP(VcoModel):
     mac_address: str
     lan_ip: str
     description: str = ""
@@ -155,14 +155,14 @@ def _none_empty_str_to_true(v: Any) -> Any:
     return True if v is None or (isinstance(v, str) and v == "") else v
 
 
-class LanOspf(ConfigModel):
+class LanOspf(VcoModel):
     enabled: bool = False
     override: Annotated[bool, OverrideFlag] = True
     passive_interface: Annotated[bool, Lenient(_none_empty_str_to_true)] = True
     area: int | str = ""
 
 
-class LanDhcpRelayV6(ConfigModel):
+class LanDhcpRelayV6(VcoModel):
     enabled: bool = False
     servers: list[str] = Field(default_factory=list)
 
@@ -171,7 +171,7 @@ def _none_to_default_netmask(v: Any) -> Any:
     return "ffff:ffff:ffff:ffff:0000:0000:0000:0000" if v is None else v
 
 
-class LanAddressingV6(ConfigModel):
+class LanAddressingV6(VcoModel):
     cidr_ip: Annotated[str | None, EdgeLocal] = None
     cidr_prefix: Annotated[int | None, EdgeLocal] = 64
     interface_address: str | None = None
@@ -182,21 +182,21 @@ class LanAddressingV6(ConfigModel):
     type_: Annotated[IPv6AddressingType, Alias("type")] = "STATIC"
 
 
-class LanPrefixDelegationEntry(ConfigModel):
+class LanPrefixDelegationEntry(VcoModel):
     pool_name: Annotated[str, Alias("poolname")]
     prefix: str
     prefix_length: Annotated[str | int, Alias("prefixLen")]
     target_prefix_length: Annotated[str | int, Alias("targetPrefixLen")]
 
 
-class LanPrefixDelegation(ConfigModel):
+class LanPrefixDelegation(VcoModel):
     enabled: bool = True
     pd_list: Annotated[list[LanPrefixDelegationEntry], Alias("pdlist")] = Field(
         default_factory=list
     )
 
 
-class LanDhcpServerV6(ConfigModel):
+class LanDhcpServerV6(VcoModel):
     base_dhcp_address: Annotated[int, Alias("baseDhcpAddr")] = 1
     dhcp_relay: LanDhcpRelayV6 = Field(default_factory=LanDhcpRelayV6)
     enabled: bool = True
@@ -212,7 +212,7 @@ class LanDhcpServerV6(ConfigModel):
     static_reserved: int = 10
 
 
-class LanV6Details(ConfigModel):
+class LanV6Details(VcoModel):
     addressing: LanAddressingV6 = Field(default_factory=LanAddressingV6)
     advertise: bool = True
     bind_edge_address: Literal[False] = False
@@ -221,13 +221,13 @@ class LanV6Details(ConfigModel):
     override: Annotated[bool, OverrideFlag] = True
 
 
-class LanSecondaryIpAddress(ConfigModel):
+class LanSecondaryIpAddress(VcoModel):
     cidr_ip: str
     cidr_prefix: int
     netmask: str
 
 
-class LanSecondaryIP(ConfigModel):
+class LanSecondaryIP(VcoModel):
     addressing: LanSecondaryIpAddress
     advertise: bool = True
     override: bool = True
@@ -242,7 +242,7 @@ def _none_to_default_multicast(v: Any) -> Any:
     return MulticastConfiguration() if v is None else v
 
 
-class LanNetwork(ConfigModel):
+class LanNetwork(VcoModel):
     advertise: Annotated[bool, NoneIsFalse] = True
     disabled: bool = False
     angular_update: bool = True
@@ -290,12 +290,12 @@ class LanNetwork(ConfigModel):
     ] = MISSING
 
 
-class LanManagement(ConfigModel):
+class LanManagement(VcoModel):
     cidr_ip: Annotated[str | None, EdgeLocal] = "192.168.1.1"
     cidr_prefix: int = 32
 
 
-class LanSettings(ConfigModel):
+class LanSettings(VcoModel):
     management: LanManagement = Field(default_factory=LanManagement)
     management_traffic: EdgeManagementTraffic = Field(
         default_factory=EdgeManagementTraffic

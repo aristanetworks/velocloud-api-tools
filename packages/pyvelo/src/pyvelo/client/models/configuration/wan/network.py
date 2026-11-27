@@ -6,12 +6,12 @@ from typing import Annotated
 from pydantic import MISSING
 
 from pyvelo.client.models.configuration.common import AddressType
-from pyvelo.core import Alias, ConfigModel, Secret
+from pyvelo.core import Alias, Secret, VcoModel
 
 from .common import NetworkType, WanMode
 
 
-class WanNetwork(ConfigModel):
+class WanNetwork(VcoModel):
     mode: WanMode = "dynamic"
     name: str
     logical_id: str

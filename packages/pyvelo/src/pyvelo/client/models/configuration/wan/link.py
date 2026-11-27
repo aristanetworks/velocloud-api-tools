@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 from pydantic import MISSING, Field, field_validator
 
 from pyvelo.client.models.configuration.common import AddressType
-from pyvelo.core import Alias, ConfigModel, ServerOwned
+from pyvelo.core import Alias, ServerOwned, VcoModel
 
 from .common import (
     BandwidthMeasurement,
@@ -16,13 +16,13 @@ from .common import (
 )
 
 
-class WanLinkStaticSla(ConfigModel):
+class WanLinkStaticSla(VcoModel):
     latency_ms: int | float | str = 0
     jitter_ms: int | float | str = 0
     loss_pct: int | float | str = 0
 
 
-class WanLinkCosEntry(ConfigModel):
+class WanLinkCosEntry(VcoModel):
     bandwidth_guaranteed: bool = False
     bandwidth_percent: Annotated[int | float, Alias("bandwidthPct")] = 100
     default_class_of_service: bool = False
@@ -35,12 +35,12 @@ class WanLinkCosEntry(ConfigModel):
     )
 
 
-class WanLinkCos(ConfigModel):
+class WanLinkCos(VcoModel):
     class_id: str | None = None
     classes_of_service: list[WanLinkCosEntry] = Field(default_factory=list)
 
 
-class WanLink(ConfigModel):
+class WanLink(VcoModel):
     logical_id: str | None = None
     internal_id: Annotated[uuid.UUID | MISSING, ServerOwned()] = MISSING
     addressing_version: AddressType = "IPv4"

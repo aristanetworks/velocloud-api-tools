@@ -74,7 +74,6 @@ from pyvelo.client.models.configuration.ref_owners import fill_ref_only
 from pyvelo.core import (
     Alias,
     ConfigContext,
-    ConfigModel,
     NoneIsMissing,
     RowsModifiedConfirmation,
     Tinyint,
@@ -111,7 +110,7 @@ def capture_key(
     return to_jsonable_python(value, by_alias=True)
 
 
-class ConfigurationModuleBase(ConfigModel):
+class ConfigurationModuleBase(VcoModel):
     created: VcoTimestamp
     modified: VcoTimestamp
     id_: Annotated[int, Alias("id")]
@@ -487,7 +486,7 @@ def _wrong_module(module: object, expected: type) -> TypeError:
 # parametrized base such as ``ConfigurationBase[Edge]`` takes its module list
 # from the alias when it is made, and one made before the alias exists would
 # keep it unresolved, with the layer still a type variable.
-class ConfigurationBase(ConfigModel, Generic[L]):  # noqa: UP046 (one shared constrained L, as a TypeVar)
+class ConfigurationBase(VcoModel, Generic[L]):  # noqa: UP046 (one shared constrained L, as a TypeVar)
     name: str
     configuration_type: ConfigurationType = ConfigurationType.SEGMENT_BASED
     bastion_state: ConfigurationBastionState | None | MISSING = MISSING
@@ -831,24 +830,24 @@ class GetRoutableApplications(VcoModel):
     )
 
 
-class KnownIpPortMapping(ConfigModel):
+class KnownIpPortMapping(VcoModel):
     subnets: list[str] | MISSING = MISSING
     tcp_ports: list[int | tuple[int, int]] | MISSING = MISSING
     udp_ports: list[int | tuple[int, int]] | MISSING = MISSING
 
 
-class FqdnMapping(ConfigModel):
+class FqdnMapping(VcoModel):
     fqdn_list: Annotated[list[str] | MISSING, Alias("FQDNList")] = MISSING
 
 
-class ProtocolPortMapping(ConfigModel):
+class ProtocolPortMapping(VcoModel):
     """Port mapping for an application's protocol."""
 
     tcp_ports: list[int | tuple[int, int]] | MISSING = MISSING
     udp_ports: list[int | tuple[int, int]] | MISSING = MISSING
 
 
-class ApplicationItem(ConfigModel):
+class ApplicationItem(VcoModel):
     """A VeloCloud application definition used for DPI classification."""
 
     id_: Annotated[int, Alias("id")]

@@ -1,9 +1,9 @@
 """The flow timeouts of the stateful firewall, in seconds."""
 
-from pyvelo.core import ConfigModel
+from pyvelo.core import VcoModel
 
 
-class StatefulFirewallSettings(ConfigModel):
+class StatefulFirewallSettings(VcoModel):
     established_tcp_flow_timeout: int = 7440
     non_established_tcp_flow_timeout: int = 240
     udp_flow_timeout: int = 300

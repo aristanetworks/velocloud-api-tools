@@ -5,10 +5,10 @@ from typing import Annotated, ClassVar
 
 from pydantic import MISSING, ConfigDict
 
-from pyvelo.core import Alias, ConfigModel
+from pyvelo.core import Alias, VcoModel
 
 
-class ConfigurationRef(ConfigModel):
+class ConfigurationRef(VcoModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     id_: Annotated[int | MISSING, Alias("id")] = MISSING

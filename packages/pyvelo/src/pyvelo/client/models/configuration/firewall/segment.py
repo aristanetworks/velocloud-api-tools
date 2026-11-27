@@ -3,14 +3,14 @@
 from typing import Annotated
 
 from pyvelo.client.models.configuration.common import SegmentMetadata
-from pyvelo.core import Additive, Alias, ConfigModel, Layered, Unconverted, kind_default
+from pyvelo.core import Additive, Alias, Layered, Unconverted, kind_default
 from pyvelo.core.fields import KeyField
 from pyvelo.core.layers import L
 
 from .rules import FirewallOutboundRule
 
 
-class FirewallSegment(Layered[L], ConfigModel):
+class FirewallSegment(Layered[L]):
     segment: SegmentMetadata
     firewall_logging_enabled: Annotated[
         Unconverted[bool | None], Alias("firewall_logging_enabled")

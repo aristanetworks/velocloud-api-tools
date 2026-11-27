@@ -439,17 +439,6 @@ unsets a field, not `MISSING`, and a model is given as its JSON-mode dump
 patch, so the state shares no object with it: the same patch can be applied
 to another state, or changed, afterwards.
 
-The models of a configuration dump by attribute name: the `model_dump()` of a
-segment's `vpn` has `backhaul_edges`, and `model_dump(by_alias=True)` has the
-VCO's keys (`backHaulEdges`), which are what a save sends. They are the models
-of a module's data and of the enterprise objects, the module rows, and the
-configuration that holds them (`state.target_config`). A patch takes a field by
-either name, so a JSON-mode dump of either form is a patch value. The rows of
-other results (a composite module, `GetApplicationsResult`, `CustomApp`,
-`GetEnterpriseEdgeListItem`, `PrivateNetwork`) are dumps in the VCO's keys that
-hold such models: without `by_alias` their own keys are the VCO's and the held
-model's are attribute names, so pass `by_alias` to get one form.
-
 The `segments` lists have rules of their own:
 
 - On an edge, a segment the edge inherits from its profile counts as there. A

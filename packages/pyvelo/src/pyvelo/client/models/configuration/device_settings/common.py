@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import MISSING, Field
 
-from pyvelo.core import Alias, ConfigModel, Positional
+from pyvelo.core import Alias, Positional, VcoModel
 from pyvelo.core.fields import DefaultingScalar
 
 RadioMode = Literal["n", "ac", "ax"]
@@ -36,17 +36,17 @@ OspfAreaType = Literal["normal"]
 LanSideNatRuleType = Literal["source", "destination"]
 
 
-class IgmpConfiguration(ConfigModel):
+class IgmpConfiguration(VcoModel):
     enabled: bool = False
     type_: Annotated[Literal["IGMP_V2"], Alias("type")] = "IGMP_V2"
 
 
-class PimConfiguration(ConfigModel):
+class PimConfiguration(VcoModel):
     enabled: bool = False
     type_: Annotated[Literal["PIM_SM"], Alias("type")] = "PIM_SM"
 
 
-class MulticastConfiguration(ConfigModel):
+class MulticastConfiguration(VcoModel):
     igmp: IgmpConfiguration = Field(default_factory=IgmpConfiguration)
     igmp_host_query_interval_seconds: int | None = None
     igmp_max_query_response: int | None = None
@@ -56,14 +56,14 @@ class MulticastConfiguration(ConfigModel):
     pim_prune_interval_seconds: int | None = None
 
 
-class PrefixDelegationEntry(ConfigModel):
+class PrefixDelegationEntry(VcoModel):
     pool_name: Annotated[str, Alias("poolname")]
     prefix: str
     prefix_length: Annotated[str | int, Alias("prefixLen")]
     target_prefix_length: Annotated[str | int, Alias("targetPrefixLen")]
 
 
-class PrefixDelegation(ConfigModel):
+class PrefixDelegation(VcoModel):
     enabled: bool = True
     pd_list: Annotated[list[PrefixDelegationEntry], Alias("pdlist")] = Field(
         default_factory=list
@@ -87,7 +87,7 @@ DhcpOptionDataType = Literal[
 ]
 
 
-class DhcpOptionMetadata(ConfigModel):
+class DhcpOptionMetadata(VcoModel):
     data_type: DhcpOptionDataType
     data_length: int | MISSING = MISSING
     description: str | MISSING = MISSING
@@ -97,7 +97,7 @@ class DhcpOptionMetadata(ConfigModel):
     option: int | MISSING = MISSING
 
 
-class DhcpServerOption(ConfigModel):
+class DhcpServerOption(VcoModel):
     option: int
     value: Annotated[str | list[str] | None, Positional()]
     type_: Annotated[str, Alias("type")]
@@ -111,7 +111,7 @@ PortSpeed = Literal["10M", "100M", "1000M", "2500M"]
 ProbeInterval = Literal["1", "3", "5", "10"]
 
 
-class InterfaceL2(ConfigModel):
+class InterfaceL2(VcoModel):
     autonegotiation: bool = True
     speed: Annotated[PortSpeed, DefaultingScalar(PortSpeed, default="100M")] = "100M"
     duplex: Annotated[PortDuplex, DefaultingScalar(PortDuplex, default="FULL")] = "FULL"
@@ -120,12 +120,12 @@ class InterfaceL2(ConfigModel):
     probe_interval: ProbeInterval | None = "3"
 
 
-class MacBypassEntry(ConfigModel):
+class MacBypassEntry(VcoModel):
     address: str
     description: str = ""
 
 
-class RadiusAuthentication(ConfigModel):
+class RadiusAuthentication(VcoModel):
     enabled: bool = False
     mac_bypass: list[MacBypassEntry] = Field(default_factory=list)
     acl_check: bool = False
@@ -230,5 +230,5 @@ DeviceSettingsRef = Literal[
 ]
 
 
-class ProviderRef(ConfigModel):
+class ProviderRef(VcoModel):
     ref: DeviceSettingsRef

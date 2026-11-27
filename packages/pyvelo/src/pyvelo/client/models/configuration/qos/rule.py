@@ -16,7 +16,7 @@ from pyvelo.client.models.configuration.common import (
     ServiceGroupRef,
     VlanType,
 )
-from pyvelo.core import Alias, ConfigModel, NameOf, Normalizer
+from pyvelo.core import Alias, NameOf, Normalizer, VcoModel
 from pyvelo.core.fields import KeyField, OwnsRef, RefersTo, Resolvable
 from pyvelo.core.identity import ApplicationIdentity, HubIdentity, HubService
 
@@ -35,7 +35,7 @@ def _subnet_mask_normalizer(v: Any) -> Any:
     return "any" if isinstance(v, str) and v == "255.255.255.255" else v
 
 
-class QosRuleMatch(ConfigModel):
+class QosRuleMatch(VcoModel):
     # IP addressing
     ip_version: AddressType = "IPv4v6"
     source_ip: Annotated[str | MISSING, Alias("sip")] = "any"
@@ -126,7 +126,7 @@ class QosRuleMatch(ConfigModel):
     vlan_type: VlanType = "end-to-end"
 
 
-class BackhaulEdge(ConfigModel):
+class BackhaulEdge(VcoModel):
     type_: Annotated[
         BackhaulEdgeType, Alias("type"), Resolvable(HubIdentity, lambda i: i.type_)
     ] = "edgeHub"
@@ -151,7 +151,7 @@ class BackhaulEdge(ConfigModel):
     edge_name: Annotated[str | MISSING, Alias("name"), NameOf(HubIdentity)] = MISSING
 
 
-class RouteConfig(ConfigModel):
+class RouteConfig(VcoModel):
     type_: Annotated[RouteConfigType | MISSING, Alias("type")] = MISSING
     name: str | None = None
     logical_id: uuid.UUID | None = None
@@ -163,7 +163,7 @@ class RouteConfig(ConfigModel):
     backhaul_edges_auto_selection: bool = False
 
 
-class RouteAction(ConfigModel):
+class RouteAction(VcoModel):
     interface: str = "auto"
     subinterface_id: int = -1
     link_internal_logical_id: uuid.UUID | Literal["auto"] = "auto"
@@ -180,19 +180,19 @@ class RouteAction(ConfigModel):
     icmp_logical_id: uuid.UUID | None = None
 
 
-class SlaSettings(ConfigModel):
+class SlaSettings(VcoModel):
     latency_ms: str = "0"
     jitter_ms: str = "0"
     loss_percent: Annotated[str, Alias("lossPct")] = "0.0"
 
 
-class QosNatSettings(ConfigModel):
+class QosNatSettings(VcoModel):
     enabled: bool = False
     source_ip: str = "no"
     destination_ip: Annotated[str, Alias("destIp")] = "no"
 
 
-class QosRuleAction(ConfigModel):
+class QosRuleAction(VcoModel):
     route_type: RouteType = "edge2Any"
     route_policy: str | MISSING = MISSING  # only in profiles - maybe legacy
 
@@ -221,7 +221,7 @@ class QosRuleAction(ConfigModel):
     edge_to_edge_encryption: bool = True
 
 
-class QosRule(ConfigModel):
+class QosRule(VcoModel):
     name: str
     match: QosRuleMatch
     action: QosRuleAction

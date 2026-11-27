@@ -93,8 +93,6 @@ runtime-evaluated-base-classes = [
     "pydantic.RootModel",
     "pyvelo.core.VcoModel",
     "pyvelo.core.base.VcoModel",
-    "pyvelo.core.ConfigModel",
-    "pyvelo.core.base.ConfigModel",
     "pyvelo.core.PaginatedVcoModel",
     "pyvelo.core.base.PaginatedVcoModel",
     "pyvelo.core.Layered",

@@ -5,13 +5,13 @@ from typing import Annotated, Any
 
 from pydantic import MISSING
 
-from pyvelo.core import ConfigModel, ServerOwned
+from pyvelo.core import ServerOwned, VcoModel
 
 from .rule_action import InboundRuleAction, OutboundRuleAction
 from .rule_match import InboundRuleMatch, InboundRuleMatchV6, OutboundRuleMatch
 
 
-class FirewallOutboundRule(ConfigModel):
+class FirewallOutboundRule(VcoModel):
     name: str
     match: OutboundRuleMatch
     action: OutboundRuleAction
@@ -25,7 +25,7 @@ class FirewallOutboundRule(ConfigModel):
     comments: list[dict[str, Any]] | None = None
 
 
-class FirewallInboundRule(ConfigModel):
+class FirewallInboundRule(VcoModel):
     name: str
     match: InboundRuleMatch
     action: InboundRuleAction
@@ -33,7 +33,7 @@ class FirewallInboundRule(ConfigModel):
     logging_enabled: bool = False
 
 
-class FirewallInboundRuleV6(ConfigModel):
+class FirewallInboundRuleV6(VcoModel):
     name: str
     match: InboundRuleMatchV6
     action: InboundRuleAction

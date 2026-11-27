@@ -447,7 +447,7 @@ class EffectiveView:
 
 
 type _Place = tuple[str | int, ...]
-"""Where a model is in its module's wire dump: wire keys and list positions.
+"""Where a model is in its module's dump: dump keys and list positions.
 
 For ``mark_detached``.
 """

@@ -24,7 +24,6 @@ from pyvelo.client.models.configuration.common import SegmentMetadata
 from pyvelo.core import (
     Alias,
     ConfigContext,
-    ConfigModel,
     EdgeOnly,
     GatewayLogicalId,
     NameOf,
@@ -33,6 +32,7 @@ from pyvelo.core import (
     Positional,
     RefOnly,
     Secret,
+    VcoModel,
 )
 from pyvelo.core.fields import (
     DefaultingModel,
@@ -59,7 +59,7 @@ from .common import (
 )
 
 
-class BfdRuleBase(ConfigModel):
+class BfdRuleBase(VcoModel):
     detect_multiplier: int = 3
     receive_interval: int = 300
     transmit_interval: int = 300
@@ -72,7 +72,7 @@ class BfdRuleNsd(BfdRuleBase):
     data_center_public_ip: str
 
 
-class SegmentBfd(ConfigModel):
+class SegmentBfd(VcoModel):
     enabled: bool = False
     override: Annotated[bool, OverrideFlag] = True
     rules: Annotated[list[BfdRuleBase], KeyField("peer_address")] = Field(
@@ -83,17 +83,17 @@ class SegmentBfd(ConfigModel):
     )
 
 
-class SegmentEdgeDirectProviderConfig(ConfigModel):
+class SegmentEdgeDirectProviderConfig(VcoModel):
     enabled: bool = False
     use_all_public_wan_links: bool = True
 
 
-class SegmentEdgeDirectProvider(ConfigModel):
+class SegmentEdgeDirectProvider(VcoModel):
     config: SegmentEdgeDirectProviderConfig
     logical_id: uuid.UUID
 
 
-class SegmentEdgeDirect(ConfigModel):
+class SegmentEdgeDirect(VcoModel):
     enabled: bool = False
     override: Annotated[bool, OverrideFlag] = True
     provider: ProviderRef = Field(
@@ -102,16 +102,16 @@ class SegmentEdgeDirect(ConfigModel):
     providers: list[SegmentEdgeDirectProvider] = Field(default_factory=list)
 
 
-class SegmentHubInterconnect(ConfigModel):
+class SegmentHubInterconnect(VcoModel):
     enabled: bool
 
 
-class GatewayListItem(ConfigModel):
+class GatewayListItem(VcoModel):
     logical_id: GatewayLogicalId
     ipsec_detail: Any | MISSING = MISSING
 
 
-class HandoffGatewayRow(ConfigModel):
+class HandoffGatewayRow(VcoModel):
     """An item of a handoff section's ``gateways`` list: a row the VCO writes itself.
 
     Its ID is kept as stored, as text. A VCO stores a plain UUID in most rows and
@@ -121,7 +121,7 @@ class HandoffGatewayRow(ConfigModel):
     logical_id: str
 
 
-class SegmentHandoffGateways(ConfigModel):
+class SegmentHandoffGateways(VcoModel):
     auto_select: bool = False
     gateway_list: Annotated[list[GatewayListItem], KeyField("logical_id")] = Field(
         default_factory=list
@@ -135,7 +135,7 @@ class SegmentHandoffGateways(ConfigModel):
 SegmentVrrp = RootModel[dict[str, Any] | None]
 
 
-class VpnHub(ConfigModel):
+class VpnHub(VcoModel):
     name: Annotated[str, NameOf(HubIdentity)]
     type_: Annotated[
         Literal["edgeHub", "edgeHubCluster"],
@@ -145,18 +145,18 @@ class VpnHub(ConfigModel):
     logical_id: Annotated[uuid.UUID, Resolvable(HubIdentity, lambda i: i.logical_id)]
 
 
-class IsolationConfig(ConfigModel):
+class IsolationConfig(VcoModel):
     enabled: bool = False
 
 
-class DynamicVpnConfig(ConfigModel):
+class DynamicVpnConfig(VcoModel):
     enabled: bool = True
     type_: Annotated[Literal["DIRECT", "RELAY"], Alias("type")] = "DIRECT"
     timeout: int = 180
     isolation: IsolationConfig = Field(default_factory=IsolationConfig)
 
 
-class EdgeToEdgeDetail(ConfigModel):
+class EdgeToEdgeDetail(VcoModel):
     isolation: IsolationConfig = Field(default_factory=IsolationConfig)
     use_cloud_gateway: bool = True
     encryption_protocol: Literal["GROUP_IPSEC", "AES_128_GCM", "AES_256_GCM"] = (
@@ -171,7 +171,7 @@ class EdgeToEdgeDetail(ConfigModel):
     isolation_groups: list[Any] = Field(default_factory=list)
 
 
-class EdgeToEdgeHub(ConfigModel):
+class EdgeToEdgeHub(VcoModel):
     enabled: bool = False
     ref: DeviceSettingsRef = "deviceSettings:vpn:edgeHub"
     vpn_hubs: Annotated[
@@ -179,7 +179,7 @@ class EdgeToEdgeHub(ConfigModel):
     ] = Field(default_factory=list)
 
 
-class SegmentVpn(ConfigModel):
+class SegmentVpn(VcoModel):
     enabled: bool = False
     edge_to_data_center: bool = False
     conditional_backhaul: bool = False
@@ -198,26 +198,26 @@ class SegmentVpn(ConfigModel):
     ] = Field(default_factory=list)
 
 
-class SegmentStaticGroup(ConfigModel):
+class SegmentStaticGroup(VcoModel):
     multicast_groups: list[str] = Field(default_factory=list)
     rp_address: str
 
 
-class MulticastRp(ConfigModel):
+class MulticastRp(VcoModel):
     type_: Annotated[Literal["STATIC"], Alias("type")] = "STATIC"
     static_groups: Annotated[list[SegmentStaticGroup], Positional()] = Field(
         default_factory=list
     )
 
 
-class PimOnWanOverlay(ConfigModel):
+class PimOnWanOverlay(VcoModel):
     enabled: bool = False
     type_: Annotated[Literal["SOURCE_IP"], Alias("type")] = "SOURCE_IP"
     source_cidr_ip: str | None = None
     source_interface: str | None = None
 
 
-class SegmentMulticast(ConfigModel):
+class SegmentMulticast(VcoModel):
     enabled: bool = False
     rp: MulticastRp = Field(default_factory=MulticastRp)
     pim_on_wan_overlay: PimOnWanOverlay = Field(default_factory=PimOnWanOverlay)
@@ -232,7 +232,7 @@ class SegmentMulticast(ConfigModel):
     override: Annotated[bool, OverrideFlag] = True
 
 
-class OspfAggregation(ConfigModel):
+class OspfAggregation(VcoModel):
     prefix: str
     prefix_length: int
     tag: int | None = None
@@ -241,19 +241,19 @@ class OspfAggregation(ConfigModel):
     metric_type: OspfExternalRouteType = "E1"
 
 
-class OspfBgpConfig(ConfigModel):
+class OspfBgpConfig(VcoModel):
     enabled: bool = False
     metric: int = 20
     metric_type: OspfExternalRouteType = "E2"
 
 
-class SegmentOspfArea(ConfigModel):
+class SegmentOspfArea(VcoModel):
     id_: Annotated[int | str, Alias("id")]
     name: Annotated[str, DefaultingScalar(str, default="")] = ""
     type_: Annotated[OspfAreaType, Alias("type")] = "normal"
 
 
-class SegmentOspfBase(ConfigModel):
+class SegmentOspfBase(VcoModel):
     aggregation: list[OspfAggregation] = Field(default_factory=list)
     enabled: bool = False
     areas: Annotated[list[SegmentOspfArea], KeyField("id_", label="name")] = Field(
@@ -269,12 +269,12 @@ class SegmentOspf(SegmentOspfBase):
     v6_detail: SegmentOspfBase = Field(default_factory=SegmentOspfBase)
 
 
-class BgpNetwork(ConfigModel):
+class BgpNetwork(VcoModel):
     cidr_ip: str
     prefix_length: Annotated[int, Alias("cidrPrefix")]
 
 
-class BgpAggregation(ConfigModel):
+class BgpAggregation(VcoModel):
     prefix: str
     prefix_length: int
     as_set: bool = False
@@ -288,31 +288,31 @@ BgpFilterActionValueType = Literal[
 ]
 
 
-class BgpFilterMatch(ConfigModel):
+class BgpFilterMatch(VcoModel):
     type_: Annotated[BgpFilterMatchType, Alias("type")] = "PREFIX"
     value: str
     exact_match: bool = True
 
 
-class BgpFilterActionValue(ConfigModel):
+class BgpFilterActionValue(VcoModel):
     type_: Annotated[BgpFilterActionValueType, Alias("type")] = "NONE"
     value: str = ""
     community_additive: bool = False
 
 
-class BgpFilterAction(ConfigModel):
+class BgpFilterAction(VcoModel):
     type_: Annotated[BgpFilterActionType, Alias("type")] = "DENY"
     values: Annotated[list[BgpFilterActionValue], Positional()] = Field(
         default_factory=list
     )
 
 
-class BgpFilterRule(ConfigModel):
+class BgpFilterRule(VcoModel):
     match: BgpFilterMatch
     action: BgpFilterAction
 
 
-class BgpFilter(ConfigModel):
+class BgpFilter(VcoModel):
     id_: Annotated[uuid.UUID, Alias("id")] = Field(default_factory=uuid.uuid4)
     name: str
     is_locked_by_profile: Annotated[bool, ProfileOnly] = False
@@ -320,7 +320,7 @@ class BgpFilter(ConfigModel):
     version: str | MISSING = MISSING
 
 
-class BgpNeighbor(ConfigModel):
+class BgpNeighbor(VcoModel):
     neighbor_ip: str
     neighbor_as: Annotated[str, Alias("neighborAS")]
     inbound_filter: dict[str, list[str]] = Field(default_factory=lambda: {"ids": []})
@@ -350,7 +350,7 @@ class BgpNeighbor(ConfigModel):
     id_: Annotated[uuid.UUID, Alias("id")] = Field(default_factory=uuid.uuid4)
 
 
-class BgpDefaultRoute(ConfigModel):
+class BgpDefaultRoute(VcoModel):
     enabled: bool = False
     advertise: Literal["CONDITIONAL"] = "CONDITIONAL"
     default_route_filter_ids: Annotated[
@@ -365,7 +365,7 @@ class BgpDefaultRoute(ConfigModel):
     ] = Field(default_factory=lambda: ("sameAsOutbound",))
 
 
-class BgpOspfConfig(ConfigModel):
+class BgpOspfConfig(VcoModel):
     enabled: Annotated[bool, DefaultingScalar(bool, default=False)] = False
     metric: Annotated[int, DefaultingScalar(int, default=20)] = 20
 
@@ -375,7 +375,7 @@ def _none_to_empty_object(value: Any) -> Any:
     return {} if value is None else value
 
 
-class BgpBase(ConfigModel):
+class BgpBase(VcoModel):
     aggregation: Annotated[
         list[BgpAggregation], KeyField("prefix", "prefix_length")
     ] = Field(default_factory=list)
@@ -419,7 +419,7 @@ class SegmentBgp(BgpBase):
     v6_detail: BgpBase = Field(default_factory=BgpBase)
 
 
-class EcmpHashParams(ConfigModel):
+class EcmpHashParams(VcoModel):
     src_ip: bool = True
     dest_ip: bool = True
     src_port: bool = True
@@ -427,11 +427,11 @@ class EcmpHashParams(ConfigModel):
     protocol: bool = True
 
 
-class EcmpLoadSharing(ConfigModel):
+class EcmpLoadSharing(VcoModel):
     hash_params: EcmpHashParams
 
 
-class SegmentEcmp(ConfigModel):
+class SegmentEcmp(VcoModel):
     override: Annotated[bool, OverrideFlag] = True
     enabled_for_nsd: Annotated[bool, Alias("enabledForNSD")] = False
     enabled_for_interface: bool = False
@@ -451,7 +451,7 @@ def _whole_number_to_text(value: object) -> object:
     return value
 
 
-class StaticRoute(ConfigModel):
+class StaticRoute(VcoModel):
     destination: str
     netmask: str
     source_ip: str | None = None
@@ -470,7 +470,7 @@ class StaticRoute(ConfigModel):
 IcmpProbeType = Literal["NONE", "802.1Q"]
 
 
-class ICMPProbe(ConfigModel):
+class ICMPProbe(VcoModel):
     destination_ip: str
     enabled: bool = True
     frequency_seconds: str | int
@@ -504,7 +504,7 @@ class ICMPProbe(ConfigModel):
         return self
 
 
-class ICMPResponder(ConfigModel):
+class ICMPResponder(VcoModel):
     enabled: bool = True
     ip_address: str
     name: str
@@ -519,7 +519,7 @@ def _int_to_str(v: Any) -> Any:
     return str(v) if isinstance(v, int) else v
 
 
-class NsdRouteBase(ConfigModel):
+class NsdRouteBase(VcoModel):
     name: str | None = None
     advertise: bool = False
     cidr_ip: str
@@ -564,7 +564,7 @@ NsdRoute = Annotated[
 ]
 
 
-class SegmentRoutes(ConfigModel):
+class SegmentRoutes(VcoModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
 
     icmp_probes: Annotated[list[ICMPProbe], KeyField("name", alt="logical_id")] = Field(
@@ -586,7 +586,7 @@ class SegmentRoutes(ConfigModel):
     nsd_v6: Annotated[list[NsdRoute], Alias("nsdV6")] = Field(default_factory=list)
 
 
-class SegmentAuthentication(ConfigModel):
+class SegmentAuthentication(VcoModel):
     """A segment's authentication settings.
 
     The data holds a stub (``ref``) and nothing that says which authentication
@@ -607,7 +607,7 @@ class SegmentAuthentication(ConfigModel):
     ] = MISSING
 
 
-class NatRule(ConfigModel):
+class NatRule(VcoModel):
     type_: Annotated[LanSideNatRuleType, Alias("type")]
     dest_cidr_ip: str | None = None
     dest_cidr_prefix: int | None = None
@@ -631,7 +631,7 @@ class NatRule(ConfigModel):
         return None if v == "" else v
 
 
-class NatDualRule(ConfigModel):
+class NatDualRule(VcoModel):
     description: str | None = None
     src_inside_cidr_ip: str
     src_inside_cidr_prefix: int
@@ -647,19 +647,19 @@ class NatDualRule(ConfigModel):
     dest_outside_netmask: str
 
 
-class SegmentNat(ConfigModel):
+class SegmentNat(VcoModel):
     override: Annotated[bool, OverrideFlag] = True
     rules: Annotated[list[NatRule], Positional()] = Field(default_factory=list)
     dual_rules: Annotated[list[NatDualRule], Positional()] = Field(default_factory=list)
 
 
-class NetflowCollectorFilter(ConfigModel):
+class NetflowCollectorFilter(VcoModel):
     logical_id: uuid.UUID
     name: str
     type_: Annotated[str, Alias("type")]
 
 
-class NetflowCollector(ConfigModel):
+class NetflowCollector(VcoModel):
     allow_all_segment: bool = False
     filter_list: Annotated[
         list[NetflowCollectorFilter], KeyField("logical_id", label="name")
@@ -673,7 +673,7 @@ class NetflowCollector(ConfigModel):
 type NetflowInterval = Annotated[int, Field(ge=60, le=300)]
 
 
-class SegmentNetflowIntervals(ConfigModel):
+class SegmentNetflowIntervals(VcoModel):
     flow_stats: NetflowInterval = 60
     flow_link_stats: NetflowInterval = 60
     tunnel_stats: NetflowInterval = 60
@@ -683,7 +683,7 @@ class SegmentNetflowIntervals(ConfigModel):
     link_table: NetflowInterval = 300
 
 
-class SegmentNetflow(ConfigModel):
+class SegmentNetflow(VcoModel):
     enabled: bool
     override: Annotated[bool, OverrideFlag] = True
     version: int = 10
@@ -715,7 +715,7 @@ SyslogSeverity = Literal[
 SyslogRole = Literal["EDGE EVENT", "FIREWALL EVENT", "EDGE AND FIREWALL EVENT"]
 
 
-class SyslogCollector(ConfigModel):
+class SyslogCollector(VcoModel):
     host: str
     port: int = 514
     roles: Annotated[list[str], Positional()] = Field(
@@ -728,7 +728,7 @@ class SyslogCollector(ConfigModel):
     tag: str = ""
 
 
-class SegmentSyslog(ConfigModel):
+class SegmentSyslog(VcoModel):
     facility_code: str = "local0"
     enabled: bool = False
     collectors: Annotated[
@@ -737,7 +737,7 @@ class SegmentSyslog(ConfigModel):
     override: Annotated[bool, OverrideFlag] = True
 
 
-class DnsProvider(ConfigModel):
+class DnsProvider(VcoModel):
     # Effective configurations may expand a provider inline rather than return
     # its configuration ref. Preserve those VCO-specific fields for callers.
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
@@ -775,13 +775,13 @@ class DnsBackupProvider(DnsProvider):
     ] = MISSING
 
 
-class LocalDomainItem(ConfigModel):
+class LocalDomainItem(VcoModel):
     fqdn: str
     ipv4_address: list[str] = Field(default_factory=list)
     ipv6_address: list[str] = Field(default_factory=list)
 
 
-class SegmentDns(ConfigModel):
+class SegmentDns(VcoModel):
     """A segment's DNS settings.
 
     A primary or backup provider given as an object owns the ref row of its
@@ -798,7 +798,7 @@ class SegmentDns(ConfigModel):
     )
 
 
-class CssProviderRef(ConfigModel):
+class CssProviderRef(VcoModel):
     """A segment's cloud security service provider.
 
     A ``logical_id`` that holds a service owns the segment's
@@ -819,11 +819,11 @@ class CssProviderRef(ConfigModel):
     ref: DeviceSettingsRef = "deviceSettings:css:provider"
 
 
-class CssConfigBase(ConfigModel):
+class CssConfigBase(VcoModel):
     redirect: Literal["policy", "web", "all"] = "policy"
 
 
-class CssConfigIpsecIkePropZscaler(ConfigModel):
+class CssConfigIpsecIkePropZscaler(VcoModel):
     protocol_version: Literal[2] = 2
 
 
@@ -836,7 +836,7 @@ class CssConfigZscalerIpsec(CssConfigBase):
     )
 
 
-class CssConfigIpsecIkeProp(ConfigModel):
+class CssConfigIpsecIkeProp(VcoModel):
     dh_group: Annotated[Literal[2], Alias("DHGroup")] = 2
     pfs: Annotated[Literal[0], Alias("PFS")] = 0
     authentication_algorithm: Literal["Any"] = "Any"
@@ -847,7 +847,7 @@ class CssConfigIpsecIkeProp(ConfigModel):
     protocol_version: Literal[1, 2] = 2
 
 
-class CssConfigIpsecIpsecProp(ConfigModel):
+class CssConfigIpsecIpsecProp(VcoModel):
     life_time_seconds: int = 28800
 
 
@@ -866,7 +866,7 @@ class CssConfigGenericIpsec(CssConfigBase):
 CssConfigIpsec = CssConfigZscalerIpsec | CssConfigGenericIpsec
 
 
-class CssGreProp(ConfigModel):
+class CssGreProp(VcoModel):
     keepalive_interval_secs: int = 5
     keepalive_retries: int = 3
     links: Annotated[list[str], Positional()] = Field(default_factory=list)
@@ -880,26 +880,26 @@ class CssConfigGre(CssConfigBase):
 CssConfig = CssConfigGre | CssConfigZscalerIpsec | CssConfigGenericIpsec
 
 
-class CssIpsecSiteData(ConfigModel):
+class CssIpsecSiteData(VcoModel):
     ike_id: str | MISSING = MISSING
     psk: Annotated[str | MISSING, Secret()] = MISSING
     ike_id_type: Literal["FQDN"] = "FQDN"
     psk_type: Literal["alpha"] = "alpha"
 
 
-class CssIpsecSite(ConfigModel):
+class CssIpsecSite(VcoModel):
     logical_id: uuid.UUID | MISSING = MISSING
     data: CssIpsecSiteData
 
 
-class CssGreSiteAddressing(ConfigModel):
+class CssGreSiteAddressing(VcoModel):
     internal_router_ip: str
     internal_router_mask: str
     internal_zen_ip: str
     internal_zen_mask: str
 
 
-class CssGreSiteData(ConfigModel):
+class CssGreSiteData(VcoModel):
     use_custom_source_ip: bool = False
     custom_source_ip: str = ""
     link_internal_logical_id: uuid.UUID
@@ -907,12 +907,12 @@ class CssGreSiteData(ConfigModel):
     secondary_addressing: CssGreSiteAddressing
 
 
-class CssGreSite(ConfigModel):
+class CssGreSite(VcoModel):
     logical_id: uuid.UUID | MISSING = MISSING
     data: CssGreSiteData
 
 
-class SegmentCss(ConfigModel):
+class SegmentCss(VcoModel):
     enabled: bool | MISSING = MISSING
     override: Annotated[bool, OverrideFlag] = False
     provider: CssProviderRef | MISSING = MISSING
@@ -922,7 +922,7 @@ class SegmentCss(ConfigModel):
     )
 
 
-class DeviceSegment(ConfigModel):
+class DeviceSegment(VcoModel):
     """A segment of a device settings module.
 
     At the profile level ``segment`` owns the module's ``deviceSettings:segment``
