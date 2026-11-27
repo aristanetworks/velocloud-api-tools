@@ -591,7 +591,7 @@ def _json_item_key(
     return parts[0] if len(parts) == 1 else tuple(parts)
 
 
-def _same_key(raw_key: KeyValue, parsed_key: KeyValue) -> bool:
+def same_key(raw_key: KeyValue, parsed_key: KeyValue) -> bool:
     """Whether a key read from raw JSON is the key the parse produced from it.
 
     Tolerates coercion by the parse: raw ``"0"`` or ``0.0`` is parsed key
@@ -609,7 +609,7 @@ def _same_key(raw_key: KeyValue, parsed_key: KeyValue) -> bool:
             isinstance(raw_key, tuple)
             and isinstance(parsed_key, tuple)
             and len(raw_key) == len(parsed_key)
-            and all(_same_key(r, p) for r, p in zip(raw_key, parsed_key, strict=True))
+            and all(same_key(r, p) for r, p in zip(raw_key, parsed_key, strict=True))
         )
     if raw_key == parsed_key:
         return True
@@ -628,10 +628,17 @@ def key_forms(items: list[object], node: KeyedList) -> list[KeyForm | None]:
     Each part is case-folded when the list's ``KeyField`` has *fold_case*
     (``_folded``): two keys that differ only by letter case are one.
     """
-    forms = [key_form(key) for key in _keys(items, node)]
-    if not node.spec.fold_case:
-        return forms
-    return [_folded(form) for form in forms]
+    return [compared_form(key, node.spec) for key in _keys(items, node)]
+
+
+def compared_form(key: KeyValue | None, spec: KeySpec) -> KeyForm | None:
+    """*key* in the form the keys of the list of *spec* are compared in.
+
+    Its string form (``key_form``), with each part case-folded when the
+    list's ``KeyField`` has *fold_case* (``_folded``). None for no key.
+    """
+    form = key_form(key)
+    return _folded(form) if spec.fold_case else form
 
 
 def _folded(form: KeyForm | None) -> KeyForm | None:
@@ -1041,12 +1048,10 @@ def _alt_agrees(raw_alt: KeyScalar | None, before_alt: KeyScalar | None) -> bool
     """Whether an alt key of *before* is the one the raw item has, so it was read.
 
     A raw item without one had it made up by the parse. Compared as
-    ``_same_key`` compares, so letter case does not count.
+    ``same_key`` compares, so letter case does not count.
     """
     return (
-        raw_alt is not None
-        and before_alt is not None
-        and _same_key(raw_alt, before_alt)
+        raw_alt is not None and before_alt is not None and same_key(raw_alt, before_alt)
     )
 
 
@@ -1066,7 +1071,7 @@ def _rebase_keyed_list(
     for raw_item, before_key in zip(raw, _keys(before, node), strict=True):
         raw_key = _json_item_key(raw_item, node.item, node.spec.paths)
         if raw_key is not None and (
-            before_key is None or not _same_key(raw_key, before_key)
+            before_key is None or not same_key(raw_key, before_key)
         ):
             return None
     alt = node.spec.alt
@@ -1098,8 +1103,50 @@ def _rebase_keyed_list(
 # ---------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class PairedList:
+    """How the changes of one keyed list were made, item by item.
+
+    ``raw_changes`` gives one for each keyed list it pairs (``pair_items``),
+    so what shows its changes finds each item they name where the changes
+    were made, and pairs nothing again. Every index is one of the two JSON
+    lists compared.
+    """
+
+    pairs: tuple[tuple[int, int], ...]
+    """(index in *old*, index in *new*) of each item both have (``Pairing.pairs``)."""
+    old_parts: tuple[ItemPart, ...]
+    """What a change names each item of *old* by, by its index (``item_parts``).
+
+    A change inside an item both have, and the removal of an item, name it so.
+    """
+    names: tuple[ItemPart, ...]
+    """What a change names each item of *new* by, by its index (``item_names``).
+
+    An item both have by its part in *old*, an added item by its part in
+    *new*. An added item, the item a place is after, the items of a move and
+    the names of an order entry's new order are named so.
+    """
+    new_parts: tuple[ItemPart, ...]
+    """The part of each item of *new* in *new* itself, by its index (``item_parts``)."""
+
+
+class _Collected(list[RawChange]):
+    """The changes collected so far, and where to record how each list was paired."""
+
+    __slots__: ClassVar[tuple[str, ...]] = ("lists",)
+
+    def __init__(self, lists: dict[Path, PairedList]) -> None:
+        super().__init__()
+        self.lists: dict[Path, PairedList] = lists
+
+
 def raw_changes(
-    old: object, new: object, model: type[VcoModel] | None = None
+    old: object,
+    new: object,
+    model: type[VcoModel] | None = None,
+    *,
+    lists: dict[Path, PairedList] | None = None,
 ) -> list[RawChange]:
     """The differences between two JSON documents, each at the deepest path.
 
@@ -1118,10 +1165,18 @@ def raw_changes(
     the items that changed place. Anything else that differs, including a list
     without a usable key and a keyed list in which an added item would have the
     name of a paired item of *old*, is one change at its own path.
+
+    *lists*, when given, is filled with how each keyed list was paired
+    (``PairedList``), by the list's path as the changes write it: every list
+    whose changes are made item by item, and no other.
     """
-    changes: list[RawChange] = []
-    collect_changes(changes, Path(()), old, new, model)
-    return changes
+    if lists is None:
+        changes: list[RawChange] = []
+        collect_changes(changes, Path(()), old, new, model)
+        return changes
+    collected = _Collected(lists)
+    collect_changes(collected, Path(()), old, new, model)
+    return list(collected)
 
 
 def collect_changes(
@@ -1130,6 +1185,8 @@ def collect_changes(
     """Append to *out* the changes from *old* to *new* under *path*.
 
     *node* is the model's shape at *path*; ``raw_changes`` describes the walk.
+    An *out* made by ``raw_changes`` to record how each keyed list is paired
+    gets that too.
     """
     if same_json(old, new):
         return
@@ -1246,6 +1303,13 @@ def _collect_keyed_changes(
         return False
     new_of = dict(pairing.pairs)
     old_parts = item_parts(old, node)
+    if isinstance(out, _Collected):
+        out.lists[path] = PairedList(
+            pairing.pairs,
+            tuple(old_parts),
+            tuple(names[j] for j in range(len(new))),
+            tuple(item_parts(new, node)),
+        )
     for i, old_item in enumerate(old):
         item_path = path.child(old_parts[i])
         if i in new_of:
