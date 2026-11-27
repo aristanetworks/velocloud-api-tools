@@ -32,6 +32,7 @@ from hub_state import (
     hub_pipeline,
     rule_uses_hub,
 )
+from profile_state import module_store_pipeline, profile_state
 from pydantic import MISSING
 from pyvelo.client.enums.configuration import (
     ConfigurationModuleName,
@@ -39,14 +40,25 @@ from pyvelo.client.enums.configuration import (
 )
 from pyvelo.client.exceptions import (
     BackhaulWithoutHubError,
+    ComposedModuleError,
+    ConfigConflictError,
+    DetachedObjectError,
+    FixedListError,
     HubListError,
+    LossyFieldError,
     ModuleWriteError,
+    RefsDroppedError,
+    RefsNotLoadedError,
     SegmentSetError,
+    VersionRequiredError,
+    WriteNotAppliedError,
+    WriteOutcomeUnknownError,
 )
 from pyvelo.client.hub_services import BACKHAUL_REF
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.qos.root import QosData
+from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import EnterpriseConfigurationProfile
 from pyvelo.config import (
     ConfigPipeline,
@@ -61,23 +73,28 @@ from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import VcoModel, add, named_path
 from pyvelo.core.base import field_models, wire_name
+from pyvelo.core.identity import HubServiceNotFoundError
 from pyvelo.core.layers import Profile
 from pyvelo.core.rebase import Key, Path
-from pyvelo.testing import make_module_json
+from pyvelo.testing import MockVcoClient, make_module_json
 from refs_helpers import (
     CONFIG,
     CSS,
     DNS_A,
+    DNS_B,
     DS_ID,
+    PRIMARY,
     QOS_ID,
     SEG0,
     SEG0_OBJECT,
     SEGMENT,
+    dns,
     segment_entry,
     segment_row,
+    service_row,
     table_registry,
 )
-from segment_helpers import GLOBAL, GUEST, ds_entry
+from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
 from shown_paths import reached, round_trips
 from test_apply_paths import (  # pyright: ignore[reportImplicitRelativeImport]
     _rule as qos_rule_body,  # pyright: ignore[reportPrivateUsage]  # the body of an added rule
@@ -88,7 +105,8 @@ from test_apply_paths import (  # pyright: ignore[reportImplicitRelativeImport]
 from test_backhaul_without_hub import (  # pyright: ignore[reportImplicitRelativeImport]
     out_of_rule,
 )
-from test_compare_effective import (  # pyright: ignore[reportImplicitRelativeImport]
+from test_compare_effective import (  # pyright: ignore[reportImplicitRelativeImport]  # pyright: ignore[reportImplicitRelativeImport]
+    EDGE_ID,
     OTHER_RULE,
     composed_modules,
     composed_qos,
@@ -123,8 +141,13 @@ from test_hub_steps import (  # pyright: ignore[reportImplicitRelativeImport]
 from test_hub_steps import (  # pyright: ignore[reportImplicitRelativeImport]
     service_row as hub_role_row,
 )
-from test_profile_segment_set import (  # pyright: ignore[reportImplicitRelativeImport]
+from test_pipeline_apply import (  # pyright: ignore[reportImplicitRelativeImport]
+    _control_plane_state as control_plane_state,  # pyright: ignore[reportPrivateUsage]  # a state with a module a save does not write
+)
+from test_profile_segment_set import (  # pyright: ignore[reportImplicitRelativeImport]  # pyright: ignore[reportImplicitRelativeImport]
+    edit_global_qos,
     in_all_three,
+    two_defaults,
 )
 from test_profile_segment_set import (  # pyright: ignore[reportImplicitRelativeImport]
     state_of as segments_in,
@@ -135,15 +158,23 @@ from test_qos_ownership import (  # pyright: ignore[reportImplicitRelativeImport
 from test_qos_ownership import (  # pyright: ignore[reportImplicitRelativeImport]
     state_of as qos_edge_state,
 )
+from test_revert import (  # pyright: ignore[reportImplicitRelativeImport]
+    drop_the_rules,
+    lost_insert,
+)
 from test_save_refs import (  # pyright: ignore[reportImplicitRelativeImport]
     DNS_A_SERVICE,
     loaded_profile,
     primary_provider,
     ref_line_path,
 )
-from test_shown_plan import (  # pyright: ignore[reportImplicitRelativeImport]
+from test_shown_plan import (  # pyright: ignore[reportImplicitRelativeImport]  # pyright: ignore[reportImplicitRelativeImport]
     RENAMED,
     ROUTE_HUBS,
+    two_added_of_one_key,
+)
+from test_state_plan import (  # pyright: ignore[reportImplicitRelativeImport]
+    make_state,
 )
 from test_state_references import (  # pyright: ignore[reportImplicitRelativeImport]
     SERVICE,
@@ -156,6 +187,9 @@ from test_state_references import (  # pyright: ignore[reportImplicitRelativeImp
 )
 from test_state_references import (  # pyright: ignore[reportImplicitRelativeImport]
     profile_of as vlan_profile,
+)
+from test_unconfirmed_insert import (  # pyright: ignore[reportImplicitRelativeImport]
+    edge_qos_rows,
 )
 
 apply = ConfigPipeline(client=None).apply
@@ -361,6 +395,9 @@ async def test_the_path_of_a_dangling_reference_reaches_the_value() -> None:
     """A reference that names nothing: deleting the entry it is in mends the state."""
     state, error = await hub_removed()
     (reference,) = error.references
+    assert reference.path == (
+        f"segments[Guest].rules[Web].{ROUTE_HUBS}[Hub-A].edge_logical_id"
+    )
     round_trips(reference.path)
     data = data_of(state, reference.module)
     assert reached(data, reference.path) == reference.value
@@ -544,22 +581,18 @@ async def test_a_patch_a_message_shows_is_sent_as_given_and_mends(
 # --- warnings -------------------------------------------------------------------
 
 
-def owner_without_a_row() -> ConfigState:
-    """A profile whose Global Segment names a CSS provider that has no ref row."""
-    data = {
-        "lan": {"networks": [], "interfaces": []},
-        "segments": [
-            segment_entry(
-                0, "Global Segment", SEG0, css={"provider": {"logicalId": CSS}}
-            )
-        ],
-    }
+def one_segment_profile(entry: dict[str, Any], **rows: object) -> ConfigState:
+    """A profile whose device settings have the Global Segment *entry*.
+
+    Its refs are the segment's row and *rows*.
+    """
+    data = {"lan": {"networks": [], "interfaces": []}, "segments": [entry]}
     row = make_module_json(
         "deviceSettings",
         data,
         module_id=DS_ID,
         configuration_id=CONFIG,
-        refs={SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)},
+        refs={SEGMENT: segment_row(0, SEG0_OBJECT, SEG0), **rows},
     )
     return ConfigState(
         edge_config=None,
@@ -568,6 +601,25 @@ def owner_without_a_row() -> ConfigState:
         ),
         target_type="profile",
         resolver_context=ResolverContext(),
+    )
+
+
+def owner_without_a_row() -> ConfigState:
+    """A profile whose Global Segment names a CSS provider that has no ref row."""
+    return one_segment_profile(
+        segment_entry(0, "Global Segment", SEG0, css={"provider": {"logicalId": CSS}})
+    )
+
+
+def two_rows_for_a_provider() -> ConfigState:
+    """A profile whose Global Segment has two ref rows for its primary DNS provider."""
+    rows = [
+        service_row(PRIMARY, service, object_id, SEG0_OBJECT, SEG0)
+        for service, object_id in ((DNS_A, 701), (DNS_B, 702))
+    ]
+    return one_segment_profile(
+        segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True)),
+        **{PRIMARY: rows},
     )
 
 
@@ -583,6 +635,28 @@ async def test_a_plan_warning_with_an_owner_is_at_the_owners_field() -> None:
     assert reached(state.profile.device_settings, warning.path) == uuid.UUID(CSS)
     (lifted,) = [w for w in plan.warnings if w.code == "owner_without_ref"]
     assert (lifted.module, lifted.path) == ("device_settings", warning.path)
+
+
+WARNING_CODES = {
+    "backhaul_without_hub_kept",
+    "hub_list_as_read",
+    "hub_roles_disagree",
+    "reference_kept",
+    "flag_off_in_use",
+    "segments_disagree",
+    "ref_without_owner",
+    "owner_without_ref",
+    "several_refs",
+    "defaults_repaired",
+    "hub_in_use",
+    "insert_unconfirmed",
+}
+"""The codes of the warnings ``warned`` gives: those these fixtures produce.
+
+``defaults_not_template`` is not among them: only a plan of one module whose
+``defaults`` differ from the template gives it, and its fixture is with the
+tests of that repair.
+"""
 
 
 async def warned() -> list[tuple[ConfigState, ValidationWarning]]:
@@ -618,44 +692,57 @@ async def warned() -> list[tuple[ConfigState, ValidationWarning]]:
         await missing_from_qos(),
         (await loaded_profile(css=True))[2],
         owner_without_a_row(),
+        two_rows_for_a_provider(),
     ]
     found = [(state, warning) for state in states for warning in state.plan().warnings]
-    pipeline, _, state = await used_hub_save()
-    result = await pipeline.save(state, dry_run=True)
-    return [*found, *((state, warning) for warning in result.warnings)]
+
+    # Three that a save gives: a hub in use, Guest's QoS defaults repaired, and
+    # an insert whose answer was lost.
+    pipeline, _, used = await used_hub_save()
+    repaired = await profile_state(
+        [ds_entry(GLOBAL), ds_entry(GUEST)],
+        [qos_entry(GLOBAL), qos_entry(GUEST, defaults=two_defaults())],
+        [firewall_entry(GLOBAL), firewall_entry(GUEST)],
+    )
+    edit_global_qos(repaired)
+    repairing, _ = module_store_pipeline(repaired)
+    unanswered = make_state()
+    inserting = await lost_insert(MockVcoClient.for_state(unanswered), unanswered)
+    for saving, state in (
+        (pipeline, used),
+        (repairing, repaired),
+        (inserting, unanswered),
+    ):
+        result = await saving.save(state, dry_run=True)
+        found.extend((state, warning) for warning in result.warnings)
+    return found
 
 
 async def test_a_warning_of_a_plan_or_a_save_is_at_a_place_of_its_module() -> None:
     """A warning: its path reads back, and names a place of the module it names.
 
-    A ref row that nothing in the data names is at its ref name under
-    ``refs``, which is shown and is no place ``apply`` takes: form only.
+    The codes are those the fixtures produce (``WARNING_CODES`` says which
+    code is not among them). A ref row that nothing in the data names is at
+    its ref name under ``refs``, which is shown and is no place ``apply``
+    takes, and a warning about a whole module has the empty path: form only.
     """
     found = await warned()
-    assert {warning.code for _, warning in found} == {
-        "backhaul_without_hub_kept",
-        "hub_list_as_read",
-        "hub_roles_disagree",
-        "reference_kept",
-        "flag_off_in_use",
-        "segments_disagree",
-        "ref_without_owner",
-        "owner_without_ref",
-        "hub_in_use",
+    assert {warning.code for _, warning in found} == WARNING_CODES
+    hub_reference = f"segments[Guest].rules[Web].{ROUTE_HUBS}[Hub-B].edge_logical_id"
+    segments = {
+        (warning.code, str(warning.path)): warning.segment for _, warning in found
     }
-    assert [
-        warning.path for _, warning in found if warning.code == "reference_kept"
-    ] == [
-        f"segments[Guest].rules[Web].{ROUTE_HUBS}[Hub-B].edge_logical_id",
-        "lan.networks[renamed].segment_id",
-    ]
+    assert segments[("reference_kept", hub_reference)] == "Guest"
+    assert segments[("reference_kept", "lan.networks[renamed].segment_id")] is None
+    row = 'refs."deviceSettings:css:provider"'
+    assert segments[("ref_without_owner", row)] == "Global Segment"
+    assert segments[("insert_unconfirmed", "")] is None
     for state, warning in found:
         path = warning.path
         assert isinstance(path, Path), warning.code
         round_trips(path)
-        if path.parts[0] == "refs":
-            assert warning.code == "ref_without_owner"
-            assert path == 'refs."deviceSettings:css:provider"'
+        if not path.parts or path.parts[0] == "refs":
+            assert warning.code in {"insert_unconfirmed", "ref_without_owner"}
             continue
         # A segment the three modules disagree about is named with no module:
         # the device settings have it.
@@ -688,19 +775,24 @@ async def test_a_providers_ref_line_names_the_field_that_sets_it() -> None:
 # --- a write error ----------------------------------------------------------------
 
 
-async def low_port_lost() -> tuple[ConfigState, ModuleWriteError]:
-    """A save of two ports of the rule ``Web``, of which the VCO stores the high one."""
+async def low_port_lost(*, both: bool = False) -> tuple[ConfigState, ModuleWriteError]:
+    """A save of two ports of the rule ``Web`` whose low port the VCO does not store.
+
+    The store keeps the low port as read, and with *both* the high port too.
+    """
     state = await rule_uses_hub()
     await edit(state, "business_policy", PORTS)
     pipeline, store = hub_pipeline(state)
 
-    def keep_the_low_port(new: dict[str, Any], _: dict[str, Any] | None) -> None:
+    def keep_as_read(new: dict[str, Any], _: dict[str, Any] | None) -> None:
         if new["name"] == "QOS":
             for segment in new["data"]["segments"]:
                 for rule in segment["rules"]:
                     rule["match"]["dport_low"] = -1
+                    if both:
+                        rule["match"]["dport_high"] = -1
 
-    store.on_store.append(keep_the_low_port)
+    store.on_store.append(keep_as_read)
     with pytest.raises(ModuleWriteError) as error:
         _ = await pipeline.save(state)
     return state, error.value
@@ -834,6 +926,40 @@ async def test_a_composite_key_and_a_quoted_name_reach_their_item_and_no_other()
     assert ports == [-1, 8001, 8002, 8003]
 
 
+async def test_a_path_shown_by_position_reaches_the_item_at_that_position() -> None:
+    """A ``+`` line of an item nothing names alone: ``[#n]`` is taken, and reaches it.
+
+    Two networks added with one VLAN ID and one name: no other item has the
+    text ``#0`` or ``#1`` as its key or name, so the position is not refused.
+    """
+    state = await two_added_of_one_key("p", "p")
+    before = state.get_field_changes()
+    networks = state.profile.device_settings.lan.networks
+    shown = [c for c in before if isinstance(c.path.parts[-1], int)]
+    assert [(str(c.path), c.before) for c in shown] == [
+        ("lan.networks[#0]", MISSING),
+        ("lan.networks[#1]", MISSING),
+    ]
+    for position, change in enumerate(shown):
+        round_trips(change.path)
+        assert reached(state.profile.device_settings, change.path) is networks[position]
+        _ = await apply(state, module=change.module, path=str(change.path), patch={})
+        assert state.get_field_changes() == before
+    prefixes = [network.cidr_prefix for network in networks]
+    _ = await apply(
+        state,
+        module="device_settings",
+        path="lan.networks[#1]",
+        patch={"cidr_prefix": 30},
+    )
+    assert prefixes[1] != 30
+    assert [network.cidr_prefix for network in networks] == [
+        prefixes[0],
+        30,
+        *prefixes[2:],
+    ]
+
+
 # --- limits: what a shown path does not do -------------------------------------------
 
 
@@ -891,10 +1017,114 @@ async def test_limit_a_quoted_position_text_is_a_name_before_it_is_a_position() 
 # --- the names: modules, and no key of the VCO's in any text --------------------------
 
 
+PORT_SHOWN = Path.parse("segments[Guest].rules[Web].match.destination_port_low")
+
+
+async def write_errors() -> dict[str, Exception]:
+    """A write error of each class, each of the business policy's two ports.
+
+    The first two are raised by a save; the other two are made as the check
+    of a write makes them, with the VCO's name of the module and that save's
+    plan, whose changes are in the VCO's keys.
+    """
+    state, not_applied = await low_port_lost()
+    _, conflict = await low_port_lost(both=True)
+    assert isinstance(not_applied, WriteNotAppliedError)
+    assert isinstance(conflict, ConfigConflictError)
+    assert not_applied.plan is not None
+    return {
+        "write not applied": not_applied,
+        "write conflict": conflict,
+        "write outcome unknown": WriteOutcomeUnknownError(
+            11,
+            "v1",
+            "no row",
+            answer="counted",
+            module_name="QOS",
+            plan=not_applied.plan,
+        ),
+        "refs dropped": RefsDroppedError(
+            11,
+            "v1",
+            module_name="QOS",
+            plan=not_applied.plan,
+            module=state.module("business_policy"),
+            lost_edits=not_applied.lost_edits,
+            refs_as_read={},
+        ),
+        "save step": SaveStepError("timeout", module_name="deviceSettings"),
+    }
+
+
+async def one_module_refusals() -> dict[str, Exception]:
+    """The refusals of a plan of one module alone: a state's plan makes others."""
+    segments = await in_all_three()
+    del segments.profile.qos.segments[1]
+    with pytest.raises(SegmentSetError) as segment_set:
+        _ = plan_module(segments.module("business_policy"))
+    hubs = await rule_uses_hub()
+    del hubs.profile.device_settings.segments[GUEST_AT].vpn.hub_edges.vpn_hubs[0]
+    with pytest.raises(HubListError) as hub_list:
+        _ = plan_module(hubs.module("device_settings"))
+    return {
+        "segment set, one module": segment_set.value,
+        "hub list, one module": hub_list.value,
+    }
+
+
+async def not_written_refusals() -> dict[str, Exception]:
+    """The refusals of a module a save does not write, and of a revert."""
+    state = control_plane_state()
+    with pytest.raises(PatchError) as patched:
+        _ = await apply(
+            state, module="control_plane", patch={"gateway_selection": {"mode": "x"}}
+        )
+    state.profile_config.control_plane.data.gateway_selection.mode = "static"
+    with pytest.raises(TypeError) as saved:
+        _ = await ConfigPipeline(MockVcoClient.for_state(state)).save(state)
+
+    inserted = make_state()
+    client = MockVcoClient.for_state(inserted)
+    pipeline = await lost_insert(client, inserted)
+    (stored_id,) = edge_qos_rows(client)
+    client.store.other_writer(stored_id, drop_the_rules)
+    with pytest.raises(ValueError, match="was not deleted") as reverted:
+        _ = await pipeline.revert(inserted, module="business_policy")
+    return {
+        "patch to a module not written": patched.value,
+        "save of a module not written": saved.value,
+        "revert": reverted.value,
+    }
+
+
+def made_by_hand() -> dict[str, Exception]:
+    """Errors a constructor makes here, each with the VCO's name of the module.
+
+    The text of each names the module from that name. It prints the paths, or
+    the message, as they are given, so what a raise site gives it is not
+    covered by these four: they are given a path as pyvelo shows it.
+    """
+    return {
+        "refs not loaded": RefsNotLoadedError("QOS", [PORT_SHOWN]),
+        "lossy field": LossyFieldError("QOS", [PORT_SHOWN]),
+        "version required": VersionRequiredError("QOS"),
+        "hub service not found": HubServiceNotFoundError(
+            hub="Hub-B", segment="Guest", path=PORT_SHOWN
+        ),
+        "detached object": DetachedObjectError(
+            "the object at this path is no longer part of the state", [PORT_SHOWN]
+        ),
+    }
+
+
 async def refusals() -> dict[str, Exception]:
-    """An error of each kind that names a module or a path, by what it refuses."""
+    """An error of each class that names a module or a path, by what it refuses.
+
+    Each is raised the way its own tests raise it, but those ``made_by_hand``
+    and two of ``write_errors`` make.
+    """
     state = await in_all_three()
-    del state.profile.firewall.segments[1]
+    del state.profile.qos.segments[1]
     with pytest.raises(SegmentSetError) as segment_set:
         _ = state.plan()
     pipeline, _, used = await used_hub_save()
@@ -911,6 +1141,16 @@ async def refusals() -> dict[str, Exception]:
         )
     with pytest.raises(ValueError, match="Unknown module") as unknown_module:
         _ = resolve_module_name("qos")
+    fixed = await rule_uses_hub()
+    defaults = fixed.profile.qos.segments[GUEST_AT].defaults
+    assert isinstance(defaults, list)
+    del defaults[0]
+    with pytest.raises(FixedListError) as fixed_list:
+        _ = fixed.plan()
+    comparing, compared_state, client = await loaded()
+    client.store.composed[EDGE_ID]["QOS"] = None
+    with pytest.raises(ComposedModuleError) as composed:
+        _ = await comparing.compare_effective(compared_state)
     return {
         "patch": await unknown_field(),
         "position": position.value,
@@ -919,9 +1159,13 @@ async def refusals() -> dict[str, Exception]:
         "hub list": hub_list_refused(await hub_listed_with_the_list_off()),
         "hub in use": hub_in_use.value,
         "segment set": segment_set.value,
-        "write": (await low_port_lost())[1],
-        "save step": SaveStepError("timeout", module_name="deviceSettings"),
+        "fixed list": fixed_list.value,
+        "composed module": composed.value,
         "module name": unknown_module.value,
+        **await write_errors(),
+        **await one_module_refusals(),
+        **await not_written_refusals(),
+        **made_by_hand(),
     }
 
 
@@ -932,7 +1176,7 @@ async def test_every_module_name_shown_is_one_apply_takes() -> None:
         errors["reference"],
         errors["backhaul without a hub"],
         errors["segment set"],
-        errors["write"],
+        errors["write not applied"],
         errors["save step"],
     )
     assert isinstance(reference, DanglingReferenceError)
@@ -972,11 +1216,13 @@ def reachable(*roots: type[VcoModel]) -> Iterator[type[VcoModel]]:
             todo.extend(field_models(field_info))
 
 
-PROSE = frozenset({"QoS"})
-"""A key that is also a word of the messages.
+PROSE = frozenset({"QoS", "list", "type", "id"})
+"""Keys that are also words a sentence of a message holds.
 
-The Orchestrator's word for the business policy, which a sentence may use
-("the Edges' QoS"); a rule's action writes its ``qos`` field under it.
+``QoS`` is the Orchestrator's word for the business policy ("the Edges'
+QoS"), and a rule's action writes its ``qos`` field under it; ``list``,
+``type`` and ``id`` are English. Each is still found where a path or a patch
+writes it: only as a word of a sentence is it let be.
 """
 
 
@@ -984,10 +1230,9 @@ def wire_keys() -> frozenset[str]:
     """The keys the VCO writes the fields of the three modules under.
 
     Every key of a field of a class the data of the device settings, QoS and
-    firewall reaches that is not the field's attribute name. Left out are a
-    key that is the attribute name of another field, and a key that is one
-    lower-case word (``type``, ``id``), which an English sentence also holds,
-    and ``PROSE``.
+    firewall reaches that is not the field's attribute name. Left out is a
+    key that is the attribute name of another field (``name``), which a path
+    is right to hold.
     """
     keys: set[str] = set()
     attributes: set[str] = set()
@@ -996,11 +1241,7 @@ def wire_keys() -> frozenset[str]:
             attributes.add(name)
             if wire_name(cls, name) != name:
                 keys.add(wire_name(cls, name))
-    return frozenset(
-        key
-        for key in keys - attributes - PROSE
-        if re.search(r"[A-Z0-9_]", key) is not None
-    )
+    return frozenset(keys - attributes)
 
 
 VCO_MODULE_NAMES = frozenset(
@@ -1009,11 +1250,22 @@ VCO_MODULE_NAMES = frozenset(
     if python_module_name(name.value) != name.value
 )
 """The VCO's name of each module that has another python name (``QOS``)."""
-REF_KEY = re.compile(r"\bdeviceSettings(?::[A-Za-z]+)+(?![\w.\[])")
-"""A ref name (``deviceSettings:backHaulEdge``): data, which is never renamed.
+REF_NAMES = (
+    "deviceSettings:backHaulEdge",
+    "deviceSettings:css:provider",
+    "deviceSettings:dns:primaryProvider",
+    "deviceSettings:vnfs:edge",
+)
+"""The ref names the fixtures' texts hold: data, which is never renamed."""
+REF_KEY = re.compile(
+    r"\b(?:"
+    + "|".join(map(re.escape, sorted(REF_NAMES, key=len, reverse=True)))
+    + r")(?![\w.\[:])"
+)
+"""One of ``REF_NAMES``, whole.
 
 Not a heading (``deviceSettings: update``) and not a module before a path:
-a letter follows each colon, and neither a dot nor a bracket follows the name.
+nothing of a name, a path or a longer ref name follows it.
 """
 VCO_FORMS = re.compile(
     re.escape("(the VCO's own name, such as QOS or deviceSettings, is accepted too)")
@@ -1021,9 +1273,53 @@ VCO_FORMS = re.compile(
 """The sentence of an unknown module's error that names the VCO's forms on purpose."""
 
 
-def vco_names(text: str, forbidden: re.Pattern[str]) -> list[str]:
+REQUEST_PARAMETERS = re.compile(
+    r'\{"id": (?:\d+|<configuration ID>), "(?:with|_update)": '
+    r'|\{"edgeId": <edge ID>\}'
+)
+"""The parameters of a request a message tells a caller to send to the VCO.
+
+The start of the two forms the texts show (a configuration or a module by its
+``id``, an edge by its ``edgeId``): the VCO is sent its own keys.
+"""
+
+
+def any_of(words: frozenset[str]) -> str:
+    """A pattern for one of *words*, the longest that fits."""
+    return "(?:" + "|".join(map(re.escape, sorted(words, key=len, reverse=True))) + ")"
+
+
+def forbidden_names() -> tuple[re.Pattern[str], re.Pattern[str]]:
+    """The patterns for a name of the VCO's where a text may not hold one.
+
+    The first: a module name, and a key that is no word of a sentence
+    (``PROSE``), as a whole word anywhere; and every key, those of ``PROSE``
+    too, where it is written as a part of a path (after a dot, or first,
+    before a dot or a bracket) or as the key of a JSON object. The second:
+    every key as a path of one part, which is the first thing of a line of a
+    plan or of an error, before a colon.
+    """
+    keys = wire_keys()
+    word = any_of((keys - PROSE) | VCO_MODULE_NAMES)
+    key = any_of(keys)
+    written = re.compile(
+        rf"(?<![A-Za-z0-9_]){word}(?![A-Za-z0-9_])"
+        rf"|(?<=\.){key}(?![A-Za-z0-9_])"
+        rf'|(?<![A-Za-z0-9_."]){key}(?=\.[A-Za-z_"]|\[)'
+        rf'|(?<="){key}(?="\s*:)'
+    )
+    alone = re.compile(rf"^[ \t]*(?:[~+-] )?({key})(?=:)", re.MULTILINE)
+    return written, alone
+
+
+def vco_names(
+    text: str, forbidden: tuple[re.Pattern[str], re.Pattern[str]]
+) -> list[str]:
     """Each name of the VCO's that *text* holds outside what may hold one."""
-    return forbidden.findall(VCO_FORMS.sub("", REF_KEY.sub("", text)))
+    for allowed in (REF_KEY, VCO_FORMS, REQUEST_PARAMETERS):
+        text = allowed.sub("", text)
+    written, alone = forbidden
+    return [*written.findall(text), *alone.findall(text)]
 
 
 async def every_text() -> dict[str, str]:
@@ -1049,34 +1345,66 @@ async def every_text() -> dict[str, str]:
     return texts
 
 
+PLANTED = {
+    "QOS: update": ["QOS"],
+    "deviceSettings: update": ["deviceSettings"],
+    "deviceSettings segments[Guest].vpn": ["deviceSettings"],
+    "deviceSettings:segments[Guest]": ["deviceSettings"],
+    "deviceSettings:QOS": ["deviceSettings", "QOS"],
+    "(it writes device settings, QoS, WAN and firewall modules)": ["WAN"],
+    "  ~ vpn.backHaulEdges[Hub-A]": ["backHaulEdges"],
+    '{"match": {"dport_low": 443}}': ["dport_low"],
+    "  ~ segments[Guest].rules[Web].match.sip: any -> 10.0.0.1": ["sip"],
+    '{"match": {"sip": "any", "dip": "any"}}': ["sip", "dip"],
+    "segments[Guest].rules[Web].action.QoS.type_": ["QoS"],
+    '{"route_cfg": {"type": "edge"}}': ["type"],
+    "  + list[#0]: 1": ["list"],
+    "  ~ vpn.id: 1 -> 2": ["id"],
+    "  ~ type: a -> b": ["type"],
+    'send it with {"id": 11, "match": 1}': ["id"],
+    # What may hold one: a ref name, and a word of a sentence.
+    'refs."deviceSettings:backHaulEdge"': [],
+    "- refs deviceSettings:backHaulEdge (Guest)": [],
+    "the Edges' QoS": [],
+    "change it in a patch of the whole list: end the path at rules": [],
+    'with {"id": 100, "with": ["modules"]} or {"edgeId": <edge ID>}': [],
+    "remove it from the backhaul list. A hub of that type has an id.": [],
+    '"type_": "edgeHub"': [],
+}
+"""Texts with a name of the VCO's planted in them, and what the sweep finds in each."""
+
+
 async def test_no_text_holds_a_vco_module_name_or_a_wire_key() -> None:
     """Every text names a module and a field as python does.
 
-    What may hold a name of the VCO's: a ref name, which is data, and the one
-    sentence that tells a caller the VCO's module names are accepted.
+    The texts: three plans, an error of each class ``refusals`` makes (the
+    refusals of a patch, a reference, the hub lists, the segment set, a fixed
+    list, a composed module, a revert, a module a save does not write, and
+    every class of write error), each warning of ``warned`` with the plan
+    of its state, and the comparison.
+
+    What may hold a name of the VCO's: a ref name, which is data, the one
+    sentence that tells a caller the VCO's module names are accepted, the
+    parameters of a request to the VCO that a message shows, and a key that
+    is a word, in a sentence (``PROSE``).
+
+    Not covered: the paths and messages that the raise sites of the errors of
+    ``made_by_hand`` give them, and the ``defaults_not_template`` warning.
     """
     wire = wire_keys()
     assert set(HAND_LIST) <= wire
-    assert len(wire) > 300
+    assert wire >= PROSE
+    assert len(wire) > 400
     assert {"QOS", "deviceSettings", "WAN", "controlPlane"} <= VCO_MODULE_NAMES
-    words = sorted(wire | VCO_MODULE_NAMES, key=len, reverse=True)
-    forbidden = re.compile(
-        r"(?<![A-Za-z0-9_])(?:" + "|".join(map(re.escape, words)) + r")(?![A-Za-z0-9_])"
-    )
-    # The check finds each kind of name where a text has one.
-    assert vco_names("QOS: update", forbidden) == ["QOS"]
-    assert vco_names("deviceSettings: update", forbidden) == ["deviceSettings"]
-    assert vco_names("deviceSettings segments[Guest].vpn", forbidden) == [
-        "deviceSettings"
-    ]
-    assert vco_names("deviceSettings:segments[Guest]", forbidden) == ["deviceSettings"]
-    assert vco_names("  ~ vpn.backHaulEdges[Hub-A]", forbidden) == ["backHaulEdges"]
-    assert vco_names('{"match": {"dport_low": 443}}', forbidden) == ["dport_low"]
-    assert vco_names('refs."deviceSettings:backHaulEdge"', forbidden) == []
-    assert vco_names("- refs deviceSettings:backHaulEdge (Guest)", forbidden) == []
+    forbidden = forbidden_names()
+    for text, names in PLANTED.items():
+        assert vco_names(text, forbidden) == names, text
 
     texts = await every_text()
-    assert len(texts) > 25
+    assert len(texts) > 60
+    assert {
+        key.partition(": ")[2] for key in texts if key.startswith("warning ")
+    } == WARNING_CODES
     found = {
         surface: names
         for surface, text in texts.items()
