@@ -1089,7 +1089,7 @@ def _parts_before_fields(field_info: FieldInfo) -> int:
     return int(len(_field_model_types(field_info)) > 1)
 
 
-def _validation_lines(exc: ValidationError, models: Sequence[type[VcoModel]]) -> str:
+def validation_lines(exc: ValidationError, models: Sequence[type[VcoModel]]) -> str:
     """What a ``ValidationError`` says, one ``place: message`` per error.
 
     The errors are joined by ``"; "``.
@@ -1152,7 +1152,7 @@ def _validated[T](
         return validate(value, context={"patch": True})
     except ValidationError as exc:
         refusal = PatchError(
-            "invalid value: " + _validation_lines(exc, models), path, "invalid_value"
+            "invalid value: " + validation_lines(exc, models), path, "invalid_value"
         )
         refusal.__cause__ = _without_input(exc)
     raise refusal
@@ -1181,7 +1181,7 @@ def _check_merged(model: VcoModel, validate: Callable[..., object], path: Path) 
     except ValidationError as exc:
         refusal = PatchError(
             f"{name} is not valid after this change: "
-            f"{_validation_lines(exc, (type(model),))}",
+            f"{validation_lines(exc, (type(model),))}",
             path,
             "invalid_value",
         )

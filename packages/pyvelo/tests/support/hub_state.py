@@ -444,6 +444,31 @@ async def rule_uses_hub() -> ConfigState:
     )
 
 
+async def edge_over_a_hub_profile() -> ConfigState:
+    """An edge with a QoS rule and device settings of its own, over a hub profile."""
+    refs = profile_hub_rows(
+        segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
+        segment_row(GUEST[0], GUEST[3], GUEST[2]),
+        hub_row(
+            HUB_A,
+            service_id=SERVICE_ID,
+            service_logical_id=SERVICE,
+            segment=GUEST,
+            roles=("hub", "backhaul"),
+        ),
+    )
+    return await hub_edge_state(
+        [ds_entry(GLOBAL), ds_entry(GUEST)],
+        [qos_entry(GLOBAL), qos_entry(GUEST, rules=[backhaul_rule("Web")])],
+        profile_ds=[
+            ds_entry(GLOBAL),
+            ds_with_vpn(GUEST, hubs=(HUB_A,), backhaul=(HUB_A,)),
+        ],
+        profile_qos=[qos_entry(GLOBAL), qos_entry(GUEST)],
+        profile_refs=refs,
+    )
+
+
 async def edit(state: ConfigState, module: str, patch: dict[str, Any]) -> None:
     _ = await ConfigPipeline(client=None).apply(state, module=module, patch=patch)
 

@@ -709,6 +709,158 @@ patch replaces such a list whole. Whether a list has the item a path names is
 found when the patch is merged: a path to an item the list lacks raises
 `PatchError` of kind `no_item` at that item, `segments[Guest].rules[Nope]`.
 
+## Dumps
+
+A model is written as JSON, and read back from it, in one of two forms. Each
+form has its own pair of methods, and a document of one form is read by the
+method of its own pair:
+
+| Pair | Keys | Values | What it is |
+|---|---|---|---|
+| `model_dump()` and `model_validate()` | The VCO's (`md5Password`) | Complete, secrets included | What is stored and sent: a row as the VCO gave it, a payload, a module's `raw_data`. |
+| `named_dump()` and `named_validate()` | Python attribute names (`md5_password`), as a path and a patch have them | Complete but for secrets: the mask `"***"` stands in place of each | What a caller reads and edits: a document to print, to keep in a file, or to hand to a tool and take back. |
+
+The first pair is pydantic's. Every model has the second beside it (the
+methods are `VcoModel`'s, in `pyvelo.core`):
+
+```python
+data = state.profile.device_settings
+named = data.named_dump()
+neighbor = named["segments"][0]["bgp"]["neighbors"][0]
+# {"neighbor_ip": "192.0.2.1", "neighbor_as": "65001", ...,
+#  "enable_md5": True, "md5_password": "***", ...}
+
+neighbor["neighbor_as"] = "65010"
+again = type(data).named_validate(named, stored=data)
+again.segments[0].bgp.neighbors[0].md5_password  # the password `data` holds
+```
+
+`named_dump()` is the model's `model_dump(mode="json")` with each key a model
+declares written as its attribute name, and with `"***"` (`HIDDEN`, in
+`pyvelo.core`) in place of the value of every field the models mark as a
+secret (`Secret`), whatever that value is: a text, an empty text, a list. It
+has the fields `model_dump` writes, so a model at a level (edge or profile)
+leaves out what that level does not have.
+
+`Model.named_validate(document, stored=model)` reads such a document, edited
+or not, and gives a new model. `stored` is the model the document was dumped
+from. Before anything is validated the document is put in the VCO's form:
+each attribute name becomes the VCO's key, and each mask is replaced by the
+value `stored` holds at the same place (`Model.vco_document(document,
+stored=model)` gives that document, not validated). Then it is validated as
+`model_validate` validates. So what a model keeps of its input is in the VCO's
+form: a module row read this way has the `raw_data` and the `raw_refs`, which
+a save builds its payload from, in the VCO's keys and with the secrets
+themselves, as the row read from the VCO's own JSON has. `named_validate`
+makes a model and changes no state; an edit of a loaded state goes through
+`apply`.
+
+`context` is pydantic's validation context, as `model_validate` takes it. A
+module row takes two things from it and from nowhere else: `{"refs_loaded":
+False}` for a row read without its refs, and `{"config_level": ...}` for the
+level of the models in it. Without a context the row is what `model_validate`
+makes without one: it counts as read with its refs.
+
+`model_dump(by_alias=False)` writes attribute names too, and `model_validate`
+takes a field by either name, but the two are not a round trip. A module row
+keeps the JSON it was validated from, and nothing tells a document in
+attribute names from data the VCO stored: the row would keep the attribute
+names, and a save would send them to the VCO. `named_validate` is the way to
+read a document in attribute names. It refuses a field named by the VCO's
+key, in a document of the VCO's form or among attribute names
+(`NamedDocumentError`, kind `vco_key`, at the field): it renames every
+attribute name it finds, and in a document of the VCO's that would rename a
+stored key that happens to be spelled like one. Give a document in the VCO's
+keys to `model_validate`.
+
+### The mask
+
+A mask in a document means: keep the value the stored model has at the same
+place. A secret written in full is taken as written, so a document changes a
+secret by giving the new one. The same place is:
+
+- of a field, that field;
+- of an entry of a map, the entry with the same key;
+- of an item of a keyed list, the item a save pairs it with: by its alt key
+  where the list has one, then by its key. An item that is moved keeps its
+  secrets, and so does one that is renamed in a list with an alt key (a BGP
+  neighbour, whose alt key is its `id_`);
+- of an item of a list without a key, the one stored item of that list that it
+  equals when the secrets of both are hidden. Position plays no part, so
+  items that are reordered, removed or added leave every other item its own
+  secrets. Stored items that are the same, secrets included, count as one.
+
+A mask with no stored value at its place is refused (`NamedDocumentError`,
+kind `masked_secret`), because it would be written to the VCO as the secret.
+The error's `path` is the secret's, in attribute names, with an item by its
+position in the document (`snmp.v3.users[#0].passphrase`). That is every mask
+of a document read without `stored`, a mask in an item or under a field the
+stored model lacks, and a mask in an item of a list without a key that equals
+no stored item, or several whose secrets differ. So:
+
+- **An edited item of a list without a key restates its secrets.** Once a
+  value of it is changed it equals no stored item, and each secret in it must
+  be written in full; so must those of an item that is new. The lists of the
+  device settings that hold secrets and have no key are the SNMP v3 users, the
+  keys of the NTP server, the subinterfaces of a routed interface and the
+  sites of a segment's cloud security service, and the rows of a ref (under
+  the `refs` of a device settings row, where each ref row's `data` is a
+  secret).
+- **A keyed item that is given what pairs another stored item is that other
+  item.** That is the other's key in a list with no alt key, and the other's
+  alt key in a list with one. A save pairs the two, so a mask in the item
+  takes the other item's secret. Write the secret in full when you give an
+  item a key, or an alt key, that another item had.
+- **A keyed list whose stored keys repeat is matched as a list without a key
+  is, all of it.** Its keys do not tell its items apart, so an edited item of
+  it restates its secrets even when its own key is unique.
+- **A mask written where the dump had none** follows the same rules: under a
+  field the stored model lacks it is refused, and in an item of a list without
+  a key it takes the secret of the stored item that the item then equals.
+- **The text `"***"` cannot be set as a secret through a named document**: at
+  a secret it is always the mask. Assign it to the model instead. A stored
+  secret that is itself the text `"***"` comes back as that text, like any
+  other stored value.
+- **Only a field the models mark is a secret.** The same text anywhere else is
+  data and is validated as given. A secret under a key the models do not know
+  is not masked by `named_dump` either: inside a field typed `dict[str, Any]`,
+  in the `refs` of a QoS row, in the data of a generic module (see "Scope and
+  data handling").
+
+### What a document holds
+
+- A document of either pair holds only what the models declare. A key of a
+  module's data that the models do not know is in neither dump, and a default
+  the VCO did not send is in both. So a row rebuilt from a dump is not the row
+  as read: its `raw_data` is the dump's, and a save of it would drop the keys
+  the models do not know.
+  Keep the JSON rows, or `module.raw_data`, where the row as read matters (see
+  "What a save writes").
+- A named document is JSON. `named_validate` and `vco_document` read a mapping
+  as an object and a tuple as a list, and raise `TypeError` for anything else
+  JSON does not have (a set, a `UUID`, a model, `MISSING`, a key that is not
+  text), with the place and the type and no value: an attribute name or a mask
+  inside such a value would not be found, and would reach the VCO as given.
+  Write a `UUID` or a date as its text and a model as its `named_dump()`.
+- A document that does not validate raises `NamedDocumentError` of kind
+  `invalid_value`. Its message lists each place by attribute names with what
+  is wrong there (`segments[#0].bgp.neighbors[#0].neighbor_as: Input should be
+  a valid string`), and no value. No pydantic `ValidationError` is chained to
+  it: that error keeps its input, which by then holds the stored secrets.
+- A named dump keeps the VCO's keys where the models do not say what a key
+  is: for the keys of a map, which are data; under a key no model declares
+  (inside a field typed `dict[str, Any]`, say), with all below it; and below
+  a field whose model is declared behind a type alias, in a tuple of a fixed
+  length, or in a list or a map inside another. No model of a module's data
+  has a field of that last sort; the ones that do are requests and results of
+  the edge, metrics and monitoring calls (their filters, their sort order,
+  their time series, an edge's `ha`) and the `modules` of a configuration.
+  `named_validate` leaves the same keys as they are, so the two still agree.
+- A whole configuration (`EdgeConfiguration`, `EnterpriseConfigurationProfile`)
+  is one of those: its `named_dump()` holds each row of `modules` as
+  `model_dump` writes it, in the VCO's keys and with the secrets complete.
+  Dump the row you mean to show (`module.named_dump()`), or its data.
+
 ## What a save writes
 
 A save sends each changed module's `data` as it was read, with only your
@@ -1144,7 +1296,9 @@ firewall: update
   is a removal and an addition at that name (see "The patch format").
 - A cache of loaded modules must keep the JSON rows or `module.raw_data`. A
   `model_validate(module.model_dump())` round trip loses the raw snapshot, and
-  with it the "as read" guarantee above.
+  with it the "as read" guarantee above. So does a row read back from its
+  `named_dump()`: a document of either form holds only what the models declare
+  (see "Dumps").
 
 ## The effective view
 
@@ -2151,7 +2305,8 @@ Known limits:
   neither module data nor the changes it reports, only their number per module
   (it still holds the validators' messages). A response that fails to parse
   raises pydantic's `ValidationError` without the input in its text;
-  `error.errors()` still has it. Nothing else is hidden. A secret is printed
+  `error.errors()` still has it. A model's `named_dump()` shows the same mask
+  by the same marks (see "Dumps"). Nothing else is hidden. A secret is printed
   as it is in two places: under a key the models do not know, which includes
   everything inside a field typed `dict[str, Any]` (`EdgeZscaler.deployment`,
   a WAN link's `private_network`), and in the data of a module whose data is
