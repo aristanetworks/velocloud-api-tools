@@ -1463,6 +1463,153 @@ async def test_a_restore_that_fails_names_the_backup_and_never_the_data(
     assert json.loads(backup.read_text())["data"] == original
 
 
+def as_pytest_reports(failed: pytest.ExceptionInfo[BaseException]) -> str:
+    """The report pytest writes for a failure the suite worded itself.
+
+    A failure raised with ``pytrace=False`` is reported as the text of each
+    exception of its chain, and ``redact_report`` leaves such a report as it
+    is: an exception chained to a worded failure is printed with its own text.
+    """
+    return str(failed.getrepr(style="value"))
+
+
+def lab_error() -> VcoOperationError:
+    """An error of a read, as a test's body ends with one: its text names the lab."""
+    error = VcoOperationError("getConfiguration", "secret-lab-name cannot be read")
+    error.__cause__ = ValueError("secret-lab-name in the answer")
+    return error
+
+
+BODY_FAILURES: list[tuple[Callable[[], BaseException], str]] = [
+    (
+        lab_error,
+        (
+            "the test had failed before that (VcoOperationError in "
+            "getConfiguration: no error code)"
+        ),
+    ),
+    (lambda: KeyError("secret-lab-name"), "the test had failed before that (KeyError)"),
+    (
+        lambda: pytest.fail.Exception("a message the test wrote", pytrace=False),
+        "the test had failed before that (a message the test wrote)",
+    ),
+    (
+        lambda: pytest.skip.Exception("no rule to copy"),
+        "the test had skipped before that (no rule to copy)",
+    ),
+]
+"""How a test's body ends, and what a failed restore after it says of that."""
+
+
+@pytest.mark.parametrize(
+    ("ending", "said"), BODY_FAILURES, ids=["an error", "a raw error", "fail", "skip"]
+)
+async def test_a_restore_that_fails_after_its_test_failed_reports_both_failures(
+    ending: Callable[[], BaseException],
+    said: str,
+    backups: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The restore's failure, then the body's as ``failure_text`` gives it.
+
+    Nothing else of the chain is reported: not the text of the body's
+    exception, nor of an exception it was raised from.
+    """
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            fake.data(2)["serviceRateLimit"]["value"] = 9  # another writer's change
+            raise ending()
+    (backup,) = backups.iterdir()
+    report = as_pytest_reports(caught)
+    assert "secret-lab-name" not in report
+    assert report == (
+        "restore: the QOS module changed outside this run after its last write "
+        "(~ serviceRateLimit.value); it was left as it is, with this run's "
+        "changes; check who else changed the QOS module, and put the original "
+        f"back by hand if it is wanted; {said}; the original QOS module is saved "
+        f"at {backup}"
+    )
+
+
+async def test_a_restore_with_no_backup_that_fails_after_its_test_failed_reports_both(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An edge with no module of its own: the module the test added stays."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
+        async with live.restoring(site) as original:
+            assert original is None
+            await live.insert_module(site, copy.deepcopy(QOS), None)
+            fake.delete_answer = {"rows": 0}  # the restore's delete deletes nothing
+            raise lab_error()
+    assert as_pytest_reports(caught) == (
+        "restore: the QOS module the test added is still there; the test had "
+        "failed before that (VcoOperationError in getConfiguration: no error code)"
+    )
+
+
+async def test_a_restore_that_fails_alone_reports_as_it_did_and_no_text_of_its_error(
+    backups: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The error of the restore's own write is named by its class alone."""
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+
+    def fails(method: str) -> None:
+        if method == "configuration/updateConfigurationModule":
+            raise httpx.ConnectError("secret-lab-name did not answer")
+
+    with pytest.raises(pytest.fail.Exception) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            fake.before = fails
+    (backup,) = backups.iterdir()
+    assert as_pytest_reports(caught) == (
+        f"ConnectError; the original QOS module is saved at {backup}"
+    )
+
+
+async def test_a_restore_with_no_backup_that_fails_alone_ends_with_its_own_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing to add to it: the report is made of the error, as of any other."""
+    fake = replaceable_lab()
+    lab = await opened(fake, monkeypatch)
+    site = lab.edge_site(lab.layouts[2], Name.QOS)
+    with pytest.raises(VcoOperationError) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
+        async with live.restoring(site) as original:
+            assert original is None
+            await live.insert_module(site, copy.deepcopy(QOS), None)
+            fake.refused_methods = {"configuration/deleteConfigurationModule"}
+    assert live.failure_text(caught.value) == (
+        "DataRefusedError in configuration/deleteConfigurationModule: "
+        "DS00000001 lan.networks"
+    )
+
+
+async def test_a_test_that_fails_alone_ends_with_its_own_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The restore worked: the body's error leaves the block as it was raised."""
+    fake = lab_fake()
+    lab = await opened(fake, monkeypatch)
+    site = lab.profile_site(20, Name.QOS)
+    error = KeyError("secret-lab-name")
+    with pytest.raises(KeyError) as caught:  # noqa: PT012  # restoring raises as it exits, so the block holds the run it restores
+        async with live.restoring(site):
+            await raise_limit(site, 2)
+            raise error
+    assert caught.value is error
+    assert fake.data(2) == QOS
+
+
 async def test_a_refused_delete_and_a_refused_effective_read_carry_codes_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

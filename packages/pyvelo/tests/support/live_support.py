@@ -10,7 +10,10 @@ in the root ``pyproject.toml``. It is test support and no part of the library.
 A failed test reports what ``failure_text`` makes of its exception and where
 it was raised, never the exception's own text: that quotes names and values
 of the lab. ``check`` and ``pytest.fail`` word a failure for the report as it
-is; a ``LiveSuiteError`` carries a message that is safe to show.
+is; a ``LiveSuiteError`` carries a message that is safe to show. A restore
+that fails after its test failed is one worded failure that says both, the
+test's error as ``failure_text`` gives it, with no exception chained to it
+(``restoring``): a chained exception would be reported with its own text.
 
 Running the live suite
 ----------------------
@@ -2207,12 +2210,31 @@ def interrupts_held() -> Generator[None]:
             signal.raise_signal(signal.SIGINT)
 
 
+def _ended_with(error: BaseException) -> str:
+    """How a test's writes ended, for the failure of the restore after them to say.
+
+    As ``failure_text`` gives the error, or in the words of a failure or a
+    skip the suite worded itself; never the error's own text.
+    """
+    if isinstance(error, pytest.skip.Exception):
+        return f"the test had skipped before that ({error})"
+    return f"the test had failed before that ({failure_text(error) or error})"
+
+
 @asynccontextmanager
 async def restoring(site: Site) -> AsyncGenerator[Original | None]:
     """Run a test's writes to *site*'s module and, however they end, undo them.
 
     The block is open for the client's write guard from the backup until the
     restore is done, so that the restore's own writes are covered.
+
+    A restore that fails is one worded failure with no exception chained to
+    it: a chained exception is reported with its own text, which can quote the
+    lab. It names the restore's error by its class, where the suite did not
+    word it, then says how the test's own writes had ended, where they ended
+    with an error (``_ended_with``), then where the original is saved. Only
+    this block knows which exception is the test's own: the chain a report is
+    made from holds the restore's errors and the causes of the test's as well.
     """
     run = run_of(site.client)
     require_writes(run)
@@ -2223,26 +2245,35 @@ async def restoring(site: Site) -> AsyncGenerator[Original | None]:
         run.seen[original.module_id] = copy.deepcopy(original.data)
     entry: Block = (site, original.module_id if original is not None else None)
     run.open.append(entry)
+    ended: BaseException | None = None
     try:
         try:
             yield original
+        except BaseException as error:
+            ended = error
+            raise
         finally:
             with interrupts_held():
                 try:
                     await restore(site, original)
                 except (Exception, pytest.fail.Exception) as exc:
-                    if backup is None:
+                    if backup is None and ended is None:
                         raise
-                    what = (
+                    said = [
                         str(exc)
                         if isinstance(exc, (pytest.fail.Exception, LiveSuiteError))
                         else type(exc).__name__
-                    )
-                    pytest.fail(
-                        f"{what}; the original {site.name.value} module is saved "
-                        f"at {backup}",
-                        pytrace=False,
-                    )
+                    ]
+                    if ended is not None:
+                        said.append(_ended_with(ended))
+                    if backup is not None:
+                        said.append(
+                            f"the original {site.name.value} module is saved at "
+                            f"{backup}"
+                        )
+                    raise pytest.fail.Exception(
+                        "; ".join(said), pytrace=False
+                    ) from None
                 else:
                     if backup is not None:
                         backup.unlink(missing_ok=True)
