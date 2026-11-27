@@ -1004,31 +1004,6 @@ class UnflaggedInUse:
             for key, item in self.steps
         )
 
-    @property
-    def field(self) -> str:
-        """The wire key of the field."""
-        return self.steps[-1][0]
-
-    def inherit_patch(self) -> dict[str, object]:
-        """The patch that makes the field inherit.
-
-        For example, ``{"segments": {"Voice": {"cosMapping": null}}}``.
-        """
-        patch: object = None
-        for key, item in reversed(self.steps):
-            patch = {key: patch if item is None else {item: patch}}
-        return cast("dict[str, object]", patch)
-
-    def keep_patch(self) -> dict[str, object]:
-        """The patch that keeps the stored object and turns its flag on.
-
-        For example, ``{"segments": {"Voice": {"cosMapping": {}}}}``.
-        """
-        patch: object = {}
-        for key, item in reversed(self.steps):
-            patch = {key: patch if item is None else {item: patch}}
-        return cast("dict[str, object]", patch)
-
 
 def _wire_value(model: type[VcoModel], item: object, path: str) -> object:
     """The value at the python-name *path* below *item*; None when a step is absent.
