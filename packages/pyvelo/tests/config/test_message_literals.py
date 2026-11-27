@@ -2,17 +2,19 @@
 
 ``test_shown_paths_round_trip`` reads the texts pyvelo writes over its fixtures.
 This reads the source instead: every string literal that reads as prose, in
-every module outside the models and the schemas, with the same matcher. It
+every module of the source (the models and the schemas too), with the same
+matcher. It
 finds a wire key, or the VCO's name of a module, in a message no fixture
 renders.
 
 What it reads: each string literal and each f-string that holds a space, with
-every formatted value of an f-string taken out. Literals the parser joins
-(``"a " "b"``) are one text.
+every formatted value of an f-string taken out; a literal inside a formatted
+value is a text of its own. Literals the parser joins (``"a " "b"``) are one
+text.
 
 What it does not read: a docstring; a literal with no space, which is data (a
 ref name, a key used to read raw JSON, a method name); a type given to
-``cast`` as text; the modules under ``client/models`` and ``client/schemas``.
+``cast`` as text.
 
 What it cannot see: a name a message takes from a variable or a call at run
 time (the alias of a field, a key of a dump), and a message built from words
@@ -31,10 +33,15 @@ from test_shown_paths_round_trip import (  # pyright: ignore[reportImplicitRelat
 )
 
 SOURCE: Final = pathlib.Path(pyvelo.__file__).parent
-NOT_READ: Final = ("client/models/", "client/schemas/")
-"""The model and schema modules: their literals are aliases and wire values."""
-
 ALLOWED: Final[dict[tuple[str, str], str]] = {
+    (
+        "client/schemas/metrics.py",
+        "Sort by a display column",
+    ): "a field's description, which lists the VCO's own sort values",
+    (
+        "client/schemas/monitoring.py",
+        "WAN link internal identifier",
+    ): "WAN is the word here, not the module",
     (
         "client/exceptions.py",
         "configuration/updateConfigurationModule with",
@@ -82,7 +89,7 @@ def literals(source: str) -> Iterator[tuple[int, str]]:
         elif _is_cast(node) and isinstance(node, ast.Call) and node.args:
             skipped.add(id(node.args[0]))
         elif isinstance(node, ast.JoinedStr):
-            skipped.update(id(part) for part in ast.walk(node) if part is not node)
+            skipped.update(id(part) for part in node.values)
     for node in ast.walk(tree):
         if id(node) in skipped:
             continue
@@ -103,11 +110,7 @@ def literals(source: str) -> Iterator[tuple[int, str]]:
 
 def modules() -> list[pathlib.Path]:
     """The source modules whose literals are read."""
-    return [
-        path
-        for path in sorted(SOURCE.rglob("*.py"))
-        if not path.relative_to(SOURCE).as_posix().startswith(NOT_READ)
-    ]
+    return sorted(SOURCE.rglob("*.py"))
 
 
 def test_the_literals_read_are_the_prose_of_a_module() -> None:
@@ -131,6 +134,25 @@ def refuse(name: str, key: str) -> None:
         'as in {"logicalId": 1}, and leave \x00Id alone'
     )
     assert vco_names(text, forbidden_names()) == ["segmentId", "logicalId"]
+
+
+def test_a_literal_inside_a_formatted_value_is_read_on_its_own() -> None:
+    source = """
+def refuse(names: list[str]) -> None:
+    raise ValueError(f"{'/'.join(names) or 'no segmentId at all'}: give one of them")
+"""
+    assert [text for _, text in literals(source)] == [
+        "\x00: give one of them",
+        "no segmentId at all",
+    ]
+
+
+def test_the_models_and_the_schemas_are_read() -> None:
+    read = modules()
+    assert SOURCE / "client" / "schemas" / "edge.py" in read
+    assert (
+        SOURCE / "client" / "models" / "configuration" / "profile_segments.py" in read
+    )
 
 
 def test_no_message_literal_holds_a_vco_module_name_or_a_wire_key() -> None:

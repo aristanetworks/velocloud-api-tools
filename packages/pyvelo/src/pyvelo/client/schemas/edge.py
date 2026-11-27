@@ -504,7 +504,7 @@ class GetEdgeConfigurationModules(VcoModel):
     @model_validator(mode="after")
     def _require_edge_identifier(self) -> Self:
         if self.edge_id is MISSING and self.edge_logical_id is MISSING:
-            raise ValueError("edgeId or edgeLogicalId is required")
+            raise ValueError("edge_id or edge_logical_id is required")
         return self
 
 
