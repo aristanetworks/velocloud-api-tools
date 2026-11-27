@@ -1,69 +1,88 @@
 """Domain-specific validators for firewall and QOS modules."""
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic import MISSING
 
-from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.enums.configuration import (
+    ConfigurationModuleName,
+    python_module_name,
+)
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
-from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
-from pyvelo.client.models.configuration.qos.segment import QosSegment
 from pyvelo.config.validation import (
     ConfigStateLike,
     ValidationError,
     ValidationResult,
     validator,
 )
+from pyvelo.core import named_path
+from pyvelo.core.rebase import Path, PathPart
 
 if TYPE_CHECKING:
     from pyvelo.client.schemas.configuration import (
         EdgeConfiguration,
         EnterpriseConfigurationProfile,
+        FirewallConfigurationModule,
+        QosConfigurationModule,
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _RulePlace:
+    """A rule of a segment of a module's ``segments``.
+
+    ``segment`` is the segment's position in ``segments``, ``rules`` the name
+    of the segment's list of rules, and ``rule`` the rule's position in it.
+    """
+
+    module: "FirewallConfigurationModule[Any] | QosConfigurationModule[Any]"
+    segment: int
+    rules: str
+    rule: int
+
+
 def _rule_finding(
-    rule: tuple[str, object, str, int],
+    place: _RulePlace,
     message: str,
     code: str,
     *,
+    severity: str,
     field: str | None = None,
-    severity: str = "error",
 ) -> ValidationError:
-    """Report a finding at a rule of a segment.
-
-    *rule* is the rule's module, its segment's name, the rule list's name and
-    the rule's index in it; *field* is the rule's field the finding is at, if
-    it is at one.
-    """
-    module, segment_name, list_name, index = rule
-    path = f"{module}.segments[{segment_name}].{list_name}[{index}]"
+    """Report a finding at the rule at *place*, or at its *field* if one is given."""
+    parts: list[PathPart] = ["segments", place.segment, place.rules, place.rule]
     if field is not None:
-        path = f"{path}.{field}"
-    return ValidationError(path=path, message=message, code=code, severity=severity)
+        parts.append(field)
+    return ValidationError(
+        path=named_path(Path(parts), place.module.data),
+        message=message,
+        code=code,
+        severity=severity,
+        module=python_module_name(place.module.name),
+    )
 
 
 def _duplicate_names(
-    module: str,
+    module: "FirewallConfigurationModule[Any] | QosConfigurationModule[Any]",
     list_name: str,
-    segments: Iterable[FirewallSegment[Any] | QosSegment[Any]],
 ) -> Iterator[ValidationError]:
     """Report each rule whose name an earlier rule of its segment has."""
-    for seg in segments:
-        seg_name = seg.segment.name
+    for position, seg in enumerate(module.data.segments):
         seen_names: dict[str, int] = {}
         if hasattr(seg, list_name):
             for i, rule in enumerate(getattr(seg, list_name)):
                 name = getattr(rule, "name", None)
                 if name and name in seen_names:
                     yield _rule_finding(
-                        (module, seg_name, list_name, i),
+                        _RulePlace(module, position, list_name, i),
                         message=(
                             f"Duplicate rule name {name!r} "
                             f"(first at index {seen_names[name]})"
                         ),
                         code="duplicate_rule_name",
+                        severity="error",
                     )
                 elif name:
                     seen_names[name] = i
@@ -89,15 +108,13 @@ def validate_rule_names_unique(state: ConfigStateLike) -> ValidationResult:
     if config.has_module(ConfigurationModuleName.FIREWALL):
         fw = config.firewall
         if hasattr(fw.data, "segments"):
-            result.errors.extend(
-                _duplicate_names("firewall", "outbound", fw.data.segments)
-            )
+            result.errors.extend(_duplicate_names(fw, "outbound"))
 
     # Check QOS rule names
     if config.has_module(ConfigurationModuleName.QOS):
         qos = config.qos
         if hasattr(qos.data, "segments"):
-            result.errors.extend(_duplicate_names("QOS", "rules", qos.data.segments))
+            result.errors.extend(_duplicate_names(qos, "rules"))
 
     return result
 
@@ -116,11 +133,10 @@ def _known_interfaces(data: DeviceSettingsData) -> set[str]:
 
 
 def _unknown_interfaces(
-    segments: Iterable[FirewallSegment[Any]], known: set[str]
+    module: "FirewallConfigurationModule[Any]", known: set[str]
 ) -> Iterator[ValidationError]:
     """Report each interface a firewall rule names that is not in *known*."""
-    for seg in segments:
-        seg_name = seg.segment.name
+    for position, seg in enumerate(module.data.segments):
         if hasattr(seg, "outbound"):
             for i, rule in enumerate(seg.outbound):
                 match = getattr(rule, "match", None)
@@ -140,10 +156,10 @@ def _unknown_interfaces(
                 ]:
                     if iface_name and iface_name not in known:
                         yield _rule_finding(
-                            ("firewall", seg_name, "outbound", i),
+                            _RulePlace(module, position, "outbound", i),
                             message=(
                                 f"Rule references {direction} interface "
-                                f"{iface_name!r} not found in deviceSettings"
+                                f"{iface_name!r} not found in device_settings"
                             ),
                             code="unknown_interface_ref",
                             field="match",
@@ -182,6 +198,6 @@ def validate_interface_firewall_consistency(state: ConfigStateLike) -> Validatio
     # Check firewall rule references
     fw = config.firewall
     if hasattr(fw.data, "segments"):
-        result.warnings.extend(_unknown_interfaces(fw.data.segments, known_interfaces))
+        result.warnings.extend(_unknown_interfaces(fw, known_interfaces))
 
     return result

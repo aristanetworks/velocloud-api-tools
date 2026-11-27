@@ -3103,12 +3103,13 @@ def _versioned(
 
 
 def _validation_error_to_warning(err: ValidatorError) -> ValidationWarning:
-    """Convert a ValidationError to a ValidationWarning for load-time use."""
+    """A validator's finding as a warning of a load or a save, at its place."""
     return ValidationWarning(
         path=err.path,
         message=err.message,
         code=err.code,
         severity=err.severity,
+        module=err.module,
     )
 
 

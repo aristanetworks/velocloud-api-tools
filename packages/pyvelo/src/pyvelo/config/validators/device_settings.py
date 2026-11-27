@@ -5,15 +5,23 @@ from typing import TYPE_CHECKING
 
 from pydantic import MISSING
 
-from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.enums.configuration import (
+    ConfigurationModuleName,
+    python_module_name,
+)
 from pyvelo.config.validation import (
     ConfigStateLike,
     ValidationError,
     ValidationResult,
     validator,
 )
+from pyvelo.core import named_path
+from pyvelo.core.rebase import Path
 
 if TYPE_CHECKING:
+    from pyvelo.client.models.configuration.device_settings.root import (
+        DeviceSettingsData,
+    )
     from pyvelo.client.schemas.configuration import (
         EdgeConfiguration,
         EnterpriseConfigurationProfile,
@@ -30,6 +38,17 @@ def _parse_network(
         return ipaddress.IPv4Network(f"{cidr_ip}/{cidr_prefix}", strict=False)
     except (ValueError, TypeError):
         return None
+
+
+def _segment_shown(data: "DeviceSettingsData", segment_id: int) -> str:
+    """The segment *segment_id* as a message names it.
+
+    By its name where *data* has a segment of that ID, else by the ID.
+    """
+    for seg in data.segments:
+        if seg.segment.segment_id == segment_id:
+            return repr(seg.segment.name)
+    return str(segment_id)
 
 
 @validator(module=ConfigurationModuleName.DEVICE_SETTINGS, phases=["read", "write"])
@@ -72,12 +91,14 @@ def validate_no_overlapping_subnets(state: ConfigStateLike) -> ValidationResult:
                 if net_j.overlaps(net_k):
                     result.errors.append(
                         ValidationError(
-                            path="deviceSettings.lan.networks",
+                            path=named_path(Path(("lan", "networks")), ds.data),
                             message=(
                                 f"Network {name_j!r} ({net_j}) overlaps with "
-                                f"{name_k!r} ({net_k}) in segment {seg_id}"
+                                f"{name_k!r} ({net_k}) in segment "
+                                f"{_segment_shown(ds.data, seg_id)}"
                             ),
                             code="overlapping_subnets",
+                            module=python_module_name(ds.name),
                         )
                     )
 

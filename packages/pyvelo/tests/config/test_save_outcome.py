@@ -21,6 +21,8 @@ from pyvelo.config.validation import (
     ValidatorRegistry,
     validator,
 )
+from pyvelo.config.validation_warning import ValidationWarning
+from pyvelo.core.rebase import Path
 from pyvelo.testing import MockVcoClient
 from test_concurrent_use import (  # pyright: ignore[reportImplicitRelativeImport]
     Gated,
@@ -43,7 +45,11 @@ def failing_registry() -> ValidatorRegistry:
     @validator(modules=[], phases=["write"], registry=registry)
     def always_fail(_state: ConfigStateLike) -> ValidationResult:
         return ValidationResult(
-            errors=[ValidationError(path="firewall", message="blocked", code="test")]
+            errors=[
+                ValidationError(
+                    path=Path(()), message="blocked", code="test", module="firewall"
+                )
+            ]
         )
 
     assert always_fail.phases == ["write"]
@@ -59,12 +65,59 @@ async def test_a_save_blocked_by_a_validator_raises_and_sends_nothing() -> None:
     with pytest.raises(SaveValidationError) as exc:
         _ = await pipeline.save(state)
 
-    assert [(e.path, e.message, e.code) for e in exc.value.errors] == [
-        ("firewall", "blocked", "test")
+    assert [(e.module, e.path, e.message, e.code) for e in exc.value.errors] == [
+        ("firewall", "", "blocked", "test")
     ]
     assert client.store.requests == []
     assert changed(state) == ["firewall"]
     assert save_progress(exc.value) is None  # nothing was sent
+
+
+def test_a_save_blocked_by_a_validator_names_the_module_and_the_place() -> None:
+    error = SaveValidationError(
+        [
+            ValidationError(
+                path=Path(("lan", "networks")),
+                message="m",
+                code="c",
+                module="device_settings",
+            )
+        ]
+    )
+    assert "device_settings lan.networks: m" in str(error)
+
+
+async def test_a_warning_of_a_save_names_the_module_and_the_place() -> None:
+    registry = ValidatorRegistry()
+    found = ValidationError(
+        path=Path(("firewall_enabled",)),
+        message="look again",
+        code="test",
+        severity="warning",
+        module="firewall",
+    )
+
+    @validator(modules=[], phases=["write"], registry=registry)
+    def always_warn(_state: ConfigStateLike) -> ValidationResult:
+        return ValidationResult(warnings=[found])
+
+    assert always_warn.phases == ["write"]
+    state = make_state()
+    pipeline = ConfigPipeline(
+        MockVcoClient.for_state(state), validator_registry=registry
+    )
+    state.edge.firewall.firewall_enabled.set_local(False)
+
+    result = await pipeline.save(state, dry_run=True)
+
+    assert [w for w in result.warnings if w.code == "test"] == [
+        ValidationWarning(
+            path=Path(("firewall_enabled",)),
+            message="look again",
+            code="test",
+            module="firewall",
+        )
+    ]
 
 
 async def test_a_dry_run_returns_the_validator_errors_with_what_it_would_write() -> (

@@ -4,10 +4,12 @@ These are override_consistency, key_uniqueness, required_fields.
 """
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import cast
 
 from pydantic import MISSING, BaseModel
 
+from pyvelo.client.enums.configuration import python_module_name
 from pyvelo.client.schemas.configuration import (
     EdgeConfiguration,
     EnterpriseConfigurationProfile,
@@ -18,9 +20,16 @@ from pyvelo.config.validation import (
     ValidationResult,
     validator,
 )
-from pyvelo.core import Kind, field_kind, unwrap
+from pyvelo.core import Kind, VcoModel, field_kind, named_path, unwrap
 from pyvelo.core.fields import KeySpec, get_key_spec
-from pyvelo.core.rebase import KeyForm, item_key, item_key_text, key_form
+from pyvelo.core.rebase import (
+    KeyForm,
+    Path,
+    PathPart,
+    item_key,
+    item_key_text,
+    key_form,
+)
 
 
 def _get_target_config(
@@ -69,12 +78,37 @@ def override_consistency(state: ConfigStateLike) -> ValidationResult:
     return result
 
 
+@dataclass(frozen=True, slots=True)
+class _Module:
+    """The module a walk is in: its name as the VCO has it, and its data."""
+
+    name: str
+    data: VcoModel
+
+
+type _Parts = tuple[PathPart, ...]
+"""A place in a module's data: attribute names and list positions."""
+
+
+def _finding(
+    module: _Module, parts: _Parts, message: str, code: str
+) -> ValidationError:
+    """A finding at *parts* of *module*, named as pyvelo shows a place."""
+    return ValidationError(
+        path=named_path(Path(parts), module.data),
+        message=message,
+        code=code,
+        module=python_module_name(module.name),
+    )
+
+
 def _duplicate_keys(
-    items: list[object], spec: KeySpec, path: str
+    items: list[object], spec: KeySpec, module: _Module, parts: _Parts
 ) -> Iterator[ValidationError]:
     """Report each item of a KeyField list whose key an earlier item has.
 
-    Keys compare in string form, part by part (24 and "24" are one).
+    *parts* is the list's place in *module*. Keys compare in string form, part
+    by part (24 and "24" are one).
     """
     seen_keys: dict[KeyForm, int] = {}
     for i, item in enumerate(items):
@@ -82,46 +116,48 @@ def _duplicate_keys(
         if form is not None:
             if form in seen_keys:
                 key_str = item_key_text(item, spec.paths)
-                yield ValidationError(
-                    path=f"{path}[{i}]",
-                    message=(
-                        f"Duplicate key {key_str!r} (first at index {seen_keys[form]})"
-                    ),
-                    code="key_uniqueness",
+                yield _finding(
+                    module,
+                    (*parts, i),
+                    f"Duplicate key {key_str!r} (first at index {seen_keys[form]})",
+                    "key_uniqueness",
                 )
             else:
                 seen_keys[form] = i
 
 
-def _models_below(value: object, path: str) -> Iterator[tuple[BaseModel, str]]:
-    """The models a field's value holds, each with its path.
+def _models_below(value: object, parts: _Parts) -> Iterator[tuple[BaseModel, _Parts]]:
+    """The models a field's value holds, each with its place.
 
     That is the value itself if it is a model, or the items of a list that are.
     """
     if isinstance(value, BaseModel):
-        yield value, path
+        yield value, parts
     elif isinstance(value, list):
         for i, item in enumerate(value):
             if isinstance(item, BaseModel):
-                yield item, f"{path}[{i}]"
+                yield item, (*parts, i)
 
 
 def _walk_model_for_keys(
     model: BaseModel,
-    path: str,
+    module: _Module,
+    parts: _Parts,
     errors: list[ValidationError],
 ) -> None:
     """Check that KeyField lists have unique keys (every part, for a composite key)."""
     for field_name, field_info in type(model).model_fields.items():
         spec = get_key_spec(field_info)
         val = unwrap(getattr(model, field_name))
-        field_path = f"{path}.{field_name}"
+        field_parts = (*parts, field_name)
 
         if spec is not None and isinstance(val, list):
-            errors.extend(_duplicate_keys(cast("list[object]", val), spec, field_path))
+            errors.extend(
+                _duplicate_keys(cast("list[object]", val), spec, module, field_parts)
+            )
 
-        for child, child_path in _models_below(val, field_path):
-            _walk_model_for_keys(child, child_path, errors)
+        for child, child_parts in _models_below(val, field_parts):
+            _walk_model_for_keys(child, module, child_parts, errors)
 
 
 @validator(modules=[], phases=["read", "write"])
@@ -134,20 +170,23 @@ def key_uniqueness(state: ConfigStateLike) -> ValidationResult:
         return result
 
     for mod in config.modules:
-        if isinstance(mod.data, BaseModel):
-            _walk_model_for_keys(mod.data, mod.name, result.errors)
+        if isinstance(mod.data, VcoModel):
+            module = _Module(mod.name, mod.data)
+            _walk_model_for_keys(mod.data, module, (), result.errors)
 
     return result
 
 
 def _walk_model_for_required(
     model: BaseModel,
-    path: str,
+    module: _Module,
+    parts: _Parts,
     errors: list[ValidationError],
 ) -> None:
     """Check that required fields (no default) have values."""
     for field_name, field_info in type(model).model_fields.items():
         val = unwrap(getattr(model, field_name))
+        field_parts = (*parts, field_name)
 
         # An inheritable field is never required: the edge stores nothing where
         # it inherits, and the profile reads its display default.
@@ -157,18 +196,13 @@ def _walk_model_for_required(
             and field_kind(field_info).kind is not Kind.INHERITABLE
         ):
             errors.append(
-                ValidationError(
-                    path=f"{path}.{field_name}",
-                    message="Required field is MISSING",
-                    code="required_fields",
+                _finding(
+                    module, field_parts, "Required field is MISSING", "required_fields"
                 )
             )
-        elif isinstance(val, BaseModel):
-            _walk_model_for_required(val, f"{path}.{field_name}", errors)
-        elif isinstance(val, list):
-            for i, item in enumerate(val):
-                if isinstance(item, BaseModel):
-                    _walk_model_for_required(item, f"{path}.{field_name}[{i}]", errors)
+        else:
+            for child, child_parts in _models_below(val, field_parts):
+                _walk_model_for_required(child, module, child_parts, errors)
 
 
 @validator(modules=[], phases=["write"])
@@ -181,7 +215,8 @@ def required_fields(state: ConfigStateLike) -> ValidationResult:
         return result
 
     for mod in config.modules:
-        if isinstance(mod.data, BaseModel):
-            _walk_model_for_required(mod.data, mod.name, result.errors)
+        if isinstance(mod.data, VcoModel):
+            module = _Module(mod.name, mod.data)
+            _walk_model_for_required(mod.data, module, (), result.errors)
 
     return result

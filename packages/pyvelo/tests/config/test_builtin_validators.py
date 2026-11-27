@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Annotated, TypedDict, cast
 
 from layered_models import Mod, Rule, mod_json
-from pydantic import Field
+from pydantic import MISSING, Field
 from pyvelo.client.enums.configuration import ConfigurationModuleType
 from pyvelo.client.enums.enterprise import NetworkSegmentType
 from pyvelo.client.models.configuration.common import SegmentMetadata
@@ -49,6 +49,8 @@ from pyvelo.core import (
     VcoModel,
 )
 from pyvelo.core.layers import L
+from pyvelo.core.rebase import Path
+from shown_paths import reached, round_trips
 
 
 class _ModuleKwargs(TypedDict):
@@ -220,8 +222,12 @@ def test_key_uniqueness_reads_composite_keys() -> None:
     result = key_uniqueness.validate(
         _routes_state(_static_route("192.168.1.1"), _static_route("192.168.1.1"))
     )
-    assert [(e.path, e.code) for e in result.errors] == [
-        ("deviceSettings.segments[0].routes.static[1]", "key_uniqueness")
+    assert [(e.module, e.path, e.code) for e in result.errors] == [
+        (
+            "device_settings",
+            'segments["Global Segment"].routes.static[#1]',
+            "key_uniqueness",
+        )
     ]
     assert '"10.0.0.0","24","192.168.1.1",GE3' in result.errors[0].message
 
@@ -229,6 +235,17 @@ def test_key_uniqueness_reads_composite_keys() -> None:
         _routes_state(_static_route("192.168.1.1"), _static_route("192.168.1.2"))
     )
     assert result.is_valid
+
+
+def test_a_duplicate_key_is_at_the_second_item_of_its_module() -> None:
+    state = _routes_state(_static_route("192.168.1.1"), _static_route("192.168.1.1"))
+    (finding,) = key_uniqueness.validate(state).errors
+    assert finding.module == "device_settings"
+    data = state.profile_config.device_settings.data
+    routes = data.segments[0].routes
+    assert routes is not MISSING
+    assert reached(data, finding.path) is routes.static[1]
+    round_trips(finding.path)
 
 
 class _PrefixRoute(VcoModel):
@@ -248,7 +265,7 @@ def test_key_uniqueness_compares_key_parts_in_string_form() -> None:
     assert (type(as_number.prefix), type(as_text.prefix)) == (int, str)
     data = _PrefixRoutes(routes=[as_number, as_text])
     result = key_uniqueness.validate(_layered_state(data, "profile"))
-    assert [e.path for e in result.errors] == ["held.routes[1]"]
+    assert [(e.module, e.path) for e in result.errors] == [("held", "routes[#1]")]
 
 
 class TestOverrideConsistency:
@@ -338,5 +355,25 @@ class TestLayeredModels:
             ("profile", _Held[Profile].model_validate(raw)),
         ):
             result = key_uniqueness.validate(_layered_state(data, target))
-            assert [error.path for error in result.errors] == ["held.holder.rules[1]"]
+            assert [(error.module, error.path) for error in result.errors] == [
+                ("held", "holder.rules[#1]")
+            ]
             assert result.errors[0].code == "key_uniqueness"
+
+
+class _Needed(VcoModel):
+    value: str | MISSING
+
+
+class _Needs(VcoModel):
+    items: list[_Needed] = Field(default_factory=list)
+
+
+def test_a_missing_required_field_is_at_the_field_of_its_module() -> None:
+    data = _Needs(items=[_Needed(value="set"), _Needed(value=MISSING)])
+    (finding,) = required_fields.validate(_layered_state(data, "profile")).errors
+    assert finding.module == "held"
+    assert finding.path.parts[-1] == "value"
+    assert reached(data, Path(finding.path.parts[:-1])) is data.items[1]
+    assert reached(data, finding.path) is MISSING
+    round_trips(finding.path)

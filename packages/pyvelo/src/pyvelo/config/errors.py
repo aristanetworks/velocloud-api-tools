@@ -65,9 +65,18 @@ class SaveValidationError(IntentError):
     """
 
     def __init__(self, errors: list[ValidationError]) -> None:
-        """Keep *errors* and name each one's path and message in the message."""
+        """Keep *errors* and name each one's place and message in the message.
+
+        A finding with a module is named as a reference's text names a place
+        (``device_settings lan.networks: ...``), one with none by its path.
+        """
         self.errors: list[ValidationError] = list(errors)
-        summary = ", ".join(f"{e.path}: {e.message}" for e in self.errors)
+        summary = ", ".join(
+            f"{e.path}: {e.message}"
+            if e.module is None
+            else f"{e.module} {e.path}: {e.message}"
+            for e in self.errors
+        )
         super().__init__(
             f"save blocked by {len(self.errors)} validator error(s): {summary}. "
             "Fix them and save again; a save with dry_run=True returns the "

@@ -55,10 +55,6 @@ ALLOWED: Final[dict[tuple[str, str], str]] = {
         "`deviceSettings:segment` row",
     ): "a ref name, which is data and is never renamed",
     (
-        "config/validators/firewall.py",
-        "not found in deviceSettings",
-    ): "a validator's finding, which keeps its text",
-    (
         "core/effective.py",
         "Annotated[list[Seg[L]]",
     ): "a line of Python for the author of a model: `list[` is a type there",

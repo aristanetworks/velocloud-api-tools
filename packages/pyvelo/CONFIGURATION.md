@@ -98,6 +98,16 @@ segment resolver, and load it.
 Validators are registered explicitly: pass a `ValidatorRegistry` as
 `validator_registry=` to `ConfigPipeline` or `build_default_pipeline`, or
 register on `pipeline.validators`.
+A finding (`ValidationError`) names its module by its Python name in `module`,
+and its place in that module's data in `path`, a `Path` as a plan shows one:
+the built-in validators report a duplicate QoS rule name with `module`
+`business_policy` and a `path` such as `segments[Guest].rules[#1]`. A validator
+of your own passes the same: `module=` the Python name, or nothing for a
+finding in no module, and `path=Path(("lan", "networks"))` (from
+`pyvelo.core`), or `Path(())` for the whole module. `SaveValidationError`
+names each one as `business_policy segments[Guest].rules[#1]: <message>`, and
+a warning of a load or a save (`state.load_warnings`, `SaveResult.warnings`)
+has the finding's `module` and `path`.
 
 `save(state, unconditional=True)` writes a module that has no `version`. A
 module has none when it was built by hand, or read through a request that left
@@ -2096,7 +2106,8 @@ Known limits:
   reports no violations. Other registered validators cover specific structural
   or domain checks; they do not guarantee that every patch is valid for a live VCO.
   A validator reports on the whole state, so an error in a module the save does
-  not write blocks the save too; the path of the error names the module.
+  not write blocks the save too; the error names the module (`module`) and
+  the place (`path`).
 - `ConfigState`, the module objects, field changes (`get_field_changes`),
   validation messages, and the change objects of a plan, of a `SaveResult` and
   of a write error (`before`, `after`, `as_read`, `intended`, `stored`) hold
