@@ -115,7 +115,17 @@ back. A delete that was sent and not answered as done (an error, a row count
 of 0, or no answer) leaves the module there or gone, and the restore puts
 either right. The run holds such a delete until a restore sees the module
 still there, and no longer than its block: a later block that finds the
-module gone did not delete it. Where the module is not as the Orchestrator
+module gone did not delete it. An insert that was sent and got no answer (it
+raised, and not with a refusal the Orchestrator states) may have stored a
+module whose ID the run was never told. The restore of the block it was sent
+in takes a module it finds there for that one, and undoes it as a module this
+run inserted, where the module was not there when the block opened and its ID
+is higher than every module ID the run has found, inserted or deleted: the
+Orchestrator numbers modules upward. That module counts as this run's own on
+one assumption, which the suite cannot check: that no other writer inserted
+that module on the same marked edge while the block was open. The run holds
+such an insert no longer than its block either: a module a later block finds
+is left alone. Where the module is not as the Orchestrator
 last answered this run
 (another writer changed it, added it or removed it), the restore leaves it
 alone and fails the test. On an Orchestrator that answers a write with a row
@@ -1082,6 +1092,14 @@ class LiveRun:
     closes: past it, a module that is gone was not deleted by anything this run
     still has open.
     """
+    unanswered_inserts: list[Block] = field(default_factory=list[Block])
+    """The block of each insert that was sent and got no answer saying what it
+    stored: the innermost one that was open on its configuration and module
+    name. Such an insert may have left a module whose ID this run was never
+    told, and the restore of that block takes one for this run's own
+    (``take_unanswered``). An entry goes when its block closes: a module that a
+    later block finds there is not known to be this run's.
+    """
     sent: int = 0
     """How many portal calls that are not reads the client has begun: a write that
     raised with this unchanged sent nothing.
@@ -1129,12 +1147,59 @@ class LiveRun:
             None,
         )
 
+    def _known(self) -> set[int]:
+        """The ID of every module this run has found, inserted or deleted.
+
+        ``seen`` holds each module a block found or inserted, from then until
+        an answer says that it is deleted, and ``deleted`` holds it from then
+        on: neither forgets a module when its block closes.
+        """
+        found = {module for _, module in self.open if module is not None}
+        return found.union(self.seen, self.inserted, self.deleted, self.maybe_deleted)
+
+    def take_unanswered(
+        self, configuration_id: int, name: str, module_id: int, beside: Iterable[int]
+    ) -> None:
+        """Take module *module_id*, which a restore found, as one this run inserted.
+
+        Only where an insert that got no answer can have left it. The module
+        is that configuration's *name* module, and *beside* holds the IDs of
+        the modules of that name that were there when the block opened and
+        that the block did not find (``Original.beside``). It is taken where:
+
+        * the innermost open block on that module, which is the one being
+          restored, sent an insert that got no answer (``unanswered_inserts``); and
+        * its ID is greater than every module ID this run has found, inserted
+          or deleted, and than each of *beside*. The Orchestrator numbers
+          modules upward, so a module that insert stored is newer than all of
+          them; one that is not was there before, or is known already.
+
+        The module is then one the block inserted, and what it holds is not
+        known (``inserted``, ``seen``). Otherwise no record changes.
+
+        Nothing here tells that module from one another writer inserted there
+        while the block was open: that no one did is taken on trust.
+        """
+        block = self.block_for(configuration_id, name)
+        if block is None or not any(
+            block is other for other in self.unanswered_inserts
+        ):
+            return
+        if any(module_id <= known for known in self._known().union(beside)):
+            return
+        self.inserted[module_id] = block
+        self.seen[module_id] = _UNKNOWN
+
     def close(self, block: Block) -> None:
         """Take *block* out of the open ones.
 
-        And with it the modules it inserted and the ones it may have deleted.
+        And with it the modules it inserted, the ones it may have deleted, and
+        its inserts that got no answer.
         """
         self.open[:] = [b for b in self.open if b is not block]
+        self.unanswered_inserts[:] = [
+            b for b in self.unanswered_inserts if b is not block
+        ]
         for record in (self.inserted, self.maybe_deleted):
             for module_id in [m for m, b in record.items() if b is block]:
                 del record[module_id]
@@ -1479,17 +1544,31 @@ def _guarded_insert(
     configuration and name), and ``run.seen`` holds it as the Orchestrator
     answered, or ``_UNKNOWN``. A refusal of the Orchestrator carries its codes
     alone.
+
+    An insert that raises once it was sent, a cancellation or an interrupt
+    included, may be stored all the same, and no answer gave the ID of what it
+    made: the run keeps the block it was sent in
+    (``run.unanswered_inserts``), and the restore of that block looks for the
+    module. An insert that is known to have stored nothing
+    (``_stored_nothing``: never sent, or refused with errors the Orchestrator
+    states) leaves no record.
     """
 
     async def guarded_insert(
         request: InsertConfigurationModule, *, level: ConfigContext | None = None
     ) -> InsertConfigurationModuleResult | AnyStoredModule:
         run.check_replace(request.configuration_id, request.name, "an insert")
+        sent = run.sent
         try:
             with _sends("configuration/insertConfigurationModule"):
                 inserted = await insert(request, level=level)
-        except VcoOperationError as exc:
-            raise _redacted(exc) from None
+        except BaseException as exc:
+            block = run.block_for(request.configuration_id, request.name)
+            if block is not None and not _stored_nothing(exc, unsent=run.sent == sent):
+                run.unanswered_inserts.append(block)
+            if isinstance(exc, VcoOperationError):
+                raise _redacted(exc) from None
+            raise
         block = run.block_for(request.configuration_id, request.name)
         if block is not None:
             run.inserted[inserted.id_] = block
@@ -1848,6 +1927,12 @@ class Original:
     data: object
     refs: object
     """Only to insert the module again if a test deleted it."""
+    beside: frozenset[int] = frozenset()
+    """The IDs of the other modules of the name, where the read that found this
+    one listed more than one. The block deals with this one alone; the others
+    are kept so that a restore does not take one of them for a module this run
+    inserted (``LiveRun.take_unanswered``).
+    """
 
 
 SEGMENT_DRIFT_KEY = "routeMapsVersion"
@@ -2048,14 +2133,20 @@ _ = atexit.register(report_leftover_backups, _print_to_stderr)
 
 
 async def capture(site: Site) -> Original | None:
-    """The raw data and refs of the module now, or None if the layer lacks it."""
-    module = await site.read()
-    if module is None:
+    """The raw data and refs of the module now, or None if the layer lacks it.
+
+    The module is the first of the name that the layer lists, as ``Site.read``
+    gives it; the IDs of any others of the name go with it (``Original.beside``).
+    """
+    held = [module for module in await site.layer() if module.name == site.name]
+    if not held:
         return None
+    module = held[0]
     return Original(
         module_id=module.id_,
         data=copy.deepcopy(module.raw_data),
         refs=copy.deepcopy(module.raw_refs),
+        beside=frozenset(other.id_ for other in held[1:]),
     )
 
 
@@ -2112,6 +2203,25 @@ async def restore(site: Site, original: Original | None) -> None:
     it wrote gets the original data. Where the module is not as the
     Orchestrator last answered this run (another writer changed, added or
     removed it) nothing is written and the test fails.
+
+    One module that the run was never told of counts as its own: the module
+    that an insert which got no answer left (``LiveRun.take_unanswered``).
+    Where such an insert was sent in this block, and the module now there was
+    not there when the block opened and has a higher ID than every module this
+    run has found, inserted or deleted, the module is taken for the one that
+    insert stored and undone as a module this run inserted: deleted where the
+    block found none, the original's data written over it where the block
+    found one. That rests on an assumption nothing here can check: that no
+    other writer inserted that module on the same marked edge while the block
+    was open. With no such insert in the block, or with an ID that is not
+    newer, the module is left as it is and the test fails, as for any module
+    of another writer.
+
+    One module of the name is read, and one is undone. If two inserts that got
+    no answer each left a module, the other stays as the test left it: where
+    the block found none, the check that the layer is empty again fails for
+    it; where the block found one, only the module read is checked, as for any
+    second module of a name.
     """
     run = run_of(site.client)
     name = site.name.value
@@ -2119,6 +2229,9 @@ async def restore(site: Site, original: Original | None) -> None:
     if current is not None:
         # It is there: a delete of it that was not answered as done did nothing.
         _ = run.maybe_deleted.pop(current.id_, None)
+        # And it may be what an insert that got no answer left.
+        beside = original.beside if original is not None else frozenset[int]()
+        run.take_unanswered(site.configuration_id, name, current.id_, beside)
     if original is None:
         if current is None:
             return
