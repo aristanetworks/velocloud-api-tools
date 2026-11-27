@@ -592,18 +592,27 @@ class ModulePlan:
         lines.extend(f"  warning: {warning.message}" for warning in self.warnings)
         return "\n".join(lines)
 
-    def named_owner(self, owner: Path) -> Path:
-        """*owner*, a provider's field (``RefChange.owner``), as ``named`` shows it.
+    def named_owner(self, owner: Path, *, added: bool) -> Path:
+        """*owner*, a provider's field (``RefChange.owner``), as pyvelo shows it.
 
-        The field is named in the data as planned where this plan adds a row
-        for it (it is set, or changed to another provider), and in the data as
-        read where the plan only removes its row. A ref line and the
-        provider's field change both show it by this, so they show one path.
+        *added* says which data *owner* is a path of, which is the
+        ``RefChange.added`` of the change it comes from. The owner of a row
+        the plan adds names each item by its key in the data as planned, and
+        is shown as that data names it (``named_path``). It is not given to
+        ``named``, which reads an item's key in the data as read: where a
+        segment takes the name another had as read, that would be the other
+        segment. The owner of a row the plan removes names each item by its
+        key as read, and is shown as ``named`` shows what a change removes:
+        in the data as planned where the item is still there, so a provider
+        changed in a renamed segment has both its rows at one path, and in
+        the data as read where the item is gone.
+
+        A ref line and the provider's field change both show the field by
+        this, so they show one path.
         """
-        added = any(
-            change.added and change.owner == owner for change in self.ref_changes
-        )
-        return self.named(owner, removed=not added)
+        if not added:
+            return self.named(owner, removed=True)
+        return named_path(owner, self.model if self.planned is None else self.planned)
 
     def ref_lines(self) -> list[str]:
         """The lines of ``render`` about the refs sent.
@@ -619,7 +628,7 @@ class ModulePlan:
         for change in self.ref_changes:
             sign = "+" if change.added else "-"
             if change.owner is not None:
-                row = str(self.named_owner(change.owner))
+                row = str(self.named_owner(change.owner, added=change.added))
             else:
                 place = f" ({change.segment})" if change.segment is not None else ""
                 row = f"{change.name}{place}"

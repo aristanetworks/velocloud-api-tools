@@ -229,9 +229,28 @@ async def test_a_patch_naming_the_cos_mapping_flag_is_refused() -> None:
     message = str(caught.value)
     assert "set_local()" in message
     assert "inherit()" in message
-    assert 'send {"segments": {"Global Segment": {"cosMapping": null}}}' in message
+    assert 'send {"segments": {"Global Segment": {"cos_mapping": null}}}' in message
     assert state.plan().changed == ()
     assert state.plan().render() == before
+
+
+async def test_the_patch_the_flag_refusal_shows_inherits_the_cos_mapping() -> None:
+    local = cos_mapping(realtime_high=50)
+    state = state_of(
+        {"segments": [{"segment": desc(3, "Voice"), "rules": [], "cosMapping": local}]}
+    )
+    assert state.edge.qos.segments[0].cos_mapping.is_local is True
+    with pytest.raises(PatchError, match="'override' is the flag") as caught:
+        await apply(
+            state, {"segments": {"Voice": {"cos_mapping": {"override": False}}}}
+        )
+    (inherit,) = shown_patches(str(caught.value))
+    assert inherit == {"segments": {"Voice": {"cos_mapping": None}}}
+    await apply(state, inherit)
+    assert state.edge.qos.segments[0].cos_mapping.is_local is False
+    assert "cosMapping" not in qos_plan(state).data["segments"][0]
+    voice = state.effective.qos.get_segment(name="Voice")
+    assert voice.cos_mapping.origin is Origin.PROFILE
 
 
 async def test_an_edge_patch_of_defaults_is_refused() -> None:

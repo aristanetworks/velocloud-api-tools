@@ -108,7 +108,13 @@ class PlanWarning:
     """
 
     code: str
-    """``"ref_without_owner"``, ``"owner_without_ref"`` or ``"several_refs"``."""
+    """What disagrees.
+
+    Of the refs as read (``derive_refs``): ``"ref_without_owner"``,
+    ``"owner_without_ref"`` or ``"several_refs"``. Of the data
+    (``plan_module``): ``"flag_off_in_use"``, ``"defaults_not_template"`` or
+    ``"defaults_repaired"``.
+    """
     path: Path
     """Where it is, as pyvelo shows a path.
 

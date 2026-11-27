@@ -1732,27 +1732,31 @@ def _check_segment_set(
 
 
 def _provider_changes(module: ModulePlan) -> list[ConfigFieldChange]:
-    """The provider changes of *module*'s plan, one change per owner.
+    """The provider changes of *module*'s plan, one change per provider field.
 
     They are the ref rows of ``RefOnly`` owners.
 
-    The row a change removes is the owner's ``before`` and the row it adds
-    its ``after``, each as the identity's lower-case text. The owner's path
-    is as the plan shows it.
+    The row a change removes is the field's ``before`` and the row it adds
+    its ``after``, each as the identity's lower-case text. A field is told by
+    its path as the plan shows it (``ModulePlan.named_owner``), not by the
+    owner as each row writes it: the row that goes names a renamed segment by
+    its name as read and the row that comes by its new name, and both are
+    the one field, at the path it has in the data as edited.
     """
     before: dict[Path, str] = {}
     after: dict[Path, str] = {}
     for change in module.ref_changes:
         if change.owner is not None:
-            (after if change.added else before)[change.owner] = str(change.value)
+            shown = module.named_owner(change.owner, added=change.added)
+            (after if change.added else before)[shown] = str(change.value)
     return [
         ConfigFieldChange(
             module=python_module_name(module.name),
-            path=module.named_owner(owner),
-            before=before.get(owner),
-            after=after.get(owner),
+            path=shown,
+            before=before.get(shown),
+            after=after.get(shown),
         )
-        for owner in dict.fromkeys([*before, *after])
+        for shown in dict.fromkeys([*before, *after])
     ]
 
 

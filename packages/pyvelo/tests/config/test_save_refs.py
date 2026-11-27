@@ -53,6 +53,10 @@ from refs_helpers import (
     DS_ID,
     PRIMARY,
     QOS_ID,
+    SEG0,
+    SEG0_OBJECT,
+    SEG1,
+    SEG1_OBJECT,
     SEGMENT,
     dns,
     segment_entry,
@@ -60,6 +64,7 @@ from refs_helpers import (
     service_row,
     table_registry,
 )
+from shown_paths import reached
 
 ZERO = str(uuid.UUID(int=0))
 GLOBAL_OBJECT = 1
@@ -517,6 +522,124 @@ async def test_a_providers_ref_line_and_its_field_change_show_one_path() -> None
     (module_plan,) = state.plan().changed
     assert module_plan.ref_lines() == [f"  - refs {cleared.path}: {DNS_A}"]
     assert cleared.path == OWNER
+
+
+async def two_segment_state() -> ConfigState:
+    """A profile whose Guest segment has ``dns-a`` as primary provider.
+
+    Its Global Segment, the first of the two, has a provider stub and no row.
+    """
+    data = {
+        "lan": {"networks": [], "interfaces": []},
+        "segments": [
+            segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True)),
+            segment_entry(1, "Guest", SEG1, dns=dns(primary=True)),
+        ],
+    }
+    refs = {
+        SEGMENT: [
+            segment_row(0, SEG0_OBJECT, SEG0),
+            segment_row(1, SEG1_OBJECT, SEG1),
+        ],
+        PRIMARY: [service_row(PRIMARY, DNS_A, 701, SEG1_OBJECT, SEG1)],
+    }
+    state = ConfigState(
+        edge_config=None,
+        profile_config=EnterpriseConfigurationProfile.model_validate(
+            {
+                "name": "P",
+                "id": CONFIG,
+                "modules": [
+                    make_module_json(
+                        "deviceSettings",
+                        data,
+                        module_id=DS_ID,
+                        configuration_id=CONFIG,
+                        refs=refs,
+                    )
+                ],
+            }
+        ),
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+    state.take_snapshot()
+    state.resolvers = await table_registry(DNS_A_SERVICE, DNS_B_SERVICE)
+    return state
+
+
+def provider_at(state: ConfigState, position: int) -> DnsPrimaryProvider:
+    section = device_settings(state).segments[position].dns
+    assert isinstance(section, SegmentDns)
+    provider = section.primary_provider
+    assert isinstance(provider, DnsPrimaryProvider)
+    return provider
+
+
+def ref_line_path(line: str, sign: str, value: str) -> Path:
+    """The path a provider's ref line of *sign* and *value* shows."""
+    return Path.parse(line.removeprefix(f"  {sign} refs ").removesuffix(f": {value}"))
+
+
+async def test_a_ref_line_names_the_providers_field_where_two_segments_trade_names() -> (  # noqa: E501 (a test's name)
+    None
+):
+    state = await two_segment_state()
+    provider_at(state, 1).service = uuid.UUID(DNS_B)
+    device_settings(state).segments[0].segment.name = "Guest"
+    device_settings(state).segments[1].segment.name = "Global Segment"
+
+    (module_plan,) = state.plan().changed
+    removed, added = module_plan.ref_lines()
+    # The field is the one of the second segment, which is now the Global Segment.
+    field = provider_at(state, 1)
+    added_path = ref_line_path(added, "+", DNS_B)
+    assert reached(device_settings(state), added_path) == uuid.UUID(DNS_B)
+    assert reached(device_settings(state), Path(added_path.parts[:-1])) is field
+    # The row that goes is that field's too: the place is named as it is now.
+    removed_path = ref_line_path(removed, "-", DNS_A)
+    assert removed_path.parts == added_path.parts
+    assert provider_at(await two_segment_state(), 1).service == uuid.UUID(DNS_A)
+
+    providers = [c for c in state.get_field_changes() if c.path.parts[-1] == "service"]
+    assert [(c.path.parts, c.before, c.after) for c in providers] == [
+        (added_path.parts, DNS_A, DNS_B)
+    ]
+
+
+async def test_a_cleared_providers_ref_line_reads_back_in_the_data_as_read() -> None:
+    state = await two_segment_state()
+    provider_at(state, 1).service = None
+
+    (module_plan,) = state.plan().changed
+    (removed,) = module_plan.ref_lines()
+    removed_path = ref_line_path(removed, "-", DNS_A)
+    assert str(removed_path) == "segments[Guest].dns.primary_provider.service"
+    as_read = await two_segment_state()
+    assert reached(device_settings(as_read), removed_path) == uuid.UUID(DNS_A)
+    (cleared,) = state.get_field_changes()
+    assert (cleared.path.parts, cleared.before, cleared.after) == (
+        removed_path.parts,
+        DNS_A,
+        None,
+    )
+
+
+async def test_a_provider_swapped_in_a_renamed_segment_is_one_field_change() -> None:
+    state = await two_segment_state()
+    device_settings(state).segments[1].segment.name = "Lab"
+    provider_at(state, 1).service = uuid.UUID(DNS_B)
+
+    providers = [c for c in state.get_field_changes() if c.path.parts[-1] == "service"]
+    assert [(str(c.path), c.before, c.after) for c in providers] == [
+        ("segments[Lab].dns.primary_provider.service", DNS_A, DNS_B)
+    ]
+    assert reached(device_settings(state), providers[0].path) == uuid.UUID(DNS_B)
+    (module_plan,) = state.plan().changed
+    assert module_plan.ref_lines() == [
+        f"  - refs segments[Lab].dns.primary_provider.service: {DNS_A}",
+        f"  + refs segments[Lab].dns.primary_provider.service: {DNS_B}",
+    ]
 
 
 async def test_a_new_provider_on_a_stub_with_no_ref_lists_the_ref_it_writes() -> None:

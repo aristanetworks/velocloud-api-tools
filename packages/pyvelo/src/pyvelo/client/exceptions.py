@@ -1865,7 +1865,7 @@ class RefsDroppedError(WriteNotAppliedError):
             owner = cast("Path", edit.owner)
             if self.plan is not None:
                 # As the plan's ref line names the field; the patch is that path.
-                owner = self.plan.named_owner(owner)
+                owner = self.plan.named_owner(owner, added=edit.intended is not MISSING)
             if edit.intended is MISSING:
                 lines.append(
                     f"  to clear {owner} again, send the patch "

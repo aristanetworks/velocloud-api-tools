@@ -874,7 +874,7 @@ def _merge_owned(  # noqa: PLR0913, PLR0917 (existing: split it when it next cha
 
 
 def _refuse_flag_key(
-    model: VcoModel,
+    _model: VcoModel,
     name: str,
     field_info: FieldInfo,
     patch: Mapping[object, object],
@@ -888,7 +888,9 @@ def _refuse_flag_key(
     to false would leave a local value stored but not local, and one that set
     it to true would make the profile's value the edge's own without a copy:
     ownership changes by ``null`` and by a value only. *path* is the field's
-    place in the patch, and the message gives the patch that inherits it.
+    place in the patch, and the message gives the patch that inherits it,
+    with the field by its attribute name *name*, as *path* has the fields
+    above it. The model the field is on is not read: its caller passes it.
     """
     encoding = field_kind(field_info).encoding
     if not isinstance(encoding, ByFlag):
@@ -897,7 +899,7 @@ def _refuse_flag_key(
         names = model_type._alias_map()  # pyright: ignore[reportPrivateUsage]
         for key in patch:
             if isinstance(key, str) and names.get(key) == encoding.flag:
-                inherit = json.dumps(_inherit_patch(wire_name(type(model), name), path))
+                inherit = json.dumps(_inherit_patch(name, path))
                 raise PatchError(
                     f"{key!r} is the flag that says whether the edge overrides the "
                     "profile here, and it follows the value, so a patch cannot "

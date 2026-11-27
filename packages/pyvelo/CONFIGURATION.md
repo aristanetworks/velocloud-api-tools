@@ -706,7 +706,9 @@ never the refs. Setting a provider adds the row it goes with and clearing it
 removes the row; `state.plan().render()` lists each by the provider's field, as
 `+ refs <path>: <value>` or `- refs <path>: <value>`
 (`+ refs segments[Guest].dns.primary_provider.service: <service's logical ID>`),
-where the path is the one `get_field_changes()` gives for the provider. A row
+where the path is the one `get_field_changes()` gives for the provider: the
+field's place in the data as you edited it, so under a renamed segment's new
+name. A row
 that goes with a value the data holds (a QoS rule's backhaul hub, a segment) is
 listed by its ref name, as `+ refs <name> (<segment>): <value>` or `- refs
 <name> (<segment>): <value>`, without the segment for a row of the module. A
@@ -721,12 +723,17 @@ What disagrees in the refs as read is a `warning: <message>` line, and the
 write leaves it as it is. `ConfigPlan.warnings` holds the same warnings as
 data, and `save` and `dry_run` copy them to `SaveResult.warnings`. Each has its
 module's python name in `module` and, in `path`, a place within that module's
-data as every path is shown, with no module before it. A provider that has no
-row, or several, is at the provider's field
-(`segments[Guest].dns.primary_provider.service`). A row that nothing in the
-data names has no field: it is at its ref name under `refs`
-(`refs."deviceSettings:css:provider"`), and `segment` holds the name of the
-segment the row is of.
+data as every path is shown, with no module before it. An identity the data
+holds that has no row (`owner_without_ref`: a cloud security provider, a QoS
+rule's backhaul hub) is at the field that holds it
+(`segments[Guest].css.provider.logical_id`). A provider that only its row
+tells (a DNS or authentication provider) and that has several rows for one
+segment (`several_refs`) is at the provider's field
+(`segments[Guest].dns.primary_provider.service`), which shows the first of
+them; with no row such a provider is not set, and that is no warning. A row
+that nothing in the data names (`ref_without_owner`) has no field: it is at its
+ref name under `refs` (`refs."deviceSettings:css:provider"`), and `segment`
+holds the name of the segment the row is of.
 An edge module that stores an object the VCO uses although its flag says it
 inherits (a segment's `cos_mapping` with `override` false: the composer takes a
 present edge object whatever its flag) has a `flag_off_in_use` warning, at the
