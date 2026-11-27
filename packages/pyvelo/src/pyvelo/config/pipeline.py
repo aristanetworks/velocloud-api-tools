@@ -55,6 +55,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
 )
 from pyvelo.client.schemas.edge import (
+    EdgeConfigurationModulesResult,
     GetEdgeConfigurationModules,
     GetEdgeConfigurationStack,
 )
@@ -498,6 +499,17 @@ class _Edit:
                 data, self.nested, self.state.resolvers, self.inherited
             )
         return self.nested
+
+
+@dataclass(frozen=True)
+class _ComparedEdge:
+    """The edge one effective comparison checks, its view, and the VCO's modules."""
+
+    edge_id: int
+    enterprise_id: int | None
+    view: EffectiveView
+    composed: EdgeConfigurationModulesResult
+    """What ``edge/getEdgeConfigurationModules`` answered for the edge."""
 
 
 class ConfigPipeline:
@@ -1765,7 +1777,7 @@ class ConfigPipeline:
                 raise step_error from error
             raise
 
-    async def compare_effective(  # noqa: C901 (existing: split it when it next changes)
+    async def compare_effective(
         self, state: ConfigState, *, modules: Sequence[str] | None = None
     ) -> EffectiveComparison:
         """Check the client's effective view of an edge against the VCO's modules.
@@ -1838,52 +1850,60 @@ class ConfigPipeline:
             ask.enterprise_id = enterprise_id
         composed = await self.client.get_edge_configuration_modules(ask)
 
-        view = EffectiveView(edge_config, fresh)
+        edge = _ComparedEdge(
+            edge_id, enterprise_id, EffectiveView(edge_config, fresh), composed
+        )
         entries: list[EffectiveDifference] = []
         objects: SecurityObjects | None = None
         for name in names:
-            attribute = module_attribute(name)
-            module: object = getattr(composed, attribute, None)
-            data: object = getattr(module, "raw_data", MISSING)
-            if module is None or module is MISSING:
-                said = (
-                    f"answered null for the {name} module"
-                    if module is None
-                    else f"gave no {name} module"
-                )
-                raise ComposedModuleError(
-                    f"edge/getEdgeConfigurationModules {said} of edge {edge_id}. "
-                    "The VCO hides a composition error that way, so there is "
-                    "nothing to compare the view with. Open the edge in the VCO "
-                    "to see why its modules do not compose, or compare the other "
-                    f"modules with modules=[...] (not {name!r})",
-                    module=name,
-                )
-            if not isinstance(data, dict):
-                raise ComposedModuleError(
-                    f"edge/getEdgeConfigurationModules gave the {name} module of "
-                    f"edge {edge_id} no data object, so there is nothing to "
-                    "compare the view with. Read the module with "
-                    "get_edge_configuration_modules to see what the VCO sent",
-                    module=name,
-                )
-            module_view = cast("Layered[Effective]", getattr(view, attribute))
-            if (
-                name == "firewall"
-                and objects is None
-                and rules_naming_a_group(effective_dump(module_view)[0])
-            ):
-                objects = await self._read_security_objects(enterprise_id)
-            entries.extend(
-                compare_module(
-                    name,
-                    module_view,
-                    cast("dict[str, Any]", data),
-                    ignores=EFFECTIVE_IGNORES,
-                    security_objects=objects if name == "firewall" else None,
-                )
-            )
+            found, objects = await self._composed_module(edge, name, objects)
+            entries.extend(found)
         return EffectiveComparison(tuple(entries))
+
+    async def _composed_module(
+        self, edge: _ComparedEdge, name: str, objects: SecurityObjects | None
+    ) -> tuple[list[EffectiveDifference], SecurityObjects | None]:
+        """Compare one module with the VCO's, and pass on the security objects read."""
+        attribute = module_attribute(name)
+        module: object = getattr(edge.composed, attribute, None)
+        data: object = getattr(module, "raw_data", MISSING)
+        if module is None or module is MISSING:
+            said = (
+                f"answered null for the {name} module"
+                if module is None
+                else f"gave no {name} module"
+            )
+            raise ComposedModuleError(
+                f"edge/getEdgeConfigurationModules {said} of edge {edge.edge_id}. "
+                "The VCO hides a composition error that way, so there is "
+                "nothing to compare the view with. Open the edge in the VCO "
+                "to see why its modules do not compose, or compare the other "
+                f"modules with modules=[...] (not {name!r})",
+                module=name,
+            )
+        if not isinstance(data, dict):
+            raise ComposedModuleError(
+                f"edge/getEdgeConfigurationModules gave the {name} module of "
+                f"edge {edge.edge_id} no data object, so there is nothing to "
+                "compare the view with. Read the module with "
+                "get_edge_configuration_modules to see what the VCO sent",
+                module=name,
+            )
+        module_view = cast("Layered[Effective]", getattr(edge.view, attribute))
+        if (
+            name == "firewall"
+            and objects is None
+            and rules_naming_a_group(effective_dump(module_view)[0])
+        ):
+            objects = await self._read_security_objects(edge.enterprise_id)
+        found = compare_module(
+            name,
+            module_view,
+            cast("dict[str, Any]", data),
+            ignores=EFFECTIVE_IGNORES,
+            security_objects=objects if name == "firewall" else None,
+        )
+        return found, objects
 
     async def _read_security_objects(
         self, enterprise_id: int | None
