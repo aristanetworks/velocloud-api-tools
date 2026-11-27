@@ -74,9 +74,11 @@ A test that writes is marked ``live_write``. The client the suite connects
   ``restoring`` block, or to a module no open block found or inserted: the
   suite can only write what it will put back. A delete names its module by ID
   alone, so the block that found or inserted that ID must itself be on an edge
-  marked ``pyvelo-it-replace-modules``. ``delete_again`` sends one more delete,
-  inside such a block, for a module an answer to this run said was deleted: a
-  test records with it what the Orchestrator answers for a module that is gone;
+  marked ``pyvelo-it-replace-modules``, and on a firewall or a QoS module: the
+  suite inserts no other, so it could not put another back. ``delete_again``
+  sends one more delete, inside the block a module was deleted in, for a
+  module an answer to this run said was deleted: a test records with it what
+  the Orchestrator answers for a module that is gone;
 * a role call of a hub unless the test is marked ``live_write``, a
   ``restoring`` block is open on the device settings module of a marked
   profile that the call's ``configurationId`` and ``moduleId`` name, and the
@@ -108,7 +110,10 @@ undoes what this run did and nothing else. A module this run inserted is
 deleted; one it deleted is inserted again; one it wrote gets its original data
 back. A delete that was sent and not answered as done (an error, a row count
 of 0, or no answer) leaves the module there or gone, and the restore puts
-either right. Where the module is not as the Orchestrator last answered this run
+either right. The run holds such a delete until a restore sees the module
+still there, and no longer than its block: a later block that finds the
+module gone did not delete it. Where the module is not as the Orchestrator
+last answered this run
 (another writer changed it, added it or removed it), the restore leaves it
 alone and fails the test. On an Orchestrator that answers a write with a row
 count, what it stored is not known, and the original is written back without
@@ -836,11 +841,19 @@ NOT_COVERED = (
     "`restoring(site)` on the module's own site and write inside it"
 )
 NOT_DELETED_BEFORE = (
-    "a second delete of a module this run did not delete; nothing was sent; "
-    "delete_again only sends the delete of a module again that an answer to "
-    "this run said was deleted, so delete it first with delete_module, inside "
-    "the same restoring block"
+    "a second delete of a module this run did not delete inside a restoring "
+    "block that is still open on its site; nothing was sent; delete_again only "
+    "sends the delete of a module again that an answer to this run said was "
+    "deleted, and only inside the block it was deleted in, so delete it first "
+    "with delete_module and call delete_again inside the same restoring block"
 )
+NOT_INSERTABLE = (
+    "which the suite could not put back, as it inserts only a firewall or a "
+    "QoS module; nothing was sent; delete only a firewall or a QoS module, and "
+    "change any other module with an update inside its restoring block"
+)
+INSERTABLE = (ConfigurationModuleName.FIREWALL, ConfigurationModuleName.QOS)
+"""The modules ``insert_module`` inserts: the only ones the suite deletes."""
 
 
 NO_HUB = (
@@ -1054,11 +1067,17 @@ class LiveRun:
     """The ID of each module a block's test inserted, with the block that was open for
     it.
     """
-    deleted: set[int] = field(default_factory=set[int])
-    """The ID of each module this run deleted: an answer said so."""
-    maybe_deleted: set[int] = field(default_factory=set[int])
+    deleted: dict[int, Block] = field(default_factory=dict[int, Block])
+    """The ID of each module this run deleted (an answer said so), with the block
+    the delete was sent in: the outermost one that was open on the module.
+    ``delete_again`` sends a second delete only while that block is open.
+    """
+    maybe_deleted: dict[int, Block] = field(default_factory=dict[int, Block])
     """The ID of each module this run sent a delete for that no answer said was
-    deleted: it may be there or gone.
+    deleted, with its block as in ``deleted``: it may be there or gone. An ID
+    leaves when a restore sees the module still there, and when that block
+    closes: past it, a module that is gone was not deleted by anything this run
+    still has open.
     """
     sent: int = 0
     """How many portal calls that are not reads the client has begun: a write that
@@ -1083,10 +1102,17 @@ class LiveRun:
         return module_id in found or module_id in self.inserted
 
     def _blocks_of(self, module_id: int) -> list[Block]:
-        """The open blocks that found module *module_id*, or inserted it."""
-        blocks = [block for block in self.open if block[1] == module_id]
+        """The open blocks that found module *module_id*, or inserted it.
+
+        The outermost first.
+        """
         inserter = self.inserted.get(module_id)
-        return blocks if inserter is None else [*blocks, inserter]
+        return [
+            block for block in self.open if block[1] == module_id or block is inserter
+        ]
+
+    def _is_open(self, block: Block) -> bool:
+        return any(block is other for other in self.open)
 
     def block_for(self, configuration_id: int, name: str) -> Block | None:
         """The innermost open block on that configuration's *name* module."""
@@ -1101,10 +1127,14 @@ class LiveRun:
         )
 
     def close(self, block: Block) -> None:
-        """Take *block* out of the open ones, and with it the modules it inserted."""
+        """Take *block* out of the open ones.
+
+        And with it the modules it inserted and the ones it may have deleted.
+        """
         self.open[:] = [b for b in self.open if b is not block]
-        for module_id in [m for m, b in self.inserted.items() if b is block]:
-            del self.inserted[module_id]
+        for record in (self.inserted, self.maybe_deleted):
+            for module_id in [m for m, b in record.items() if b is block]:
+                del record[module_id]
 
     def check_update(self, module_id: int) -> None:
         """Raise ``WritesRefusedError`` unless the update of *module_id* is allowed.
@@ -1178,25 +1208,34 @@ class LiveRun:
         if not self._covers(module_id):
             raise WritesRefusedError(f"a delete of a {name} module {NOT_COVERED}")
 
-    def check_own_delete(self, module_id: int) -> None:
+    def check_own_delete(self, module_id: int) -> Block:
         """Raise ``WritesRefusedError`` unless a block covers the delete of *module_id*.
 
         This is the check of the client's own delete, whose request names the
         module by ID alone. An open block must have found that ID, or have been
         open as this run inserted it, so that the ID is known to be that
-        configuration's module of that name; and that same block's site must
-        be one marked for deleting and inserting modules.
+        configuration's module of that name; the module must be a firewall or
+        a QoS module, the two the suite can insert again; and that same block's
+        site must be one marked for deleting and inserting modules.
+        Returns the outermost such block: the one the run's records keep the
+        delete with.
         """
         self._check_may_write()
         blocks = self._blocks_of(module_id)
         if not blocks:
             raise WritesRefusedError(f"a delete of a module {NOT_COVERED}")
-        if not any(site.replace_modules for site, _ in blocks):
-            name = blocks[0][0].name.value
+        site = blocks[0][0]
+        if site.name not in INSERTABLE:
             raise WritesRefusedError(
-                f"a delete of a {name} module of an edge that is not marked "
-                f"{REPLACE_MODULES_MARK}; nothing was sent; {REPLACE_MODULES_REMEDY}"
+                f"a delete of a {site.name.value} module, {NOT_INSERTABLE}"
             )
+        if not any(block[0].replace_modules for block in blocks):
+            raise WritesRefusedError(
+                f"a delete of a {site.name.value} module of an edge that is not "
+                f"marked {REPLACE_MODULES_MARK}; nothing was sent; "
+                f"{REPLACE_MODULES_REMEDY}"
+            )
+        return blocks[0]
 
     def check_delete_again(
         self, configuration_id: int, name: str, module_id: int
@@ -1205,10 +1244,17 @@ class LiveRun:
 
         A block must be open on that configuration's *name* module, on a site
         marked for deleting and inserting modules, and an answer to this run
-        must have said that the module was deleted.
+        must have said that the module was deleted inside a block on that
+        module that is still open.
         """
         self.check_replace(configuration_id, name, "a delete")
-        if module_id not in self.deleted:
+        block = self.deleted.get(module_id)
+        if (
+            block is None
+            or not self._is_open(block)
+            or block[0].configuration_id != configuration_id
+            or block[0].name.value != name
+        ):
             raise WritesRefusedError(NOT_DELETED_BEFORE)
 
 
@@ -1490,8 +1536,8 @@ def _guarded_delete(
             # An answer already said this module is deleted: whatever this one
             # says, no record changes.
             return await send(request)
-        run.check_own_delete(module_id)
-        unsure, sent = module_id in run.maybe_deleted, run.sent
+        block = run.check_own_delete(module_id)
+        unsure, sent = run.maybe_deleted.get(module_id), run.sent
         # How each case ends. From the send on, the module may be gone whatever
         # happens to the answer, so it is in ``maybe_deleted`` first. An answer
         # that says it is deleted (no error, and a row count that is not 0)
@@ -1502,17 +1548,20 @@ def _guarded_delete(
         # restore that finds the module still there deletes it (one this run
         # inserted) or writes the original over it, and one that finds it gone
         # inserts the original again, or finds the layer as it was. An exception
-        # with nothing sent (``run.sent`` unchanged) takes the mark back.
-        run.maybe_deleted.add(module_id)
+        # with nothing sent (``run.sent`` unchanged) leaves the mark as it was.
+        # The mark goes when a restore sees the module, and with its block.
+        run.maybe_deleted[module_id] = block
         try:
             answer = await send(request)
         except BaseException:
-            if run.sent == sent and not unsure:
-                run.maybe_deleted.discard(module_id)
+            if run.sent == sent:
+                _ = run.maybe_deleted.pop(module_id, None)
+                if unsure is not None:
+                    run.maybe_deleted[module_id] = unsure
             raise
         if not answer.error and answer.rows != 0:
-            run.maybe_deleted.discard(module_id)
-            run.deleted.add(module_id)
+            _ = run.maybe_deleted.pop(module_id, None)
+            run.deleted[module_id] = block
             _ = run.inserted.pop(module_id, None)
             _ = run.seen.pop(module_id, None)
         return answer
@@ -1550,9 +1599,10 @@ def run_of(client: VcoClient) -> LiveRun:
     ``portal_paginated_list``): a read passes, and a write passes only from
     ``update_configuration_module``, ``insert_configuration_module`` or
     ``delete_configuration_module`` (inside a ``restoring`` block, to a module
-    that block covers; a delete only where that block's edge is marked for
-    deleting and inserting modules, or from ``delete_again`` for a module
-    already deleted), or from a role call of the hub ``admit_hub`` admitted
+    that block covers; a delete only of a firewall or a QoS module, where
+    that block's edge is marked for deleting and inserting modules, or from
+    ``delete_again`` for a module deleted in a block that is still open), or
+    from a role call of the hub ``admit_hub`` admitted
     (inside a ``restoring`` block on the device settings module of a marked
     profile). A refused write carries its codes alone: the
     Orchestrator's validation text quotes the names of what it refuses, and a
@@ -1746,8 +1796,9 @@ async def delete_again(site: Site, module_id: int) -> RowsModifiedConfirmation:
     It is for the one test that records what the Orchestrator answers to the
     delete of a module that is gone. A block must be open on *site*, marked
     for deleting and inserting modules, and an answer to this run must have
-    said that *module_id* was deleted (``LiveRun.check_delete_again``): no
-    other delete is sent this way. The answer's ``error`` is the
+    said that *module_id* was deleted inside that block, which is still open
+    (``LiveRun.check_delete_again``): no other delete is sent this way. The
+    answer's ``error`` is the
     Orchestrator's text: read whether it is there, and do not print it.
     """
     run = run_of(site.client)
@@ -2062,6 +2113,9 @@ async def restore(site: Site, original: Original | None) -> None:
     run = run_of(site.client)
     name = site.name.value
     current = await site.read()
+    if current is not None:
+        # It is there: a delete of it that was not answered as done did nothing.
+        _ = run.maybe_deleted.pop(current.id_, None)
     if original is None:
         if current is None:
             return
