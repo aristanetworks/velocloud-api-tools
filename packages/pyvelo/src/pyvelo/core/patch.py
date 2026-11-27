@@ -173,6 +173,20 @@ def selector_of(part: ItemPart) -> str:
     return key_selector(part.value)
 
 
+def patch_key(part: PathPart) -> str:
+    """The key a patch has for the path part *part*.
+
+    A name is its own key: a field, an entry of a map, or a selector written
+    as text after a list. An item part is the selector of its item
+    (``selector_of``). So the parts of a path, each as its patch key, are the
+    keys a patch is nested under to reach the place the path names.
+
+    Like ``selector_of``, this is the text only: in a list where an item has
+    the key ``#n`` as text, the key of the position ``n`` names that item.
+    """
+    return part if isinstance(part, str) else selector_of(part)
+
+
 def _anchor(selector: Selector) -> str | int | float | list[str | int | float]:
     """*selector* as JSON: the parts of a tuple as a list.
 

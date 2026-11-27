@@ -78,6 +78,7 @@ from .patch import (
     is_new,
     key_selector,
     parse_item_op,
+    patch_key,
     position_of,
     selector_of,
 )
@@ -173,6 +174,17 @@ def nest_patch(
     patch}}}``. A path may end anywhere: at a field, at a list, or at an item,
     whose patch is then an item's (a plain object, or an operation).
 
+    A field that takes one model or a list of them (a DNS provider) is walked
+    as what the path names: a name after it that is a field of the one model
+    is that field, by its python name, and any other part is an item of the
+    list. ``merge_patch`` then reads the patch by what the field holds.
+
+    A position part is the key ``"#n"``, which a patch reads first as the key
+    of an item of a keyed list, or as an entry of a list of values, and as a
+    position only when no item has that text. No instance is consulted here,
+    so this cannot be told apart: ``ConfigPipeline.apply``, which holds the
+    data, refuses a position that another item's key or value would take.
+
     ``segments[S]`` at the head of *path* stands for *segment*: the address
     is one path (``address_path``), so ``path="segments[S].a.b"`` and
     ``segment="S", path="a.b"`` give the same patch. Giving the segment both
@@ -214,13 +226,14 @@ def nest_patch(
             )
         return cast("dict[str, object]", checked_patch(patch))
     parts = address_path(segment, path).parts
-    place = _AddressPlace("model", (model,), None)
+    place = _AddressPlace("model", (model,), (), None)
     walked = Path(())
     if segment is not None:
         walked = walked.child("segments")
         place = _AddressPlace(
             "model",
             _segment_item_classes(model, walked),
+            (),
             f"an item of {model.__name__}.segments",
         )
         walked = walked.child(Key(segment))
@@ -233,6 +246,20 @@ def nest_patch(
     if segment is None:
         return cast("dict[str, object]", nested)
     return {"segments": {segment: nested}}
+
+
+def nested_under(address: Path, patch: object) -> object:
+    """*patch* nested under the parts of *address*, with no model consulted.
+
+    Each part is a key (``patch_key``): a name as written, an item part as its
+    selector. It is ``nest_patch`` without the classes, for where there is no
+    data to take them from: a field is not looked up, so it keeps the name it
+    was given, and nothing is checked or copied.
+    """
+    nested = patch
+    for part in reversed(address.parts):
+        nested = {patch_key(part): nested}
+    return nested
 
 
 def address_path(segment: str | None, path: str | Path | None) -> Path:
@@ -324,18 +351,22 @@ def _segment_item_classes(
 class _AddressPlace:
     """Where the walk of an address stands: what its next part is a part of."""
 
-    holds: Literal["model", "items", "untyped", "value"]
+    holds: Literal["model", "items", "either", "untyped", "value"]
     """What is there.
 
     ``"model"`` is a model, and the next part names a field of it. ``"items"``
     is a list or a map of models, and the next part names an item of it.
+    ``"either"`` is a field that takes one model or a list of them: the next
+    part names a field of the model or an item of the list.
     ``"untyped"`` is a list of untyped items and ``"value"`` a plain value: no
     part can follow either.
     """
     classes: tuple[type[VcoModel], ...]
-    """The classes the model there can be, or an item of the list or map there.
+    """The classes the model there can be; empty where no model is."""
+    items: tuple[type[VcoModel], ...]
+    """The classes an item of the list or map there can be.
 
-    Empty where neither is a model.
+    Empty where no list or map is, and where its items are not models.
     """
     name: str | None
     """What is there, as a refusal names it: ``Mid.leaf``, ``an item of Seg.rules``.
@@ -371,21 +402,24 @@ def _address_step(
     """The patch key of *part* at *place*, the place below it and its path.
 
     *walked* is the path of *place*. After a list or a map, any part is the
-    key of an item: an item part as its selector, a name as written. At a
-    model, a name is a field. Everything else raises ``PatchError`` of kind
+    key of an item (``patch_key``): an item part as its selector, a name as
+    written. At a model, a name is a field. After a field that takes one
+    model or a list of them, a name that is a field of the model is that
+    field, and any other part is an item of the list
+    (``_names_an_item``). Everything else raises ``PatchError`` of kind
     ``address``: a name after a value that holds no model at *walked*, since
     it is that value the path cannot go below, and a part that names nothing
     at the path of the part.
     """
     where = walked.child(part)
-    if place.holds == "items":
+    if _names_an_item(place, part):
         below = _AddressPlace(
-            "model" if place.classes else "value",
-            place.classes,
+            "model" if place.items else "value",
+            place.items,
+            (),
             f"an item of {place.name}",
         )
-        key = part if isinstance(part, str) else selector_of(part)
-        return key, below, where
+        return patch_key(part), below, where
     if place.holds == "value" and isinstance(part, str):
         raise PatchError(
             f"{place.name} does not hold a single sub-model, so the path cannot "
@@ -393,10 +427,27 @@ def _address_step(
             walked,
             "address",
         )
-    if place.holds != "model" or not isinstance(part, str):
+    if place.holds not in ("model", "either") or not isinstance(part, str):
         raise PatchError(_names_nothing(place, part), where, "address")
     key = _part_name(place.classes, part, walked)
     return key, _field_place(place.classes, part), walked.child(key)
+
+
+def _names_an_item(place: _AddressPlace, part: PathPart) -> bool:
+    """Whether *part* names an item of a list or a map at *place*.
+
+    After a list or a map, every part does. After a field that takes one
+    model or a list of them, an item part does, and so does a name the one
+    model has no field for: it is a selector written as text, and
+    ``merge_patch``, which holds the value, refuses it where the value is the
+    one model. A name the one model has a field for is that field; to name an
+    item by such a text, write it in brackets.
+    """
+    if place.holds == "items":
+        return True
+    if place.holds != "either":
+        return False
+    return not isinstance(part, str) or not _fields_named(place.classes, part)
 
 
 def _names_nothing(place: _AddressPlace, part: PathPart) -> str:
@@ -420,6 +471,18 @@ def _names_nothing(place: _AddressPlace, part: PathPart) -> str:
     )
 
 
+def _fields_named(
+    classes: tuple[type[VcoModel], ...], part: str
+) -> list[tuple[type[VcoModel], str]]:
+    """Each of *classes* that has a field for *part*, with the field's python name.
+
+    *part* is any key a patch accepts for the field (``python_name``).
+    """
+    return [
+        (cls, name) for cls in classes if (name := python_name(cls, part)) is not None
+    ]
+
+
 def _part_name(classes: tuple[type[VcoModel], ...], part: str, walked: Path) -> str:
     """The patch key of the field that *part* names in *classes*.
 
@@ -437,12 +500,7 @@ def _part_name(classes: tuple[type[VcoModel], ...], part: str, walked: Path) -> 
     for cls in classes:
         for key, name in cls._alias_map().items():  # pyright: ignore[reportPrivateUsage]
             _ = names.setdefault(key, name)
-    found = {
-        name
-        for cls in classes
-        if (name := cls._alias_map().get(part)) is not None  # pyright: ignore[reportPrivateUsage]
-    }
-    if len(found) > 1:
+    if len({name for _, name in _fields_named(classes, part)}) > 1:
         return part
     try:
         return _field_name(names, _variant_names(classes), part, walked)
@@ -460,25 +518,23 @@ def _field_place(classes: tuple[type[VcoModel], ...], part: str) -> _AddressPlac
 
     The classes without a field for *part* drop out; at least one has it. The
     first that has it says what kind of field it is and names it in a
-    refusal. A list or a map is ``"items"``, with the classes of its items in
-    every class that remains; a list of untyped items is ``"untyped"``; any
-    other field is the ``"model"`` it can hold in those classes, or a
-    ``"value"`` when it holds none.
+    refusal. A list of untyped items is ``"untyped"``. A list or a map is
+    ``"items"``, with the classes of its items in every class that remains;
+    one that can hold one model in place of the list is ``"either"``, with the
+    classes of that model too. Any other field is the ``"model"`` it can hold
+    in those classes, or a ``"value"`` when it holds none.
     """
-    having = [
-        (cls, name)
-        for cls in classes
-        if (name := cls._alias_map().get(part)) is not None  # pyright: ignore[reportPrivateUsage]
-    ]
+    having = _fields_named(classes, part)
     first, name = having[0]
     holder = f"{first.__name__}.{name}"
     kind = list_kind(first.model_fields[name])
     if kind == "untyped":
-        return _AddressPlace("untyped", (), holder)
-    below = _sub_model_classes(having, items=kind is not None)
-    if kind is not None:
-        return _AddressPlace("items", below, holder)
-    return _AddressPlace("model" if below else "value", below, holder)
+        return _AddressPlace("untyped", (), (), holder)
+    models = _sub_model_classes(having, items=False)
+    if kind is None:
+        return _AddressPlace("model" if models else "value", models, (), holder)
+    items = _sub_model_classes(having, items=True)
+    return _AddressPlace("either" if models else "items", models, items, holder)
 
 
 def _sub_model_classes(
@@ -487,15 +543,27 @@ def _sub_model_classes(
     """Every model the fields *having* can hold, in order, each once.
 
     *having* is each class with the name of its field. With *items* the
-    fields are lists or maps, and the models are those of their items;
-    without, those the field itself holds. Empty when they hold none.
+    models are those of the items of the list, or of the values of the map,
+    each field can hold; without, those the field holds as it is, not in a
+    list or a map. Empty when they hold none.
     """
-    models = field_models if items else _field_model_types
     return tuple(
         dict.fromkeys(
-            sub for cls, name in having for sub in models(cls.model_fields[name])
+            sub
+            for cls, name in having
+            for sub in _held_models(cls.model_fields[name], items=items)
         )
     )
+
+
+def _held_models(field_info: FieldInfo, *, items: bool) -> tuple[type[VcoModel], ...]:
+    """The models *field_info* holds as it is, or with *items* in its list or map."""
+    if not items:
+        return _field_model_types(field_info)
+    if list_kind(field_info) == "map":
+        return field_models(field_info)
+    item_type = list_item_type(field_info)
+    return () if item_type is None else item_type.variants
 
 
 # ---------------------------------------------------------------------------

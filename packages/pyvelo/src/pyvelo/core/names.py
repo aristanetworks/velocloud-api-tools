@@ -28,7 +28,7 @@ from .identity import ResolverNotLoadedError
 from .layers import field_kind
 from .merge import item_selector, select_items
 from .owned import unwrap
-from .patch import PatchError, selector_of
+from .patch import PatchError, patch_key, selector_of
 from .rebase import ItemPart, Key, KeyValue, Path, PathPart, item_key, node_field
 
 
@@ -292,7 +292,7 @@ def _field(place: _Place, key: object) -> tuple[str, _Place] | None:
 
 def _selector(part: PathPart) -> str:
     """The selector a patch would name the item *part* names by."""
-    return part if isinstance(part, str) else selector_of(part)
+    return patch_key(part)
 
 
 def _position(

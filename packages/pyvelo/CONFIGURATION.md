@@ -567,10 +567,16 @@ written left to right:
 | Part | How it is written | Example |
 |---|---|---|
 | A field | Its Python attribute name. A dot joins it to the part before; the first part has none. | `vpn.backhaul_edges` |
-| An item of a list, by its name, its key or its alt key | The text in brackets after the list. It is bare when it is made of letters, digits, `_` and `-`, is not all digits, and does not read as a JSON number, `true` or `false`; else it is a JSON string. | `segments[Guest]`, `segments["Global Segment"]`, `rules["24"]`, `rules["a]b"]` |
+| An item of a list, by its name, its key or its alt key | The text in brackets after the list. It is bare when it is made of letters, digits, `_` and `-`, does not start with `-`, is not all digits, and does not read as a JSON number, `true` or `false`; else it is a JSON string. | `segments[Guest]`, `segments["Global Segment"]`, `rules["24"]`, `rules["a]b"]` |
 | An item whose key has several parts | The parts, each written by that rule, joined by commas in one pair of brackets. A number part is bare, and a text part that reads as a number is quoted. | `collectors["10.0.0.1",UDP,514]` (a syslog collector, by its `host`, `protocol` and `port`), `static["10.0.0.0","24","192.168.1.1",GE3]` (a static route, whose prefix is text) |
 | An item by its position | `[#n]`, counting from 0 in the list as it was read. This is for an item that no name or key names alone, and for an item of a list without a key. | `rules[#0]` |
 | An entry of a map, and a key the model does not declare | The key as stored, after a dot. It is bare when it is letters, digits and `_` and does not start with a digit; else it is a JSON string. | `refs."deviceSettings:backHaulEdge"` |
+
+Not every path that is shown is a place `apply` takes. A key the model does
+not declare, and a module's `refs` (which are not part of its data), are shown
+in a plan or a warning so that you can find them, and `apply` refuses both as
+fields the model lacks. An entry of a map of models is a place `apply` takes,
+by its key.
 
 A segment is an item of `segments` like any other: `segments[Guest]`. At the
 head of a path it stands for `segment`: `path="segments[Guest].rules"` is
@@ -587,11 +593,18 @@ nested under `P`:
 
 - A field part is the key of that field. `path` also takes any other name a
   patch accepts for a field, such as the VCO's key.
-- The part after a list, or after a map of models, is the selector of one of
-  its items, whatever its kind. `[Web]` is the selector `"Web"`, a key of
-  several parts is `key_selector` of it (`"10.0.0.1,UDP,514"`), `[#0]` is
-  `"#0"`, and a bare name after a list is that text, so `rules.Web` is
-  `rules[Web]`.
+- The part after a list is the selector of one of its items, whatever its
+  kind. `[Web]` is the selector `"Web"`, a key of several parts is
+  `key_selector` of it (`"10.0.0.1,UDP,514"`), `[#0]` is `"#0"`, and a bare
+  name after a list is that text, so `rules.Web` is `rules[Web]`.
+- The part after a map of models is the key of one of its entries, written
+  after a dot or in brackets. A map has no order, so a position names nothing
+  there, and the merge refuses it.
+- After a field that takes one object or a list of them (a segment's DNS
+  providers), a name that is a field of the object is that field
+  (`dns.primary_provider.service`), and an item in brackets is an item of the
+  list (`dns.private_providers[#0]`). The patch is then read by what the field
+  holds.
 - A path may end at a field, at a list or at an item. A body sent to an item
   is that item's own: an object of its fields, or an operation such as
   `{"_op": "delete"}`.
@@ -633,6 +646,20 @@ await pipeline.apply(
     patch={"route_policy": "gateway"},
 )
 ```
+
+`[#n]` in a path is a position: the item at place `n` of the list as it was
+read, which is what pyvelo prints it for. As a patch key it is the text
+`"#n"`, and a patch reads that text first as the key of an item (in a list of
+values, as an entry) and as a position only when no item has it. So in the
+one case where another item of the list has the text `#n` as its key or its
+value, `apply` refuses the position (`PatchError`, kind `address`, at
+`rules[#1]`): the patch would change that other item without a word. The
+message names what to write instead: the selector that names the item alone
+where it has one (its key, its name or its alt key), else a patch of the list
+as a whole (end the path at the list and give the list); and the quoted form
+for the item that has the text. A quoted `rules["#0"]` is a key or a name,
+not a position. It is read as a patch key is: it names the item whose key is
+`#0`, and only where the list has none, the item at position 0.
 
 A path is checked against the models before the patch is merged, and a bad
 one raises `PatchError` of kind `address`. A text that is not a path is

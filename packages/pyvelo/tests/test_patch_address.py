@@ -7,7 +7,8 @@ import pytest
 from pydantic import MISSING, Field
 from pyvelo.client.models.configuration import DeviceSettingsData
 from pyvelo.core import Alias, KeyField, PatchError, VcoModel
-from pyvelo.core.merge import address_path, nest_patch
+from pyvelo.core.merge import address_path, nest_patch, nested_under
+from pyvelo.core.patch import patch_key
 from pyvelo.core.rebase import Key, Path
 
 
@@ -537,3 +538,98 @@ def test_an_address_that_cannot_be_read_is_refused_as_nest_patch_refuses_it(
         _ = nest_patch(Outer, 1, segment="S", path=path)
     assert by_address.value.kind == "address"
     assert str(by_address.value) == str(by_nest.value)
+
+
+# --- a field that takes one model or a list of them --------------------------
+
+
+class _Depth(VcoModel):
+    depth_value: int = 0
+
+
+class _One(VcoModel):
+    p_value: Annotated[int, Alias("pv")] = 0
+    inner: _Depth = Field(default_factory=_Depth)
+
+
+class _OneOrMany(VcoModel):
+    one_or_many: _One | list[_One] = Field(default_factory=list)
+
+
+def test_a_name_after_one_model_or_a_list_is_a_field_of_the_model() -> None:
+    assert nest_patch(_OneOrMany, 3, path="one_or_many.inner.depthValue") == {
+        "one_or_many": {"inner": {"depth_value": 3}}
+    }
+    assert nest_patch(_OneOrMany, 3, path="one_or_many.pv") == {
+        "one_or_many": {"p_value": 3}
+    }
+
+
+def test_an_item_part_after_one_model_or_a_list_is_an_item_of_the_list() -> None:
+    assert nest_patch(_OneOrMany, 3, path="one_or_many[#0].inner.depthValue") == {
+        "one_or_many": {"#0": {"inner": {"depth_value": 3}}}
+    }
+    assert nest_patch(_OneOrMany, 3, path="one_or_many[#1].pv") == {
+        "one_or_many": {"#1": {"p_value": 3}}
+    }
+
+
+def test_a_name_the_one_model_lacks_is_left_to_the_merge_which_holds_the_value() -> (
+    None
+):
+    nested = nest_patch(_OneOrMany, {}, path="one_or_many.nope")
+    assert nested == {"one_or_many": {"nope": {}}}
+    one = _OneOrMany(one_or_many=_One())
+    with pytest.raises(PatchError, match="_One has no field 'nope'") as exc:
+        _ = one.merge_patch(nested)
+    assert exc.value.kind == "unknown_field"
+    many = _OneOrMany(one_or_many=[_One()])
+    with pytest.raises(PatchError, match="'nope' is not a position") as exc:
+        _ = many.merge_patch(nested)
+    assert exc.value.kind == "selector"
+    # Below it the walk goes on over the items of the list.
+    with pytest.raises(PatchError, match="_One has no field 'deeper'") as exc:
+        _ = nest_patch(_OneOrMany, 1, path="one_or_many.nope.deeper")
+    assert (exc.value.kind, exc.value.path) == ("address", "one_or_many.nope.deeper")
+
+
+def test_a_path_reaches_the_one_model_or_the_item_the_field_holds() -> None:
+    one = _OneOrMany(one_or_many=_One())
+    _ = one.merge_patch(nest_patch(_OneOrMany, 3, path="one_or_many.inner.depthValue"))
+    assert isinstance(one.one_or_many, _One)
+    assert one.one_or_many.inner.depth_value == 3
+    many = _OneOrMany(one_or_many=[_One(), _One()])
+    _ = many.merge_patch(
+        nest_patch(_OneOrMany, 4, path="one_or_many[#1].inner.depthValue")
+    )
+    assert isinstance(many.one_or_many, list)
+    assert [item.inner.depth_value for item in many.one_or_many] == [0, 4]
+
+
+def test_a_provider_given_as_one_object_or_as_a_list_is_addressed_as_either() -> None:
+    by_field = nest_patch(
+        DeviceSettingsData, None, segment="S", path="dns.primaryProvider.service"
+    )
+    assert by_field == {
+        "segments": {"S": {"dns": {"primary_provider": {"service": None}}}}
+    }
+    by_item = nest_patch(
+        DeviceSettingsData, {}, segment="S", path="dns.private_providers[#0]"
+    )
+    assert by_item == {"segments": {"S": {"dns": {"private_providers": {"#0": {}}}}}}
+
+
+# --- the patch key of a part, and a patch nested with no class ---------------
+
+
+def test_the_patch_key_of_a_part_is_its_name_or_its_selector() -> None:
+    assert patch_key("rules") == "rules"
+    assert patch_key(Key("Web")) == "Web"
+    assert patch_key(Key(("10.0.0.1", "UDP", 514))) == "10.0.0.1,UDP,514"
+    assert patch_key(3) == "#3"
+
+
+def test_a_patch_is_nested_under_an_address_with_no_class() -> None:
+    address = Path.parse("segments[S].dhGroup[#0]")
+    assert nested_under(address, 1) == {"segments": {"S": {"dhGroup": {"#0": 1}}}}
+    assert nested_under(Path(()), {"a": 1}) == {"a": 1}

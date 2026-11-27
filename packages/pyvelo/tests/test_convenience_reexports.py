@@ -56,6 +56,7 @@ class TestPatchToolReexports:
             "nest_patch": merge,
             "address_path": merge,
             "position_of": patch,
+            "patch_key": patch,
             "Path": rebase,
             "Key": rebase,
             "key_text": rebase,

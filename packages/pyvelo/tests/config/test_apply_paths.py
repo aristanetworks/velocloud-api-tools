@@ -9,16 +9,20 @@ from typing import Annotated, Any
 
 import pytest
 from hub_state import rule_uses_hub
+from profile_state import profile_state
 from pydantic import Field
 from pyvelo.client.models.configuration.profile_segments import segment_template
 from pyvelo.client.schemas.configuration import EnterpriseConfigurationProfile
 from pyvelo.config import ConfigPipeline, ConfigState, PatchError
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.core import KeyField, VcoModel, add, address_path, named_path
+from pyvelo.core.base import is_list
 from pyvelo.core.layers import Profile
 from pyvelo.core.merge import nest_patch
 from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import make_firewall_module, make_firewall_segment
+from segment_helpers import GLOBAL, ds_entry, firewall_entry, qos_entry
+from segment_helpers import GUEST as GUEST_SEGMENT
 from shown_paths import reached, round_trips
 
 apply = ConfigPipeline(client=None).apply
@@ -288,6 +292,218 @@ async def test_a_composite_key_path_reaches_its_item() -> None:
     assert reached(data, Path.parse(other)) == 0
 
 
+# --- a position part, where the text ``#n`` is also a key or a value ---------
+
+TWIN = "f6f6f6f6-f6f6-4f6f-8f6f-f6f6f6f6f6f6"
+DNS_SERVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"
+ADDRESSES = 'segments[Guest].dns.local_dns["a.example"].ipv4_address'
+
+
+async def _twins(first: str, second: str = "dup") -> ConfigState:
+    """Guest has a rule and a local DNS address *first*, then two nothing tells apart.
+
+    The rules are *first*, *second* and ``dup``, the last two with one
+    logical ID; the addresses of ``a.example`` are *first* and two ``a``. So
+    unless *second* is given, position 1 of each list has no key, name or
+    value of its own. Guest's primary DNS provider is one object, its private
+    providers a list of one.
+    """
+    twin = _rule("dup") | {"ruleLogicalId": TWIN}
+    rules = [_rule(first), twin | {"name": second}, twin]
+    guest = ds_entry(GUEST_SEGMENT)
+    guest["dns"] = {
+        "primaryProvider": {
+            "logicalId": DNS_SERVICE,
+            "ref": "deviceSettings:dns:primaryProvider",
+        },
+        "backupProvider": [],
+        "privateProviders": [{"logicalId": DNS_SERVICE}],
+        "localDNS": [{"fqdn": "a.example", "ipv4Address": [first, "a", "a"]}],
+    }
+    return await profile_state(
+        [ds_entry(GLOBAL), guest],
+        [qos_entry(GLOBAL), qos_entry(GUEST_SEGMENT, rules=rules)],
+        [firewall_entry(GLOBAL), firewall_entry(GUEST_SEGMENT)],
+        segments=(GLOBAL, GUEST_SEGMENT),
+    )
+
+
+async def test_a_position_whose_text_is_the_key_of_another_item_is_refused() -> None:
+    state = await _twins("#1")
+    data = state.profile.qos
+    shown = named_path(Path(("segments", GUEST, "rules", 1, "match")), data)
+    assert shown == "segments[Guest].rules[#1].match"
+    before = data.model_dump()
+    with pytest.raises(PatchError) as error:
+        _ = await apply(
+            state,
+            module="business_policy",
+            path=str(shown),
+            patch={"destination_port_low": 443},
+        )
+    assert (error.value.kind, error.value.path) == (
+        "address",
+        "segments[Guest].rules[#1]",
+    )
+    assert error.value.message == (
+        "[#1] is position 1 of QosSegment[Profile].rules, but as a patch key "
+        "the text '#1' is read first as the key of an item, and the list has "
+        "that key at position 0: the patch would go there, not to position 1, "
+        "without a word. Nothing names the item at position 1 alone, so change "
+        "it in a patch of the whole list: end the path at rules and give the "
+        "list as the patch. To reach the item whose key is '#1', write it in "
+        'quotes: rules["#1"]'
+    )
+    assert data.model_dump() == before
+    assert state.get_field_changes() == []
+
+
+async def test_a_position_whose_text_is_the_value_of_another_entry_is_refused() -> None:
+    state = await _twins("#1")
+    data = state.profile.device_settings
+    place = Path(("segments", GUEST, "dns", "local_dns", 0, "ipv4_address", 1))
+    shown = named_path(place, data)
+    assert shown == f"{ADDRESSES}[#1]"
+    with pytest.raises(PatchError) as error:
+        _ = await apply(
+            state, module="device_settings", path=str(shown), patch={"_op": "delete"}
+        )
+    assert (error.value.kind, error.value.path) == ("address", shown)
+    assert error.value.message == (
+        "[#1] is position 1 of LocalDomainItem.ipv4_address, but as a patch key "
+        "the text '#1' is read first as the value of an entry, and the list has "
+        "that value at position 0: the patch would go there, not to position 1, "
+        "without a word. Nothing names the entry at position 1 alone, so change "
+        "it in a patch of the whole list: end the path at ipv4_address and give "
+        "the list as the patch. To reach the entry whose value is '#1', write "
+        'it in quotes: ipv4_address["#1"]'
+    )
+    assert reached(data, Path.parse(ADDRESSES)) == ["#1", "a", "a"]
+    assert state.get_field_changes() == []
+
+
+async def test_a_refused_position_says_how_to_reach_each_item() -> None:
+    state = await _twins("#1", second="Web")
+    with pytest.raises(PatchError) as error:
+        _ = await apply(
+            state,
+            module="business_policy",
+            path="segments[Guest].rules[#1].match",
+            patch={"destination_port_low": 443},
+        )
+    assert (error.value.kind, error.value.path) == (
+        "address",
+        "segments[Guest].rules[#1]",
+    )
+    assert error.value.message.endswith(
+        "without a word. Name the item at position 1 by what names it alone: "
+        "rules[Web]. To reach the item whose key is '#1', write it in quotes: "
+        'rules["#1"]'
+    )
+
+    state = await _twins("#9")
+    with pytest.raises(PatchError) as error:
+        _ = await apply(
+            state, module="business_policy", path="segments[Guest].rules[#9]", patch={}
+        )
+    assert error.value.kind == "address"
+    assert error.value.message.endswith(
+        "the list has that key at position 0: the patch would go there, not to "
+        "position 9, without a word. The list has no position 9. To reach the "
+        "item whose key is '#9', write it in quotes: rules[\"#9\"]"
+    )
+
+
+async def test_a_refused_position_is_at_its_path_with_fields_by_attribute() -> None:
+    state = await _twins("#1")
+    with pytest.raises(PatchError) as error:
+        _ = await apply(
+            state,
+            module="device_settings",
+            path="segments[#1].dns.localDNS[#0].ipv4Address[#1]",
+            patch={"_op": "delete"},
+        )
+    assert error.value.path == "segments[#1].dns.local_dns[#0].ipv4_address[#1]"
+
+
+async def test_a_position_no_other_item_has_as_its_text_reaches_that_position() -> None:
+    state = await _twins("first")
+    rules = named_path(
+        Path(("segments", GUEST, "rules", 1, "match")), state.profile.qos
+    )
+    assert rules == "segments[Guest].rules[#1].match"
+    _ = await apply(
+        state,
+        module="business_policy",
+        path=str(rules),
+        patch={"destination_port_low": 443},
+    )
+    ports = [
+        rule.match.destination_port_low
+        for rule in state.profile.qos.segments[GUEST].rules
+    ]
+    assert ports == [-1, 443, -1]
+    assert reached(state.profile.qos, rules.child("destination_port_low")) == 443
+
+    data = state.profile.device_settings
+    _ = await apply(
+        state,
+        module="device_settings",
+        path=f"{ADDRESSES}[#1]",
+        patch={"_op": "delete"},
+    )
+    assert reached(data, Path.parse(ADDRESSES)) == ["first", "a"]
+
+
+async def test_a_quoted_position_text_is_read_as_a_patch_key_is() -> None:
+    state = await _twins("#1")
+    for path, port in (
+        ('segments[Guest].rules["#1"].match', 1001),  # the rule named ``#1``
+        ('segments[Guest].rules["#2"].match', 1002),  # no rule is named ``#2``
+    ):
+        _ = await apply(
+            state,
+            module="business_policy",
+            path=path,
+            patch={"destination_port_low": port},
+        )
+    ports = [
+        rule.match.destination_port_low
+        for rule in state.profile.qos.segments[GUEST].rules
+    ]
+    assert ports == [1001, -1, 1002]
+
+
+async def test_a_position_the_data_lacks_is_left_to_the_merge() -> None:
+    state = await _twins("#1")
+    for path in ("segments[Guest].rules[#9].match", "segments[#9].rules[#1].match"):
+        with pytest.raises(PatchError) as error:
+            _ = await apply(state, module="business_policy", path=path, patch={})
+        assert error.value.kind == "no_item"
+
+
+# --- a field that holds one model or a list of them ---------------------------
+
+
+async def test_a_provider_held_as_one_object_is_reached_through_its_fields() -> None:
+    state = await _twins("first")
+    data = state.profile.device_settings
+    provider = Path.parse("segments[Guest].dns.primary_provider")
+    assert reached(data, provider.child("ref")) == "deviceSettings:dns:primaryProvider"
+    assert named_path(Path.parse("segments[#1].dns.primaryProvider.ref"), data) == (
+        provider.child("ref")
+    )
+    providers = reached(data, Path.parse("segments[Guest].dns.private_providers"))
+    assert is_list(providers)
+    listed = Path.parse("segments[Guest].dns.private_providers[#0]")
+    assert reached(data, listed) is providers[0]
+    with pytest.raises(PatchError) as error:
+        _ = await apply(
+            state, module="device_settings", path=f"{provider}.nope", patch=1
+        )
+    assert (error.value.kind, error.value.path) == ("unknown_field", f"{provider}.nope")
+
+
 # --- reached: the walk the round trips of the shown paths are checked with ---
 
 
@@ -299,6 +515,10 @@ class _Item(VcoModel):
 class _Shelf(VcoModel):
     items: Annotated[list[_Item], KeyField("name")] = Field(default_factory=list)
     spare: _Item | None = None
+
+
+class _Either(VcoModel):
+    either: _Item | list[_Item] = Field(default_factory=list)
 
 
 def _shelf(*names: str) -> _Shelf:
@@ -316,11 +536,32 @@ def test_reached_gives_the_value_at_a_path() -> None:
     assert reached(shelf, Path.parse("items")) is shelf.items
 
 
+def test_reached_reads_a_position_as_that_position_whatever_the_keys() -> None:
+    shelf = _shelf("#1", "b", "#0")
+    assert reached(shelf, Path.parse("items[#1]")) is shelf.items[1]
+    assert reached(shelf, Path.parse("items[#0]")) is shelf.items[0]
+    # A key that is the text of a position is a key.
+    assert reached(shelf, Path.parse('items["#1"]')) is shelf.items[0]
+    assert reached(shelf, Path.parse('items["#0"]')) is shelf.items[2]
+
+
+def test_reached_walks_one_model_or_a_list_by_what_is_held() -> None:
+    one = _Either(either=_Item(name="solo", size=4))
+    assert reached(one, Path.parse("either.size")) == 4
+    many = _Either(either=[_Item(name="a"), _Item(name="b", size=2)])
+    assert reached(many, Path.parse("either[#1].size")) == 2
+    with pytest.raises(AssertionError, match=r"\[#1\] of either\[#1\]"):
+        _ = reached(one, Path.parse("either[#1]"))
+    with pytest.raises(AssertionError, match=r"size of either\.size selects 0 items"):
+        _ = reached(many, Path.parse("either.size"))
+
+
 @pytest.mark.parametrize(
     ("path", "why"),
     [
         ("items[nope].size", r"\[nope\] of items\[nope\]\.size selects 0 items"),
         ("items[twin].size", r"\[twin\] of items\[twin\]\.size selects 2 items"),
+        ("items[#3].size", r"\[#3\] of items\[#3\]\.size: .*has 3 items"),
         ("spare[a]", r"\[a\] of spare\[a\]: an item part that follows no list"),
         ("nope", "nope of nope: _Shelf has no such attribute"),
         ("spare.size.x", r"x of spare\.size\.x: there is no model there, but 5"),

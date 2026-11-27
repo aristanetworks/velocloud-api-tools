@@ -194,6 +194,7 @@ from .patch import (
     delete,
     key_selector,
     move,
+    patch_key,
     position_of,
     selector_of,
 )
@@ -388,6 +389,7 @@ __all__ = [
     "named_path",
     "named_value",
     "nest_patch",
+    "patch_key",
     "position_of",
     "provided",
     "python_name",

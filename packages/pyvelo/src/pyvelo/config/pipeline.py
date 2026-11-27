@@ -117,8 +117,16 @@ from pyvelo.config.state import (
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
 from pyvelo.config.validation_warning import ValidationWarning
-from pyvelo.core import PatchError, RowsModifiedConfirmation, effective_dump
-from pyvelo.core.base import IdentityLookup, IdentityResolver, VcoModel, is_dict
+from pyvelo.core import PatchError, RowsModifiedConfirmation, effective_dump, item_part
+from pyvelo.core.base import (
+    IdentityLookup,
+    IdentityResolver,
+    VcoModel,
+    is_dict,
+    is_list,
+    list_kind,
+    python_name,
+)
 from pyvelo.core.fields import get_resolvable
 from pyvelo.core.identity import (
     EdgeName,
@@ -131,9 +139,16 @@ from pyvelo.core.identity import (
     SegmentName,
 )
 from pyvelo.core.layers import Edge, Effective, Layered, Profile
-from pyvelo.core.merge import address_path, nest_patch, read_given_id, select_items
-from pyvelo.core.patch import ItemOp, is_new, parse_item_op, selector_of
-from pyvelo.core.rebase import Path, raw_changes
+from pyvelo.core.merge import (
+    address_path,
+    nest_patch,
+    nested_under,
+    read_given_id,
+    select_items,
+)
+from pyvelo.core.owned import unwrap
+from pyvelo.core.patch import ItemOp, at, is_new, parse_item_op, patch_key
+from pyvelo.core.rebase import Key, Path, PathPart, raw_changes
 
 
 @dataclass
@@ -730,7 +745,18 @@ class ConfigPipeline:
         word. The address is checked
         against the model classes, not the instances (``nest_patch``), so an
         unset intermediate field is fine, and an item its list lacks is
-        refused when the patch is merged (``no_item``). A text that is not a
+        refused when the patch is merged (``no_item``). A position
+        (``rules[#1]``) is the item at that position of the list as read. It
+        goes into the patch as the key ``"#1"``, which a patch reads first as
+        the key of an item, or as an entry of a list of values; so where
+        another item of the list has the text ``#1`` as its key or its value,
+        the position is refused (``PatchError``, ``address``, at its path),
+        with the ways to reach either item, because the patch would change
+        that other item without a word. A quoted ``rules["#1"]`` is a key, and
+        is read as a patch key is: the item with that key, else the position.
+        A field that takes one model or a list of them (a DNS provider) is
+        walked as what the path names: a name that is a field of the model is
+        that field, an item in brackets an item of the list. A text that is not a
         path, an empty path, a part that names no field, an item where no
         list or map is, a part below a plain value or a list of untyped
         items, and *segment* for a module with no ``segments`` field (WAN,
@@ -2531,7 +2557,7 @@ def _refuse_segment_ops_to_a_missing_module(
     """
     if state.target_type != "profile" or module_name not in PROFILE_SEGMENT_MODULES:
         return
-    nested = _nested_under(address_path(segment, path), patch)
+    nested = nested_under(address_path(segment, path), patch)
     if isinstance(nested, dict) and holds_segment_ops(
         cast("dict[str, object]", nested)
     ):
@@ -2543,19 +2569,6 @@ def _refuse_segment_ops_to_a_missing_module(
             SEGMENTS,
             "segment_rule",
         )
-
-
-def _nested_under(address: Path, patch: object) -> object:
-    """*patch* nested under the parts of *address*, with no model consulted.
-
-    Each part is a key: a name as written, an item part as its selector. It is
-    ``nest_patch`` without the classes, for a module that has no data to take
-    them from; a field is not looked up, so it keeps the name it was given.
-    """
-    nested = patch
-    for part in reversed(address.parts):
-        nested = {part if isinstance(part, str) else selector_of(part): nested}
-    return nested
 
 
 def _device_settings_as_read(state: ConfigState) -> object:
@@ -2640,10 +2653,12 @@ def _edit_of(
     """The ``_Edit`` of *patch* at its address to *mod* of *state*.
 
     Raises ``PatchError`` for an address the class of the module's data does
-    not have (``nest_patch``).
+    not have (``nest_patch``), and for a position in it that the patch would
+    read as another item of the data (``_refuse_misread_positions``).
     """
     data = mod.data
     nested = nest_patch(type(data), patch, segment=segment, path=path)
+    _refuse_misread_positions(data, address_path(segment, path), state.resolvers)
     edge = state.target_type == "edge"
     profile_rules = (
         not edge
@@ -2669,6 +2684,122 @@ def _edit_of(
         profile_rules=profile_rules,
         inherited=inherited,
         unserved=unserved,
+    )
+
+
+def _refuse_misread_positions(
+    data: VcoModel, address: Path, resolvers: IdentityResolver | None
+) -> None:
+    """Raise ``PatchError`` for a position of *address* a patch would read as a key.
+
+    A position part ``[#n]`` goes into the patch as the key ``"#n"``, and a
+    patch reads that text first as the key of an item of a keyed list, or as
+    an entry of a list of values, and as a position only when no item has it.
+    So where another item of the list has the text ``#n`` as its key or its
+    value, the patch would change that item and not the one at position ``n``,
+    and say nothing. Such a position is refused, at its path, with the ways
+    to reach either item.
+
+    *address* is followed over *data* for as long as the data has what it
+    names: a field by any name a patch accepts, an item as a patch selects it
+    (with *resolvers*). Where the data ends (a field that is unset, an item
+    the list lacks, a selector that cannot be read) nothing below is looked
+    at: the merge refuses what it does not find. A position that selects
+    exactly its own item is accepted, and so is one the list is too short for
+    when no item has its text.
+    """
+    here: object = data
+    walked = Path(())
+    items: tuple[VcoModel, str] | None = None
+    for part in address.parts:
+        if items is not None:
+            walked = walked.child(part)
+            here = _addressed_item(items[0], items[1], part, walked, resolvers)
+            items = None
+        elif isinstance(here, VcoModel) and isinstance(part, str):
+            name = python_name(type(here), part)
+            if name is None:
+                return
+            walked = walked.child(name)
+            value = unwrap(getattr(here, name))
+            kind = list_kind(type(here).model_fields[name])
+            if kind not in (None, "untyped") and (is_list(value) or is_dict(value)):
+                items = (here, name)
+            here = value
+        else:
+            return
+
+
+def _addressed_item(
+    owner: VcoModel,
+    name: str,
+    part: PathPart,
+    where: Path,
+    resolvers: IdentityResolver | None,
+) -> object:
+    """The item of the list or map *name* of *owner* that *part* names, or None.
+
+    None where it names no item or several, and where the selector cannot be
+    read: the merge reads it again and raises what it finds.
+
+    Raises ``PatchError`` at *where* for a position whose text selects
+    another item than the one at that position (``_refuse_misread_positions``).
+    """
+    entries = unwrap(getattr(owner, name))
+    try:
+        found = select_items(owner, name, patch_key(part), resolvers)
+    except (PatchError, LookupError):
+        return None
+    if isinstance(part, int) and is_list(entries) and found and found != [part]:
+        raise PatchError(_misread_position(owner, name, part, found), where, "address")
+    if len(found) != 1:
+        return None
+    if is_dict(entries):
+        return list(entries.values())[found[0]]
+    return entries[found[0]] if is_list(entries) else None
+
+
+def _misread_position(
+    owner: VcoModel, name: str, position: int, found: Sequence[int]
+) -> str:
+    """Why the position *position* of the list *name* of *owner* is refused.
+
+    *found* are the positions the text of the position selects in place of
+    it. The message says where the patch would go, and how to reach the item
+    at the position and the item that has the text.
+    """
+    entries = unwrap(getattr(owner, name))
+    is_values = list_kind(type(owner).model_fields[name]) == "value"
+    item, key = ("entry", "value") if is_values else ("item", "key")
+    text = at(position)
+    places = ("position " if len(found) == 1 else "positions ") + ", ".join(
+        str(index) for index in found
+    )
+    named = (
+        item_part(owner, name, position)
+        if is_list(entries) and position < len(entries)
+        else None
+    )
+    if not is_list(entries) or position >= len(entries):
+        instead = f"The list has no position {position}"
+    elif isinstance(named, Key):
+        instead = (
+            f"Name the {item} at position {position} by what names it alone: "
+            f"{Path((name, named))}"
+        )
+    else:
+        instead = (
+            f"Nothing names the {item} at position {position} alone, so change "
+            f"it in a patch of the whole list: end the path at {name} and give "
+            "the list as the patch"
+        )
+    return (
+        f"{Path((position,))} is position {position} of "
+        f"{type(owner).__name__}.{name}, but as a patch key the text {text!r} "
+        f"is read first as the {key} of an {item}, and the list has that {key} "
+        f"at {places}: the patch would go there, not to position {position}, "
+        f"without a word. {instead}. To reach the {item} whose {key} is "
+        f"{text!r}, write it in quotes: {Path((name, Key(text)))}"
     )
 
 
