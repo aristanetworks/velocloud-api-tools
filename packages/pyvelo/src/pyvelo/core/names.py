@@ -8,7 +8,8 @@ attribute and an item by the text a reader knows it by, in the one form
 ``named_path`` converts a path, ``ChangeNames`` the paths of the changes
 between the data as read and as edited, ``named_error`` the path of a
 ``PatchError``, ``named_value`` the keys of a JSON value found at one, and
-``item_part`` gives the part that names one item of a list.
+``item_part`` gives the part that names one item of a list. ``vco_keys`` is
+the way back: a JSON value written in attribute names, in the VCO's keys.
 """
 
 import functools
@@ -19,6 +20,7 @@ from dataclasses import field as dataclass_field
 from types import UnionType
 from typing import (
     Annotated,
+    Final,
     Union,  # pyright: ignore[reportDeprecated]  # the origin of ``T | MISSING``, below
     get_args,
     get_origin,
@@ -33,7 +35,9 @@ from .base import (
     is_list,
     list_kind,
     python_name,
+    wire_name,
 )
+from .documents import NamedDocumentError
 from .fields import KeySpec, get_key_spec
 from .identity import ResolverNotLoadedError
 from .layers import field_kind
@@ -257,7 +261,8 @@ def _shape(field_info: FieldInfo) -> _Shape:
 
     A model is looked for in the field itself, in the items of a list and in
     the values of a map, and no deeper: the keys of a map of lists are data,
-    and nothing below them is known.
+    and nothing below them is known. A tuple of any length (``tuple[X, ...]``)
+    is a list here: its JSON is one. A tuple of fixed length is not read.
     """
     models: list[type[VcoModel]] = []
     items: list[type[VcoModel]] = []
@@ -265,7 +270,8 @@ def _shape(field_info: FieldInfo) -> _Shape:
     holds_list = False
     for member in _alternatives(field_kind(field_info).inner_type):
         origin, args = get_origin(member), get_args(member)
-        if member is list or origin is list:
+        any_length = origin is tuple and args[1:] == (Ellipsis,)
+        if member is list or origin is list or any_length:
             holds_list = True
             items += _model_classes(args[0]) if args else []
         elif origin is dict and len(args) == 2:  # noqa: PLR2004 (dict[K, V] has two type arguments)
@@ -1125,3 +1131,121 @@ def _named(value: object, place: _Place) -> object:
             name, below = found
             named[name if claims[name] == 1 else key] = _named(item, below)
     return named
+
+
+_VCO_KEY_GIVEN: Final = (
+    "`{key}` is the VCO's key for `{name}`, and this document is in attribute "
+    "names. Every attribute name of it is renamed to the VCO's key; in a document "
+    "that is already in the VCO's keys that renames a stored key that happens to "
+    "be spelled like an attribute name, and what is saved then differs from what "
+    "was read. Write the field as `{name}`, or give a document in the VCO's keys "
+    "to model_validate."
+)
+"""What refuses a key of the VCO's form in a document in attribute names."""
+
+
+def vco_keys(
+    value: object, model: type[VcoModel] | None, path: Path | None = None
+) -> object:
+    """The JSON *value*, a document in attribute names, with the VCO's keys.
+
+    The inverse of ``named_value``. *value* is what a document of *model*
+    holds at *path* (the whole document with no *path*), and it is walked as
+    ``named_value`` walks it: a model, the items of a list, the entries of a
+    map, and a field declared as one model or a list of them by the shape of
+    the value. A key that is the attribute name of a field of a class there
+    becomes the key that class writes the field under (the first such class,
+    in a union), and the walk goes on below it. The attribute name is looked
+    for first: a name that is also a key another field is read from is the
+    attribute. A key no class declares is kept as given with all below it, and
+    so are the keys of a map. A scalar and a ``MISSING`` are returned as they
+    are, and with *model* of None the value is returned as a copy.
+
+    Any other key a class there reads a field from (the VCO's key, the
+    camelCase form) raises ``NamedDocumentError`` of kind ``vco_key``, also
+    beside the attribute name of the same field: the document mixes the two
+    forms. In a document that is in the VCO's keys, a stored key spelled like
+    an attribute name would be renamed, and what is saved would differ from
+    what was read. The error's path is the field's, by attribute names: *path*
+    (which may name fields by any key the model reads them from), then the
+    way down the value, an item by its position.
+
+    The result shares no ``dict`` or ``list`` with *value*.
+    """
+    place: _Place = None if model is None else _Model(None, (model,))
+    parts: list[PathPart] = []
+    for part in () if path is None else path.parts:
+        shown, place = _step(place, part, None)
+        parts.append(shown)
+    return _with_vco_keys(value, place, Path(parts))
+
+
+def _with_vco_keys(value: object, place: _Place, path: Path) -> object:
+    """A copy of *value*, found at *place*, with its attribute names as the VCO's keys.
+
+    *path* is where *value* is, for a refusal. The value decides what it is,
+    as in ``_named``: a list is a list of items; an object is one model, or
+    one item where only a list is declared, or a map where *place* is one.
+    """
+    if is_list(value):
+        below: _Place = None
+        if isinstance(place, _Either):
+            below = _Model(None, place.items)
+        elif isinstance(place, _Items) and not place.is_map:
+            below = _Model(None, place.classes)
+        return [
+            _with_vco_keys(item, below, path.child(position))
+            for position, item in enumerate(value)
+        ]
+    if not is_dict(value):
+        return value
+    if isinstance(place, _Items):
+        entry = _Model(None, place.classes)
+        if place.is_map:
+            return {
+                key: _with_vco_keys(item, entry, path.child(str(key)))
+                for key, item in value.items()
+            }
+        place = entry
+    elif isinstance(place, _Either):
+        place = _Model(None, place.models)
+    written: dict[object, object] = {}
+    for key, item in value.items():
+        attribute = _attribute(place, key)
+        if attribute is None:
+            _refuse_a_vco_key(place, key, path)
+            written[key] = _with_vco_keys(item, None, path.child(str(key)))
+        else:
+            vco_key, held = attribute
+            written[vco_key] = _with_vco_keys(item, held, path.child(str(key)))
+    return written
+
+
+def _attribute(place: _Place, name: object) -> tuple[str, _Place] | None:
+    """The VCO's key of the attribute *name* at *place*, and its value's place.
+
+    The first of the place's classes that has the attribute gives the key.
+    The place below is what the field is declared to hold in the classes that
+    have the attribute. None where *place* is not a model or no class has the
+    attribute.
+    """
+    if not isinstance(place, _Model) or not isinstance(name, str):
+        return None
+    owners = [cls for cls in place.classes if name in cls.model_fields]
+    if not owners:
+        return None
+    infos = [cls.model_fields[name] for cls in owners]
+    return wire_name(owners[0], name), _declared(name, infos)
+
+
+def _refuse_a_vco_key(place: _Place, key: object, path: Path) -> None:
+    """Raise if *key*, no attribute name at *place*, is a key a class there reads.
+
+    *path* is the object the key is in; the error is at the field the key
+    names, by its attribute name.
+    """
+    found = _field(place, key)
+    if found is not None:
+        name = found[0]
+        message = _VCO_KEY_GIVEN.format(key=key, name=name)
+        raise NamedDocumentError(message, path.child(name), "vco_key")

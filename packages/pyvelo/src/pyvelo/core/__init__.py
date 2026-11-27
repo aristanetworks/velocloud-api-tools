@@ -8,6 +8,7 @@ This package is split into these submodules:
 - merge: applying a patch to a model, and selecting items of a list
 - names: a path and a value as pyvelo shows them: fields by attribute name, each item
   by the text that names it alone
+- documents: NamedDocumentError, the refusal of a document in attribute names
 - rebase: the path and key types that locate a change
 - owned: Owned, the value an inheritable field holds on the edge layer, its encodings,
   the ownership intents, coupled groups and the binding of an edge layer to its profile
@@ -57,6 +58,7 @@ from .base import (
     value_or,
     wire_name,
 )
+from .documents import NamedDocumentError, NamedDocumentKind
 from .effective import Origin, Resolved, effective_dump, effective_view
 from .fields import (
     Alias,
@@ -175,7 +177,7 @@ from .layers import (
 )
 from .mending import MendingKind, MendingPatch, backhaul_hub_mending
 from .merge import address_path, item_selector, nest_patch, select_items
-from .names import item_part, named_path, named_value
+from .names import item_part, named_path, named_value, vco_keys
 from .owned import (
     ByFlag,
     ByPresence,
@@ -294,6 +296,8 @@ __all__ = [
     "MendingKind",
     "MendingPatch",
     "NameOf",
+    "NamedDocumentError",
+    "NamedDocumentKind",
     "NetworkServiceIdentity",
     "NetworkServiceLogicalId",
     "NetworkServiceName",
@@ -401,6 +405,7 @@ __all__ = [
     "union",
     "unwrap",
     "value_or",
+    "vco_keys",
     "walk_fields",
     "wire_name",
 ]
