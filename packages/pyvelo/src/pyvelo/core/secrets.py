@@ -1,6 +1,8 @@
 """Show configuration with its secrets left out, and put them back.
 
-A field marked ``Secret`` holds a password, a key or a community string.
+A field marked ``Secret`` holds a password, a key or a community string, or
+is the ``data`` of a ref row: the data of the object the row refers to, which
+can hold any of them.
 ``hide_secrets`` turns a value about to be shown (in a plan, an error or a
 dump) into one that is safe to show: the mask ``HIDDEN`` stands where a secret
 is. ``restore_secrets`` is the way back, for a document that was shown and is

@@ -258,3 +258,17 @@ def test_the_data_of_every_ref_row_is_hidden_when_shown() -> None:
     assert shown_value(refs, DeviceSettingsRefs) == {
         "segment": [{"configuration_id": 1, "data": "***"}]
     }
+
+
+def test_the_data_of_a_ref_row_is_its_only_secret() -> None:
+    # A ref row is matched to its stored row with the secrets of both hidden:
+    # every other field of it takes part, so none of them is one.
+    rows = {
+        cls
+        for info in DeviceSettingsRefs.model_fields.values()
+        for cls in field_models(info)
+    }
+    assert len(rows) >= 25
+    for cls in rows:
+        secrets = {name for name, info in cls.model_fields.items() if is_secret(info)}
+        assert secrets == {"data"}, cls.__name__

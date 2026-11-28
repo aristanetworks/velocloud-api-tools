@@ -876,7 +876,9 @@ class ServerOwned:
 class Secret:
     """Annotated marker: the field holds a configuration secret.
 
-    A secret is a password, a key or a community string.
+    A secret is a password, a key or a community string. The ``data`` of a
+    ref row is marked too: it is the data of the object the row refers to,
+    which can hold a service's credentials.
 
     ``hide_secrets`` shows ``***`` in its place; the value itself is read,
     compared and written like any other.

@@ -1118,6 +1118,14 @@ def test_the_mask_text_where_no_secret_is_declared_is_data() -> None:
     assert restore_secrets(Vault, {"words": ["***"]}) == {"words": ["***"]}
 
 
+def test_the_mask_text_below_an_untyped_object_is_data_with_stored_given_too() -> None:
+    # ``free_form`` is ``dict[str, Any]``: no class says what its keys are, so
+    # nothing below it is a mask, and the stored value there is not taken.
+    assert STORED["freeForm"] == {"passWord": "s-free"}
+    document = {"freeForm": {"passWord": "***", "deep": [{"passWord": "***"}]}}
+    assert restore_secrets(Vault, document, STORED) == document
+
+
 def test_shown_value_names_the_keys_and_hides_the_secrets() -> None:
     assert shown_value(STORED["login"], Vault, Path(("login",))) == {
         "user_name": "a",
