@@ -865,9 +865,11 @@ no stored item, or several whose secrets differ. So:
 
 - A document of either pair holds only what the models declare. A key of a
   module's data that the models do not know is in neither dump, and a default
-  the VCO did not send is in both. So a row rebuilt from a dump is not the row
-  as read: its `raw_data` is the dump's, and a save of it would drop the keys
-  the models do not know.
+  the VCO did not send is in both. So a row rebuilt through either pair
+  (`model_validate` of a `model_dump()`, `named_validate` of a `named_dump()`)
+  holds only the keys the models declare: its `raw_data` is the dump's, and a
+  save from it does not send a stored key the models do not know, with no
+  warning. A save from the state as read does send that key.
   Keep the JSON rows, or `module.raw_data`, where the row as read matters (see
   "What a save writes").
 - A named document is JSON. `named_validate` and `vco_document` read a mapping

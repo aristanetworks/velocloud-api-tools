@@ -1023,6 +1023,11 @@ class VcoModel(BaseModel):
         save sends) is in the VCO's keys with the complete secrets, as when
         the row is validated from the VCO's own JSON.
 
+        A row rebuilt this way, as one rebuilt from its ``model_dump``, holds
+        only the keys the models declare: a save from it does not send a
+        stored key the models do not know, which a save from the state as
+        read does send.
+
         *stored* is the model *data* was dumped from: each mask in *data*
         keeps the value *stored* has at the same place. Without it a document
         that holds a mask is refused. Raises ``NamedDocumentError``: of kind
