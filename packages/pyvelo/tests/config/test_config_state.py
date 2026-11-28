@@ -32,7 +32,7 @@ from pyvelo.config.state import ConfigFieldChange, ConfigState, SaveResult
 from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import at
 from pyvelo.core.layers import Edge, Profile
-from pyvelo.core.rebase import ItemMove, ItemPlace, Key
+from pyvelo.core.rebase import ItemMove, ItemPlace, Key, Path
 from pyvelo.testing import make_firewall_module
 
 
@@ -361,5 +361,5 @@ class TestSaveResult:
 
 class TestValidationWarning:
     def test_warning_defaults(self) -> None:
-        w = ValidationWarning(path="firewall.segments", message="test", code="TEST")
+        w = ValidationWarning(path=Path(("segments",)), message="test", code="TEST")
         assert w.severity == "warning"

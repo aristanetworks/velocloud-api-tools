@@ -12,7 +12,7 @@ class ValidationWarning:
     ``code`` is machine-readable, ``message`` the text a plan shows.
     """
 
-    path: Path | str
+    path: Path
     """Where the thing is.
 
     A ``Path``, as pyvelo shows one, with no module before it: fields by
