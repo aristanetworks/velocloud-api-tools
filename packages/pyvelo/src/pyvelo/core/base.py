@@ -232,27 +232,46 @@ def _not_json(what: str, value: object, parts: tuple[str | int, ...]) -> TypeErr
     return TypeError(f"{Path(parts)}: {message}" if parts else message)
 
 
-def _plain_json(value: object, parts: tuple[str | int, ...] = ()) -> object:
+def plain_json(
+    value: object,
+    parts: tuple[str | int, ...] = (),
+    *,
+    loaded: Callable[[object], TypeError] | None = None,
+) -> object:
     """*value*, a named document or what it holds at *parts*, as plain JSON.
 
-    A mapping becomes a ``dict`` and a list or a tuple a ``list``, at every
-    depth, so the containers of the result are those ``json.loads`` gives, and
-    none is shared with *value*. ``TypeError`` for a key that is no text and
-    for a value JSON does not have (a set, a UUID, a model, ``MISSING``).
+    The one check of what JSON has. A mapping becomes a ``dict`` and a list or
+    a tuple a ``list``, at every depth, so the containers of the result are
+    those ``json.loads`` gives, and none is shared with *value*. ``TypeError``
+    for a key that is no text and for a value JSON does not have (a set, a
+    UUID, a model, ``MISSING``).
+
+    *loaded* is for a value that must be what ``json.loads`` gives already
+    (``restore_secrets`` takes one): nothing is then read as something else.
+    A tuple and a mapping that is no ``dict`` are refused as any other value
+    JSON does not have is, with the error *loaded* makes of the value, and
+    the keys of a ``dict`` are kept as they are.
     """
-    if _is_mapping(value):
-        plain: JsonObject = {}
+    exact = loaded is not None
+    if is_dict(value) or (not exact and _is_mapping(value)):
+        plain: dict[object, object] = {}
         for key, item in value.items():
-            if not isinstance(key, str):
+            if isinstance(key, str):
+                below = (*parts, key)
+            elif exact:
+                below = parts
+            else:
                 raise _not_json("key", key, parts)
-            plain[key] = _plain_json(item, (*parts, key))
+            plain[key] = plain_json(item, below, loaded=loaded)
         return plain
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list) or (not exact and isinstance(value, tuple)):
         items = cast("list[object] | tuple[object, ...]", value)
-        return [_plain_json(item, (*parts, n)) for n, item in enumerate(items)]
+        return [
+            plain_json(item, (*parts, n), loaded=loaded) for n, item in enumerate(items)
+        ]
     if value is None or isinstance(value, (str, int, float)):
         return value
-    raise _not_json("value", value, parts)
+    raise _not_json("value", value, parts) if loaded is None else loaded(value)
 
 
 def _is_vco_model_type(tp: object) -> TypeIs[type[VcoModel]]:
@@ -984,7 +1003,7 @@ class VcoModel(BaseModel):
         kept: object = MISSING
         if stored is not None:
             kept = stored.model_dump(mode="json", by_alias=True)
-        document = vco_keys(_plain_json(data), cls)
+        document = vco_keys(plain_json(data), cls)
         return cast("JsonObject", restore_secrets(cls, document, kept))
 
     @classmethod

@@ -29,6 +29,7 @@ entry's class marks that key too.
 
 import copy
 import functools
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from typing import Final, TypeIs
@@ -42,6 +43,7 @@ from .base import (
     is_dict,
     is_list,
     list_kind,
+    plain_json,
     python_name,
     same_json,
 )
@@ -311,20 +313,16 @@ class _Place:
     """The place, in attribute names."""
 
 
-def _refuse_what_is_not_json(value: object, what: str) -> None:
-    """Raise ``TypeError`` unless *value* is JSON as ``json.loads`` gives it.
+def _not_loaded(what: str) -> Callable[[object], TypeError]:
+    """What makes the refusal of a value in *what* that ``json.loads`` does not give.
 
-    *what* names the value in the error. No value is quoted.
+    *what* names the document in the error. No value is quoted.
     """
-    left = [value]
-    while left:
-        item = left.pop()
-        if is_dict(item):
-            left.extend(item.values())
-        elif is_list(item):
-            left.extend(item)
-        elif item is not None and not isinstance(item, (str, int, float)):
-            raise TypeError(NOT_JSON.format(what=what, type=type(item).__name__))
+
+    def refusal(value: object) -> TypeError:
+        return TypeError(NOT_JSON.format(what=what, type=type(value).__name__))
+
+    return refusal
 
 
 def _attribute(classes: _Classes, key: str) -> str:
@@ -436,12 +434,12 @@ def _stored_items(value: list[object], stored: object, place: _Place) -> list[ob
 def _restore_fields(
     value: dict[object, object], stored: object, place: _Place
 ) -> dict[object, object]:
-    """A copy of *value*, a model at *place*, with each mask replaced from *stored*."""
+    """*value*, a model at *place*, with each mask replaced from *stored*."""
     restored: dict[object, object] = {}
     for key, item in value.items():
         found = _under(place.classes, key)
         if found is None or not isinstance(key, str):
-            restored[key] = copy.deepcopy(item)
+            restored[key] = item
             continue
         secret, below, holds = found
         kept = _stored_field(stored, place.classes, key)
@@ -455,12 +453,12 @@ def _restore_fields(
                 raise NamedDocumentError(kept.refusal, path, "masked_secret")
             restored[key] = copy.deepcopy(kept)
         else:
-            restored[key] = copy.deepcopy(item)
+            restored[key] = item
     return restored
 
 
 def _restore_under(key: object, item: object, stored: object, place: _Place) -> object:
-    """A copy of *item*, under *key* of an object at *place* that is not one model.
+    """*item*, under *key* of an object at *place* that is not one model, restored.
 
     The entry of a map, as it is declared, takes each mask from the entry
     *stored* has under the same key. Anything else is read as ``_hide_under``
@@ -486,17 +484,20 @@ def _restore_under(key: object, item: object, stored: object, place: _Place) -> 
         return _restore(_restore(item, nothing, entry), nothing, held)
     if isinstance(item, str) and item == HIDDEN:
         raise NamedDocumentError(nothing.refusal, path, "masked_secret")
-    return copy.deepcopy(item)
+    return item
 
 
 def _restore(value: object, stored: object, place: _Place) -> object:
-    """A copy of *value*, found at *place*, with each mask replaced from *stored*.
+    """*value*, found at *place*, with each mask replaced from *stored*.
 
     *stored* is what the stored document holds at the same place, or a
     ``_NoValue``. The walk is that of ``_hide``: the same places are secret.
+    *value* is the copy ``restore_secrets`` made of its document, so what
+    holds no mask is kept as it is. What *stored* gives is copied: one stored
+    item can fill the masks of several.
     """
     if not any(declares_secret(cls) for cls in place.classes):
-        return copy.deepcopy(value)  # no secret at any depth: all of it is data
+        return value  # no secret at any depth: all of it is data
     if is_list(value):
         kept = _stored_items(value, stored, place)
         return [
@@ -568,10 +569,9 @@ def restore_secrets(
     it shares no ``dict`` or ``list`` with *value* or with *stored*, and
     neither is changed.
     """
-    _refuse_what_is_not_json(value, "the document")
+    document = plain_json(value, loaded=_not_loaded("the document"))
     kept: object = _NO_STORED
     if stored is not MISSING:
-        _refuse_what_is_not_json(stored, "`stored`")
-        kept = stored
+        kept = plain_json(stored, loaded=_not_loaded("`stored`"))
     top = _Place((model,), holds=_Holds.MODEL, keyed=None, path=Path(()))
-    return _restore(value, kept, top)
+    return _restore(document, kept, top)
