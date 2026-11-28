@@ -31,15 +31,7 @@ import copy
 import functools
 from dataclasses import dataclass, replace
 from enum import Enum, auto
-from types import UnionType
-from typing import (
-    Annotated,
-    Final,
-    TypeIs,
-    Union,  # pyright: ignore[reportDeprecated]  # the origin of ``T | MISSING``, below
-    get_args,
-    get_origin,
-)
+from typing import Final, TypeIs
 
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
@@ -55,7 +47,7 @@ from .base import (
 )
 from .documents import NamedDocumentError
 from .fields import is_secret
-from .layers import field_kind
+from .layers import field_shape
 from .rebase import KeyedList, Path, PathPart, node_child, pair_items
 from .walk import can_hold_field
 
@@ -96,25 +88,11 @@ _ITEM: Final = {
 type _Reading = tuple[_Classes, _Holds]
 """One way to read a value: the classes it is of, and how it holds them."""
 
-_UNION_ORIGINS: Final = (Union, UnionType)  # pyright: ignore[reportDeprecated]  # still an origin
-"""The origins of a union: two before Python 3.14, and ``T | MISSING`` has the first."""
 
-
-def _allows_one_model(annotation: object) -> bool:
-    """Whether *annotation* allows a model as it is, in no list and no map."""
-    while get_origin(annotation) is Annotated:
-        annotation = get_args(annotation)[0]
-    if get_origin(annotation) in _UNION_ORIGINS:
-        return any(_allows_one_model(member) for member in get_args(annotation))
-    return isinstance(annotation, type) and issubclass(annotation, VcoModel)
-
-
-@functools.cache
 def _only_a_list(field_info: FieldInfo) -> bool:
     """Whether a list is all *field_info* declares: an object there is never valid."""
-    if list_kind(field_info) in (None, "map"):
-        return False
-    return not _allows_one_model(field_kind(field_info).inner_type)
+    shape = field_shape(field_info)
+    return shape.is_list and not shape.models
 
 
 def _under(classes: _Classes, key: object) -> tuple[bool, _Classes, _Holds] | None:

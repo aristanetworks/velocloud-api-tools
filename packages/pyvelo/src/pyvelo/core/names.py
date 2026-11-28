@@ -14,19 +14,11 @@ is ``named_value`` with every secret hidden: what a value shown goes through.
 VCO's keys.
 """
 
-import functools
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from types import UnionType
-from typing import (
-    Annotated,
-    Final,
-    Union,  # pyright: ignore[reportDeprecated]  # the origin of ``T | MISSING``, below
-    get_args,
-    get_origin,
-)
+from typing import Final
 
 from pydantic.fields import FieldInfo
 
@@ -42,7 +34,7 @@ from .base import (
 from .documents import NamedDocumentError
 from .fields import KeySpec, get_key_spec
 from .identity import ResolverNotLoadedError
-from .layers import field_kind
+from .layers import field_shape
 from .merge import item_selector, item_selectors, select_items
 from .owned import unwrap
 from .patch import PatchError, patch_key, selector_of
@@ -213,77 +205,6 @@ type _Place = _Model | _Items | _Either | None
 """Where a walk of a path stands; None where no class says what is there."""
 
 
-@dataclass(frozen=True, slots=True)
-class _Shape:
-    """What a field is declared to hold, one level deep."""
-
-    models: tuple[type[VcoModel], ...]
-    """The classes of a model it holds as it is."""
-    items: tuple[type[VcoModel], ...]
-    """The classes of the items of a list it holds."""
-    entries: tuple[type[VcoModel], ...]
-    """The classes of the values of a map it holds."""
-    is_list: bool
-    """Whether it can hold a list, of models or of anything else."""
-
-
-_UNION_ORIGINS = (Union, UnionType)  # pyright: ignore[reportDeprecated]  # still an origin
-"""The origins of a union.
-
-Before Python 3.14 ``X | Y`` and ``typing.Union`` are two, and ``T | MISSING``
-is the second, since ``MISSING`` is a value and not a class.
-"""
-
-
-def _alternatives(annotation: object) -> list[object]:
-    """The types *annotation* allows: the members of a union, else itself.
-
-    Each is without its ``Annotated`` wrapper.
-    """
-    while get_origin(annotation) is Annotated:
-        annotation = get_args(annotation)[0]
-    if get_origin(annotation) in _UNION_ORIGINS:
-        return [
-            inner for member in get_args(annotation) for inner in _alternatives(member)
-        ]
-    return [annotation]
-
-
-def _model_classes(annotation: object) -> list[type[VcoModel]]:
-    """The model classes among the types *annotation* allows."""
-    return [
-        member
-        for member in _alternatives(annotation)
-        if isinstance(member, type) and issubclass(member, VcoModel)
-    ]
-
-
-@functools.cache
-def _shape(field_info: FieldInfo) -> _Shape:
-    """What *field_info* is declared to hold.
-
-    A model is looked for in the field itself, in the items of a list and in
-    the values of a map, and no deeper: the keys of a map of lists are data,
-    and nothing below them is known. A tuple of any length (``tuple[X, ...]``)
-    is a list here: its JSON is one. A tuple of fixed length is not read.
-    """
-    models: list[type[VcoModel]] = []
-    items: list[type[VcoModel]] = []
-    entries: list[type[VcoModel]] = []
-    holds_list = False
-    for member in _alternatives(field_kind(field_info).inner_type):
-        origin, args = get_origin(member), get_args(member)
-        any_length = origin is tuple and args[1:] == (Ellipsis,)
-        if member is list or origin is list or any_length:
-            holds_list = True
-            items += _model_classes(args[0]) if args else []
-        elif origin is dict and len(args) == 2:  # noqa: PLR2004 (dict[K, V] has two type arguments)
-            entries += _model_classes(args[1])
-        else:
-            models += _model_classes(member)
-    return _Shape(tuple(models), tuple(items), tuple(entries), holds_list)
-
-
 def _holding(value: object, classes: tuple[type[VcoModel], ...]) -> _Model:
     """The place of *value*: the model it is, or one of *classes* the data lacks."""
     if isinstance(value, VcoModel):
@@ -302,7 +223,7 @@ def _held(owner: VcoModel, name: str, field_info: FieldInfo) -> _Place:
     value = unwrap(getattr(owner, name))
     if isinstance(value, VcoModel):
         return _holding(value, ())
-    shape = _shape(field_info)
+    shape = field_shape(field_info)
     if is_list(value) and list_kind(field_info) not in (None, "map"):
         return _Items(owner, name, shape.items, is_map=False)
     if is_dict(value) and shape.entries:
@@ -317,7 +238,7 @@ def _declared(name: str, infos: list[FieldInfo]) -> _Place:
     model or a list is an ``_Either``; a map only where it can hold nothing
     else.
     """
-    shapes = [_shape(info) for info in infos]
+    shapes = [field_shape(info) for info in infos]
     models = tuple(dict.fromkeys(cls for shape in shapes for cls in shape.models))
     items = tuple(dict.fromkeys(cls for shape in shapes for cls in shape.items))
     entries = tuple(dict.fromkeys(cls for shape in shapes for cls in shape.entries))
