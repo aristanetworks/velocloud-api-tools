@@ -1664,6 +1664,27 @@ def test_a_mask_in_a_value_of_another_shape_is_refused(
     assert "would be written to the VCO as the secret" in caught.value.message
 
 
+@pytest.mark.parametrize(
+    ("document", "path"),
+    [
+        ({"bySite": {"passWord": [HID]}}, "by_site.passWord[#0].pass_word"),
+        ({"bySite": [{"passWord": [HID]}]}, "by_site[#0].passWord[#0].pass_word"),
+        ({"several": {"passWord": HID}}, "several.passWord.pass_word"),
+        ({"keyed": {"passWord": [HID]}}, "keyed.passWord[#0].pass_word"),
+    ],
+)
+def test_a_mask_below_a_key_spelled_as_a_secret_of_another_shape_is_refused(
+    document: dict[str, Any], path: str
+) -> None:
+    # The value under the key is no mask: it holds one, where reading it as a
+    # model of the classes there has a secret.
+    assert '"***"' in json.dumps(document)
+    with pytest.raises(NamedDocumentError) as caught:
+        _ = restore_secrets(Shapes, document, STORED_SHAPES)
+    assert (caught.value.kind, caught.value.path) == ("masked_secret", path)
+    assert "`stored` has no value there" in caught.value.message
+
+
 @pytest.mark.parametrize("name", [*OTHER_SHAPES, *SAME_SHAPES])
 def test_a_value_of_another_shape_with_no_mask_is_restored_as_given(name: str) -> None:
     document, hidden = (OTHER_SHAPES | SAME_SHAPES)[name]

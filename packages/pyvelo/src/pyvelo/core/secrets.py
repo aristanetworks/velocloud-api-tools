@@ -484,7 +484,8 @@ def _restore_under(key: object, item: object, stored: object, place: _Place) -> 
         return _restore(_restore(item, nothing, entry), nothing, held)
     if isinstance(item, str) and item == HIDDEN:
         raise NamedDocumentError(nothing.refusal, path, "masked_secret")
-    return item
+    # A secret by its key, and no mask: read the other way, it can hold one.
+    return _restore(item, nothing, entry)
 
 
 def _restore(value: object, stored: object, place: _Place) -> object:
