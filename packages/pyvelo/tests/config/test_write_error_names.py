@@ -36,6 +36,7 @@ from pyvelo.core.rebase import Key, Path, RawChange
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.testing import MockVcoClient, as_stored
 from refs_helpers import DNS_A, DS_ID
+from shown_paths import round_trips
 from test_patch_real_models import (  # pyright: ignore[reportImplicitRelativeImport]
     SEGMENT,
     firewall,
@@ -992,10 +993,18 @@ def build_name(build: Callable[[], Awaitable[Lost]]) -> str:
 
 
 async def redone(lost: Lost, patch: dict[str, object]) -> list[tuple[object, ...]]:
-    """What the state of *lost* plans once *patch* is applied to it."""
+    """What the state of *lost* plans once *patch* is applied to it.
+
+    The state then has a field change, and the path of each reads back as
+    written.
+    """
     _ = await ConfigPipeline(client=None).apply(
         lost.state, module=lost.error.module_name, patch=patch
     )
+    changes = lost.state.get_field_changes()
+    assert changes
+    for change in changes:
+        round_trips(change.path)
     return [
         (module.name, module.changes, module.ref_changes, module.render())
         for module in lost.state.plan().changed

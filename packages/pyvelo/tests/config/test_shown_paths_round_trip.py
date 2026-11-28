@@ -935,14 +935,16 @@ def unknown_interface_state() -> ConfigState:
     )
 
 
-def validator_findings() -> list[tuple[ConfigState, ValidationError, object]]:
+def validator_findings() -> list[tuple[ConfigState, ValidationError, object, str]]:
     """Each validator's finding over a state its own tests build, and its place.
 
     A static route twice, and one without its gateway; a QoS rule name twice,
     and a firewall one; two segments of overlapping networks; a firewall
     rule's unknown interface, which is a warning. With each, the object the
     finding is about: the second route, the gateway (``MISSING``), the second
-    rule, the list of networks, the rule's match.
+    rule, the list of networks, the rule's match; and the text of the path,
+    which names a segment by its name and an item by what names it alone (its
+    name, else its key, else its position).
     """
     routes = routes_state(static_route("192.168.1.1"), static_route("192.168.1.1"))
     without_gateway = routes_state(
@@ -966,30 +968,54 @@ def validator_findings() -> list[tuple[ConfigState, ValidationError, object]]:
     overlapping = validate_no_overlapping_subnets.validate(overlaps).errors
     assert len(overlapping) == 2
     (unknown,) = validate_interface_firewall_consistency.validate(interfaces).warnings
+    second_rule = qos_rules.profile.qos.segments[1].rules[1]
     return [
-        (routes, duplicate_key, segment_routes.static[1]),
-        (without_gateway, missing, MISSING),
-        (qos_rules, duplicate_rule, qos_rules.profile.qos.segments[1].rules[1]),
+        (
+            routes,
+            duplicate_key,
+            segment_routes.static[1],
+            'segments["Global Segment"].routes.static[#1]',
+        ),
+        (
+            without_gateway,
+            missing,
+            MISSING,
+            'segments["Global Segment"].routes.static[#0].gateway',
+        ),
+        (
+            qos_rules,
+            duplicate_rule,
+            second_rule,
+            f"segments[Guest].rules[{second_rule.rule_logical_id}]",
+        ),
         (
             firewall_rules,
             duplicate_firewall_rule,
             firewall_rules.profile.firewall.segments[1].outbound[1],
+            'segments["Global Segment"].outbound[#1]',
         ),
         *(
-            (overlaps, finding, overlaps.profile.device_settings.lan.networks)
+            (
+                overlaps,
+                finding,
+                overlaps.profile.device_settings.lan.networks,
+                "lan.networks",
+            )
             for finding in overlapping
         ),
         (
             interfaces,
             unknown,
             interfaces.profile.firewall.segments[1].outbound[1].match,
+            'segments["Global Segment"].outbound[ssh].match',
         ),
     ]
 
 
 def test_the_path_of_a_validators_finding_reaches_what_it_is_about() -> None:
-    """A finding's path, in the data of its module, reaches what it is about."""
-    for state, finding, about in validator_findings():
+    """A finding's path reads as the plan shows a place, and reaches its object."""
+    for state, finding, about, shown in validator_findings():
+        assert str(finding.path) == shown
         round_trips(finding.path)
         assert finding.module is not None
         assert reached(data_of(state, finding.module), finding.path) is about
@@ -1680,7 +1706,7 @@ async def every_text() -> dict[str, str]:
                 texts[f"not redone: {name}"] = "\n".join(
                     str(change.path) for change in error.not_redone()
                 )
-    findings = [finding for _, finding, _ in validator_findings()]
+    findings = [finding for _, finding, _, _ in validator_findings()]
     for position, finding in enumerate(findings):
         texts[f"finding {position}: {finding.code}"] = (
             f"{finding.module} {finding.path}: {finding.message}"
@@ -1754,7 +1780,10 @@ async def test_no_text_holds_a_vco_module_name_or_a_wire_key() -> None:
     the layer the value came from; the path of a
     ``DetachedObjectError`` that starts at the object an edit was made
     through, such as a row, and not at a module's data; and the errors that
-    print what the VCO answered (``VcoApiError``, ``VcoOperationError``).
+    print what the VCO answered (``VcoApiError``, ``VcoOperationError``). A
+    redo patch that writes an object, adds or moves an item, or names a hub, a
+    segment or a provider, and the ``refs`` lines of a write error, are read
+    in ``test_write_error_names.py``; here a redo patch is one scalar edit.
     """
     wire = wire_keys()
     assert set(HAND_LIST) <= wire
