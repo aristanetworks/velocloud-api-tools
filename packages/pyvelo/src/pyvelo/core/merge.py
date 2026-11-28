@@ -639,7 +639,23 @@ _MASK_BUILT: Final = (
         "that is stored, change that item under its selector in place of a list value"
     ),
 )
+_MASK_BUILT_REQUIRED: Final = (
+    _MASK_BUILT[0] + ", and a {owner} cannot be built without its {name}",
+    (
+        "to keep the secret of an item that is stored, change that item under its "
+        "selector in place of a list value"
+    ),
+)
 """Why a mask has nothing to keep, and what to write instead of it."""
+
+
+def _built_texts(field_info: FieldInfo) -> tuple[str, str]:
+    """The texts that refuse a mask in an object the patch builds, for its field.
+
+    Leaving out a field that must have a value is no way to build the object,
+    so its texts do not offer it.
+    """
+    return _MASK_BUILT_REQUIRED if field_info.is_required() else _MASK_BUILT
 
 
 def _is_mask(field_info: FieldInfo, value: object) -> bool:
@@ -677,7 +693,8 @@ def _keeps_secret(
         return False
     owner = type(model).__name__
     if built:
-        raise _masked_secret(_MASK_BUILT, owner, name, path)
+        texts = _built_texts(type(model).model_fields[name])
+        raise _masked_secret(texts, owner, name, path)
     if unwrap(_field_value(model, name)) is MISSING:
         raise _masked_secret(_MASK_UNSET, owner, name, path)
     return True
@@ -1734,7 +1751,7 @@ def _build_input(
         fi = fields[field_name]
         child = path.child(field_name)
         if _is_mask(fi, given):
-            raise _masked_secret(_MASK_BUILT, owner, field_name, child)
+            raise _masked_secret(_built_texts(fi), owner, field_name, child)
         value = given
         if value is None:
             value = _null_value(fi, field_name, child, built=True)

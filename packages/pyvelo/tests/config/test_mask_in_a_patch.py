@@ -291,6 +291,22 @@ def test_a_mask_in_a_sub_model_built_from_its_defaults_is_refused() -> None:
     assert model.login is MISSING
 
 
+def test_a_built_object_is_offered_leaving_out_only_a_secret_it_does_not_need() -> None:
+    # Leaving out a secret that must have a value only gets the patch refused
+    # again, as a required field missing.
+    with pytest.raises(PatchError) as caught:
+        _ = vault().merge_patch({"token": {"name": "t", "value": HIDDEN}})
+    message = refused(caught, "token.value")
+    assert "a Token cannot be built without its value" in message
+    assert "leave value out" not in message
+    assert "change that item under its selector" in message
+    with pytest.raises(PatchError) as caught:
+        _ = vault().merge_patch({"logins": {"n": add({"pass_word": HIDDEN})}})
+    message = refused(caught, "logins[n].pass_word")
+    assert "leave pass_word out to build it without one" in message
+    assert "cannot be built without" not in message
+
+
 def test_the_mask_text_where_no_secret_is_declared_is_a_value() -> None:
     model = vault()
     _ = model.merge_patch({"login": {"user_name": HIDDEN}, "words": [HIDDEN]})

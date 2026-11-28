@@ -257,9 +257,11 @@ A patch is strict and all or nothing:
   keep, the patch raises `PatchError` of kind `masked_secret`, because the
   mask would be written to the VCO as the secret: on a field that is unset,
   and in anything the patch builds (an `add`, an item of a list value, a
-  sub-model that was unset). There, give the secret in full or leave the
-  field out; to keep the secret of a stored item, change the item under its
-  selector in place of giving its list as a list value. See "The mask".
+  sub-model that was unset). There, give the secret in full, or leave the
+  field out where it may be left out (the object is then built without it; a
+  secret the model requires, such as a WLAN `passphrase`, must be given). To
+  keep the secret of a stored item, change the item under its selector in
+  place of giving its list as a list value. See "The mask".
 - A hub is added to a `vpn` list (`hub_edges.vpn_hubs`,
   `edge_to_edge_detail.vpn_hubs`, `backhaul_edges`) or to a QoS rule's
   `backhaul_edges` by its name, `{"+": add({"name": "Hub-A"})}`, or by its
@@ -852,7 +854,8 @@ no stored item, or several whose secrets differ. So:
   by content. A mask with nothing stored to keep is refused (`PatchError`,
   kind `masked_secret`, at the secret's path): on a field that is unset, and
   in an `add`, an item of a list value or any other object the patch builds.
-  Give the secret in full there, or leave the field out.
+  Give the secret in full there, or leave the field out where the model does
+  not require it.
 - **A mask in a value of another shape than the model declares is refused**:
   in a list given where a map is declared, in a map given where a list is, in
   one object given for a map. Nothing stored is at its place, and the shape
