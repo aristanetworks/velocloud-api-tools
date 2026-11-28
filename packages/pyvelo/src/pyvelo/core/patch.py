@@ -50,6 +50,7 @@ type PatchErrorKind = Literal[
     "exists",
     "segment_rule",
     "fixed_list",
+    "masked_secret",
 ]
 """Which sort of refusal a ``PatchError`` is."""
 
@@ -81,6 +82,9 @@ class PatchError(ValueError):
     - ``fixed_list``: edits a fixed part of a ``FixedList``: adds, deletes,
       moves, renames or reorders its entries, or changes a field of an
       entry that is not editable.
+    - ``masked_secret``: has the mask of a secret (``"***"``) where no secret
+      is stored to keep: on a field that is unset, or in an object the patch
+      builds.
 
     A pydantic ``ValidationError`` behind it is its ``__cause__``.
     """

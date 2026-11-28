@@ -249,6 +249,17 @@ A patch is strict and all or nothing:
 - A key that names no field raises, at every depth, and so do two keys that
   name one field (`rule_id` and `ruleId`). Keys that start with `_` are
   directives: `_op` and `_position`, on a list item only.
+- The text `"***"` as the whole value of a secret (a field the models mark
+  `Secret`) is the mask pyvelo shows in its place, and in a patch it means:
+  keep the stored secret. The patch plans no change for that field and
+  nothing is sent for it, so an item copied from a plan, an error or a
+  `named_dump()` can be given back as it is. Where no secret is stored to
+  keep, the patch raises `PatchError` of kind `masked_secret`, because the
+  mask would be written to the VCO as the secret: on a field that is unset,
+  and in anything the patch builds (an `add`, an item of a list value, a
+  sub-model that was unset). There, give the secret in full or leave the
+  field out; to keep the secret of a stored item, change the item under its
+  selector in place of giving its list as a list value. See "The mask".
 - A hub is added to a `vpn` list (`hub_edges.vpn_hubs`,
   `edge_to_edge_detail.vpn_hubs`, `backhaul_edges`) or to a QoS rule's
   `backhaul_edges` by its name, `{"+": add({"name": "Hub-A"})}`, or by its
@@ -257,7 +268,7 @@ A patch is strict and all or nothing:
   cluster. A hub added to a rule must be saved first: see "Hubs".
 - A patch that cannot be applied raises `PatchError` (a `ValueError`). Its
   `path` is where in the patch it failed, its `message` the reason, and its
-  `kind` one of the thirteen values below, for a caller that reacts to the
+  `kind` one of the fourteen values below, for a caller that reacts to the
   cause. The path is written as pyvelo shows one (see "Paths"): an item the
   data has is named by what names it alone, whatever selector the patch
   used, so `{"segments": {"Guest": {"rules": {"#0": {"bogus": 1}}}}}` fails
@@ -290,6 +301,7 @@ A patch is strict and all or nothing:
 | `exists` | adds, or renames to, a key, alt key or value that is already there |
 | `segment_rule` | breaks a rule of the `segments` lists (below) |
 | `fixed_list` | edits a fixed part of a list whose entries, keys and order are fixed (the QoS `defaults` of a segment): adds, deletes, moves, renames or reorders an entry, or changes a field but `action` |
+| `masked_secret` | has the mask of a secret (`"***"`) where no secret is stored to keep: on a field that is unset, or in an object the patch builds |
 
 Every list has a kind, which says how its items are named:
 
@@ -827,10 +839,18 @@ no stored item, or several whose secrets differ. So:
 - **A mask written where the dump had none** follows the same rules: under a
   field the stored model lacks it is refused, and in an item of a list without
   a key it takes the secret of the stored item that the item then equals.
-- **The text `"***"` cannot be set as a secret through a named document**: at
-  a secret it is always the mask. Assign it to the model instead. A stored
-  secret that is itself the text `"***"` comes back as that text, like any
-  other stored value.
+- **The text `"***"` cannot be set as a secret through a named document or
+  a patch**: at a secret it is always the mask. Assign it to the model
+  instead. A stored secret that is itself the text `"***"` comes back as that
+  text, like any other stored value.
+- **A mask in a patch follows the same rule, on the loaded state.** As the
+  whole value of a secret it keeps what the item holds: `{"md5_password":
+  "***"}` on a stored BGP neighbour plans no change and sends nothing. The
+  stored value is the one of the item the patch names, so nothing is matched
+  by content. A mask with nothing stored to keep is refused (`PatchError`,
+  kind `masked_secret`, at the secret's path): on a field that is unset, and
+  in an `add`, an item of a list value or any other object the patch builds.
+  Give the secret in full there, or leave the field out.
 - **A mask in a value of another shape than the model declares is refused**:
   in a list given where a map is declared, in a map given where a list is, in
   one object given for a map. Nothing stored is at its place, and the shape

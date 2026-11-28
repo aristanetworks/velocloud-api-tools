@@ -1130,6 +1130,14 @@ class VcoModel(BaseModel):
           except that a field whose type includes both is ``None`` there:
           leaving the key out leaves it unset, and the item's own JSON dump
           writes ``null`` for ``None``;
+        - the mask ``"***"`` (``HIDDEN``), on a field marked ``Secret``: keeps
+          the stored value, as it does in a named document. The field is left
+          as it is and nothing is planned for it. Where nothing is stored to
+          keep (the field is unset, or the patch builds the model: an
+          ``add``, an item of a list value, a sub-model that was unset) it
+          raises ``PatchError`` of kind ``masked_secret``, since the mask
+          would be written to the VCO as the secret: give the secret in
+          full, or leave the key out;
         - anything else: replaces the value.
 
         **Inheritable fields.** On an edge layer (``Data[Edge]``) an

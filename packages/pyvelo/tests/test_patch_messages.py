@@ -202,10 +202,11 @@ def test_kinds_of_refusals_that_need_another_model_or_call() -> None:
         assert exc.value.kind == kind
 
 
-def test_the_kinds_are_these_thirteen() -> None:
+def test_the_kinds_are_these_fourteen() -> None:
     assert set(get_args(PatchErrorKind.__value__)) == {kind for _, kind in KINDS} | {
         "address",
         "segment_rule",
         "fixed_list",
+        "masked_secret",
     }
-    assert len(get_args(PatchErrorKind.__value__)) == 13
+    assert len(get_args(PatchErrorKind.__value__)) == 14

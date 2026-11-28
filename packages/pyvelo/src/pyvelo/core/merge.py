@@ -12,7 +12,15 @@ import enum
 import functools
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, LiteralString, cast, get_args, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Final,
+    Literal,
+    LiteralString,
+    cast,
+    get_args,
+    get_origin,
+)
 
 from pydantic import (
     MISSING,
@@ -63,6 +71,7 @@ from .fields import (
     get_resolvable,
     has_override_flag,
     is_edge_local,
+    is_secret,
 )
 from .identity import ResolutionError, ResolverNotLoadedError, resolution_error
 from .layers import Edge, Kind, Layered, field_kind, inner_adapter
@@ -94,6 +103,7 @@ from .rebase import (
     key_text,
     parse_key_text,
 )
+from .secrets import HIDDEN
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -584,15 +594,19 @@ def _merge_model(
     ``PatchError`` (``_patch_fields``). *built* is true for a model the patch
     builds, here from its defaults, and holds for the sub-models in it: it
     decides what ``null`` means (``_null_value``).
+
+    The mask of a secret keeps what *model* holds (``_keeps_secret``): the
+    field is left out of the merge, as if the patch had no key for it.
     """
     model_cls = type(model)
     fields = model_cls.model_fields
     names = model_cls._alias_map()  # pyright: ignore[reportPrivateUsage]
 
-    # (python_name, value) for each patch key.
+    # (python_name, value) for each patch key, but a mask that keeps a secret.
     updates = [
         (name, value)
         for _, name, value in _patch_fields(names, model_cls.__name__, patch, path)
+        if not _keeps_secret(model, name, value, path.child(name), built=built)
     ]
     # Copy the touched fields first so OverrideFlag logic can see what changed.
     before: JsonObject = {
@@ -606,6 +620,67 @@ def _merge_model(
         )
 
     _auto_set_override_flags(model, before)
+
+
+_MASK: Final = (
+    'the mask "***" in a patch keeps the stored secret, and {why}. The mask would '
+    "be written to the VCO as the secret. Give the secret in full, or {instead}."
+)
+"""What refuses the mask of a secret where nothing is stored to keep."""
+
+_MASK_UNSET: Final = ("this {owner} holds no {name}", "leave {name} out of the patch")
+_MASK_BUILT: Final = (
+    (
+        "this {owner} is one the patch builds (an add, an item of a list value, or "
+        "an object where none was stored), so nothing is stored for it"
+    ),
+    (
+        "leave {name} out to build it without one; to keep the secret of an item "
+        "that is stored, change that item under its selector in place of a list value"
+    ),
+)
+"""Why a mask has nothing to keep, and what to write instead of it."""
+
+
+def _is_mask(field_info: FieldInfo, value: object) -> bool:
+    """Whether *value* is the mask of a secret: ``HIDDEN`` whole, on a ``Secret`` field.
+
+    The same text in a field that is no secret, or as an item of a secret
+    that is a list, is a value like any other.
+    """
+    return isinstance(value, str) and value == HIDDEN and is_secret(field_info)
+
+
+def _masked_secret(
+    texts: tuple[str, str], owner: str, name: str, path: Path
+) -> PatchError:
+    """The refusal of a mask at *path*, the field *name* of *owner*, as *texts* say."""
+    why, instead = (text.format(owner=owner, name=name) for text in texts)
+    return PatchError(_MASK.format(why=why, instead=instead), path, "masked_secret")
+
+
+def _keeps_secret(
+    model: VcoModel, name: str, value: object, path: Path, *, built: bool
+) -> bool:
+    """Whether *value*, given for field *name* of *model*, is a mask that is kept.
+
+    Everything pyvelo shows has the mask in place of a secret, in a patch's
+    own keys, so a patch copied from what was shown gives the mask back. It
+    means there what it means in a named document (``restore_secrets``): keep
+    the stored value. The patch plans no change for the field.
+
+    ``PatchError`` of kind ``masked_secret`` at *path* where nothing is stored
+    to keep: the field is unset, or *model* is one the patch *built*. Merged
+    as a value, the mask would be written to the VCO as the secret.
+    """
+    if not _is_mask(type(model).model_fields[name], value):
+        return False
+    owner = type(model).__name__
+    if built:
+        raise _masked_secret(_MASK_BUILT, owner, name, path)
+    if unwrap(_field_value(model, name)) is MISSING:
+        raise _masked_secret(_MASK_UNSET, owner, name, path)
+    return True
 
 
 def _localize_groups(model: VcoModel, updates: Sequence[tuple[str, object]]) -> None:
@@ -1628,6 +1703,8 @@ def _build_input(
 
     - raises ``PatchError`` for a key that names no field, for a directive
       and for two keys that name one field (``_patch_fields``)
+    - raises ``PatchError`` for the mask of a secret: what the patch builds
+      has no stored secret to keep (``_keeps_secret`` says what the mask is)
     - turns a ``null`` into what the field takes it as (``_null_value``,
       with ``built=True``)
     - writes a key that pydantic does not read (the camelCase form of a field
@@ -1656,6 +1733,8 @@ def _build_input(
     for key, field_name, given in _patch_fields(names, owner, patch, path):
         fi = fields[field_name]
         child = path.child(field_name)
+        if _is_mask(fi, given):
+            raise _masked_secret(_MASK_BUILT, owner, field_name, child)
         value = given
         if value is None:
             value = _null_value(fi, field_name, child, built=True)

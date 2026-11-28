@@ -456,11 +456,11 @@ OLD_PASSWORD, NEW_PASSWORD = "OLD-md5-made-up", "NEW-md5-made-up"
 NEIGHBOR_IP = "192.0.2.1"
 
 
-def bgp_with_a_password(password: str) -> dict[str, Any]:
+def bgp_with_a_password(password: str, **more: Any) -> dict[str, Any]:
     """The ``bgp`` of a segment: one neighbour, ``NEIGHBOR_IP``, with *password*.
 
     The one ``test_secrets`` gives its device settings; the password is the
-    neighbour's last key.
+    neighbour's last key. *more* are further keys of the neighbour as stored.
     """
     return {
         "enabled": True,
@@ -472,19 +472,21 @@ def bgp_with_a_password(password: str) -> dict[str, Any]:
                 "neighborAS": "65001",
                 "enableMd5": True,
                 "id": "00000000-0000-0000-0000-0000000000aa",
+                **more,
                 "md5Password": password,
             }
         ],
     }
 
 
-async def state_with_a_bgp_password(password: str) -> ConfigState:
+async def state_with_a_bgp_password(password: str, **more: Any) -> ConfigState:
     """``rule_uses_hub`` whose Global Segment has a BGP neighbour with *password*.
 
     A profile state: the neighbour is ``NEIGHBOR_IP`` of the device settings'
     ``segments["Global Segment"].bgp``, and its ``md5_password`` is a secret.
+    *more* are further keys of the neighbour as stored.
     """
-    entry = {**ds_entry(GLOBAL), "bgp": bgp_with_a_password(password)}
+    entry = {**ds_entry(GLOBAL), "bgp": bgp_with_a_password(password, **more)}
     return await _hub_a_in_guest(entry)
 
 
