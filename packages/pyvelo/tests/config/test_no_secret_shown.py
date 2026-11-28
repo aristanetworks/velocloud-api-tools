@@ -327,6 +327,7 @@ async def two_neighbours_outputs() -> tuple[dict[str, str], dict[str, str]]:
 
     store.on_store.append(keep_it)
     result = await pipeline.save(state)
+    assert not any(result.left_out.values())
     shown |= {
         "repr(Guest result)": repr(result),
         "Guest result.warnings": repr(result.warnings),
@@ -376,6 +377,7 @@ async def device_settings_outputs() -> tuple[dict[str, str], dict[str, str]]:
     }
     since = len(store.requests)
     result = await pipeline.save(state)
+    assert not any(result.left_out.values())
     shown |= {"repr(result)": repr(result), "result.warnings": repr(result.warnings)}
     plans = [ds, plan_module(wan)]
     raw = {
@@ -431,7 +433,9 @@ def shows_a_secret(name: str) -> bool:
 
     All do but a repr of a plan, a write error or a save, which counts the
     entries; the warnings, which are empty in these fixtures (they are swept
-    as they are); and the plans of ``WITHOUT_A_SECRET``.
+    as they are); and the plans of ``WITHOUT_A_SECRET``. A save's
+    ``left_out`` is empty in these fixtures too (each asserts it), so its
+    entries are not reached by the sweep of ``repr(result)``.
     """
     return not (
         name.startswith("repr(")
@@ -461,6 +465,10 @@ async def test_no_shown_output_of_a_plan_a_save_or_a_write_error_holds_a_secret(
         if shows_a_secret(name) and HIDDEN not in shown_text
     ]
     assert unmasked == []
+    # The write error's server change at the secret is in its text.
+    line = f'neighbors["{SECOND_IP}"].md5_password: read "***", stored "***"'
+    for name in ("str(server error)", "server error.render"):
+        assert line in shown[name], name
     # The fixture does hold them: what is in the VCO's form carries each.
     assert MEANT in raw["plan.data"]
     assert READ in raw["plan.changes"]
@@ -592,10 +600,12 @@ def other_shapes(trail: tuple[Step, ...]) -> Iterator[tuple[Step, ...]]:
     Each of the shapes whose secrets the walk hides: an entry of a map given
     as the item of a list (a list where a map is declared); an item of a
     list given as an entry of a map, where a list is all the field declares
-    (a map where a list is); and a map of the class that has the secret given
-    as one object of it, where the key of that object on the way holds the
-    secret or a list (one object where a map is: a key there that holds an
-    object is an entry of the map, as declared).
+    (a map where a list is), or as the one object itself (one object where
+    only a list is); one object of a class given as the item of a list (a
+    list where one object is); and a map of the class that has the secret
+    given as one object of it, where the key of that object on the way holds
+    the secret or a list (one object where a map is: a key there that holds
+    an object is an entry of the map, as declared).
     """
 
     def with_parts(position: int, parts: tuple[str | int, ...]) -> tuple[Step, ...]:
@@ -609,6 +619,9 @@ def other_shapes(trail: tuple[Step, ...]) -> Iterator[tuple[Step, ...]]:
                 yield with_parts(position, parts)
         if step.only_a_list and step.parts == (0,):
             yield with_parts(position, ("e0",))
+            yield with_parts(position, ())
+        if step.parts == () and position < len(trail) - 1:
+            yield with_parts(position, (0,))
         holds_no_object = position == len(trail) - 2 or (
             position + 1 < len(trail) and trail[position + 1].parts[:1] == (0,)
         )
@@ -636,9 +649,9 @@ def test_every_declared_secret_is_hidden_wherever_the_classes_reach_it() -> None
                 document,
             )
             reached += 1
-    # 1725 documents from 90 roots, 697 of them of the declared shape and
-    # 1028 of another: a fall is a secret the walk no longer reaches.
-    assert reached >= 1720
+    # 3607 documents from 90 roots, 697 of them of the declared shape and
+    # 2910 of another: a fall is a secret the walk no longer reaches.
+    assert reached >= 3600
 
 
 def secret_keys() -> list[str]:

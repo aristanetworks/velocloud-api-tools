@@ -2369,10 +2369,11 @@ Known limits:
   WAN network's ISP key, the `data` of a device settings ref row), with
   `"***"` in its place, at any depth of a value. That is the text of a plan
   (`render()`), whose line for a ref row it adds or removes gives the row's
-  name and identity and nothing of its data (`+ refs deviceSettings:segment:
-  2`); the message of a write error (`str(error)`, `render()`), in which each
-  value of a ref row is `"***"` whole; the field changes (`get_field_changes`)
-  and `ModulePlan.shown_change`; the entries of a write error's
+  name and identity and nothing else of the row (`+ refs
+  deviceSettings:segment: 2`); the message of a write error (`str(error)`,
+  `render()`), in which each value of a ref row is `"***"` whole; the field
+  changes (`get_field_changes`) and `ModulePlan.shown_change`; the entries
+  of a write error's
   `not_redone()`, in which each value of a ref row is `"***"`, as in the
   message; the two values of each entry of `compare_effective` (see "The
   effective view"); and a model's `named_dump()`, a configuration's too, each
