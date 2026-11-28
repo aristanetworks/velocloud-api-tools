@@ -2,19 +2,21 @@
 
 One test per surface that shows a path: the plan's lines and the field changes,
 a patch error, a dangling reference and its mending patches, the hints a message
-shows, a warning, a ref line, a write error, an edit of the layer a save does
-not write, the effective comparison. Each
-takes a path from the surface, checks that its text parses back to the same
+shows, a warning, a ref line, a write error and its redo patch, a validator's
+finding, an edit of the layer a save does not write, the effective comparison.
+Each takes a path from the surface, checks that its text parses back to the same
 parts, gives it to ``apply`` with the module the surface names, and checks that
 the place reached is the one shown.
 
 Then the names: every module name a surface holds is one ``apply`` takes, and
 no text holds the VCO's name of a module or the key the VCO writes a field
-under.
+under. Last, the refusals that name places only, made from a state that holds
+a secret, show none of it.
 
 The states are the ones each surface's own tests build.
 """
 
+import copy
 import json
 import re
 import uuid
@@ -25,6 +27,9 @@ import pytest
 from hub_helpers import HUB_A, HUB_B, backhaul_row, ds_with_vpn
 from hub_state import (
     FROM_BOTH_LISTS,
+    NEW_PASSWORD,
+    NEW_PASSWORD_PATCH,
+    OLD_PASSWORD,
     OUT_OF_THE_RULE,
     edit,
     edited,
@@ -32,6 +37,7 @@ from hub_state import (
     hub_backhaul_rule,
     hub_pipeline,
     rule_uses_hub,
+    state_with_a_bgp_password,
 )
 from profile_state import module_store_pipeline, profile_state
 from pydantic import MISSING
@@ -58,9 +64,17 @@ from pyvelo.client.exceptions import (
 from pyvelo.client.hub_services import BACKHAUL_REF
 from pyvelo.client.models.configuration.device_settings.root import DeviceSettingsData
 from pyvelo.client.models.configuration.firewall.root import FirewallData
+from pyvelo.client.models.configuration.profile_segments import (
+    AddedDefaults,
+    AddedSegment,
+    with_additions,
+)
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.module_write import plan_module
-from pyvelo.client.schemas.configuration import EnterpriseConfigurationProfile
+from pyvelo.client.schemas.configuration import (
+    DeviceSettingsConfigurationModule,
+    EnterpriseConfigurationProfile,
+)
 from pyvelo.config import (
     ConfigPipeline,
     ConfigState,
@@ -69,10 +83,17 @@ from pyvelo.config import (
     PatchError,
 )
 from pyvelo.config.effective import EffectiveComparison
-from pyvelo.config.errors import SaveStepError
+from pyvelo.config.errors import SaveStepError, SaveValidationError
 from pyvelo.config.module_names import resolve_module_name
 from pyvelo.config.resolver import ResolverContext
+from pyvelo.config.validation import ValidationError
 from pyvelo.config.validation_warning import ValidationWarning
+from pyvelo.config.validators.builtin import key_uniqueness, required_fields
+from pyvelo.config.validators.device_settings import validate_no_overlapping_subnets
+from pyvelo.config.validators.firewall import (
+    validate_interface_firewall_consistency,
+    validate_rule_names_unique,
+)
 from pyvelo.core import VcoModel, add, named_path
 from pyvelo.core.base import field_models, wire_name
 from pyvelo.core.identity import HubServiceNotFoundError
@@ -107,6 +128,12 @@ from test_apply_paths import (  # pyright: ignore[reportImplicitRelativeImport]
 from test_backhaul_without_hub import (  # pyright: ignore[reportImplicitRelativeImport]
     out_of_rule,
 )
+from test_builtin_validators import (  # pyright: ignore[reportImplicitRelativeImport]
+    _routes_state as routes_state,  # pyright: ignore[reportPrivateUsage]  # the device settings with static routes
+)
+from test_builtin_validators import (  # pyright: ignore[reportImplicitRelativeImport]
+    _static_route as static_route,  # pyright: ignore[reportPrivateUsage]  # one route of those
+)
 from test_compare_effective import (  # pyright: ignore[reportImplicitRelativeImport]  # pyright: ignore[reportImplicitRelativeImport]
     EDGE_ID,
     OTHER_RULE,
@@ -115,6 +142,24 @@ from test_compare_effective import (  # pyright: ignore[reportImplicitRelativeIm
     composed_segment,
     guest_qos,
     loaded,
+)
+from test_domain_validators import (  # pyright: ignore[reportImplicitRelativeImport]
+    _firewall_module as firewall_module,  # pyright: ignore[reportPrivateUsage]  # a firewall with outbound rules
+)
+from test_domain_validators import (  # pyright: ignore[reportImplicitRelativeImport]
+    _make_state as validated_state,  # pyright: ignore[reportPrivateUsage]  # a profile of the given modules
+)
+from test_domain_validators import (  # pyright: ignore[reportImplicitRelativeImport]
+    _mod_kwargs as module_fields,  # pyright: ignore[reportPrivateUsage]  # a module's other fields
+)
+from test_domain_validators import (  # pyright: ignore[reportImplicitRelativeImport]
+    _networks_state as networks_state,  # pyright: ignore[reportPrivateUsage]  # networks that overlap
+)
+from test_domain_validators import (  # pyright: ignore[reportImplicitRelativeImport]
+    _outbound_rule as outbound_rule,  # pyright: ignore[reportPrivateUsage]  # one rule of a firewall
+)
+from test_domain_validators import (  # pyright: ignore[reportImplicitRelativeImport]
+    state_with_two_rules_named,
 )
 from test_hub_checks import (  # pyright: ignore[reportImplicitRelativeImport]
     add as add_hub,
@@ -192,6 +237,22 @@ from test_state_references import (  # pyright: ignore[reportImplicitRelativeImp
 )
 from test_unconfirmed_insert import (  # pyright: ignore[reportImplicitRelativeImport]
     edge_qos_rows,
+)
+from tests.test_patch_fixed_list import (  # pyright: ignore[reportImplicitRelativeImport]
+    given,
+    without_alt_key,
+)
+from tests.test_patch_fixed_list import (  # pyright: ignore[reportImplicitRelativeImport]
+    refusal as fixed_list_merge_refused,
+)
+from tests.test_patch_fixed_list import (  # pyright: ignore[reportImplicitRelativeImport]
+    segment as fixed_segment,
+)
+from tests.test_write_module import (  # pyright: ignore[reportImplicitRelativeImport]
+    firewall_disabled,
+)
+from tests.test_write_module import (  # pyright: ignore[reportImplicitRelativeImport]
+    qos as qos_module,
 )
 
 apply = ConfigPipeline(client=None).apply
@@ -818,6 +879,122 @@ async def test_the_line_of_a_lost_edit_is_a_path_that_makes_the_edit_again() -> 
     assert (again.module, again.before, again.after) == ("business_policy", -1, 443)
 
 
+def planned_paths(state: ConfigState) -> list[Path]:
+    """The path of each field change *state* plans."""
+    return [change.path for change in state.get_field_changes()]
+
+
+async def errors_with_lost_edits() -> list[tuple[ModuleWriteError, ConfigState]]:
+    """The two write errors of ``write_errors`` a save raises, with the state.
+
+    The state is the one the save left: it holds the module as stored, and
+    plans none of the lost edits.
+    """
+    pairs = [await low_port_lost(), await low_port_lost(both=True)]
+    return [(error, state) for state, error in pairs]
+
+
+async def test_a_redo_patch_is_sent_as_given_and_redoes_the_lost_edits() -> None:
+    """A redo patch, given to ``apply`` with the error's module, makes the lost edits.
+
+    The plan then has a line at each lost edit's path as the error shows it,
+    and no other, and each path reads back as written.
+    """
+    for error, state in await errors_with_lost_edits():
+        assert error.plan is not None
+        assert planned_paths(state) == []
+        _ = await apply(state, module=error.module_name, patch=error.redo_patch())
+        paths = planned_paths(state)
+        assert sorted(paths) == sorted(
+            error.plan.named(lost.path) for lost in error.lost_edits
+        )
+        for path in paths:
+            round_trips(path)
+
+
+# --- a validator's finding -----------------------------------------------------------
+
+
+def unknown_interface_state() -> ConfigState:
+    """A firewall rule ``ssh`` whose source interface the device settings lack.
+
+    The state of the interface check's own test.
+    """
+    ds = DeviceSettingsData.model_validate(
+        {
+            "lan": {"networks": []},
+            "segments": [ds_entry(GLOBAL)],
+            "routedInterfaces": [{"name": "GE1"}],
+        }
+    )
+    return validated_state(
+        [
+            DeviceSettingsConfigurationModule(data=ds, id_=2, **module_fields()),
+            firewall_module(outbound_rule("web", "GE1"), outbound_rule("ssh", "GE9")),
+        ]
+    )
+
+
+def validator_findings() -> list[tuple[ConfigState, ValidationError, object]]:
+    """Each validator's finding over a state its own tests build, and its place.
+
+    A static route twice, and one without its gateway; a QoS rule name twice,
+    and a firewall one; two segments of overlapping networks; a firewall
+    rule's unknown interface, which is a warning. With each, the object the
+    finding is about: the second route, the gateway (``MISSING``), the second
+    rule, the list of networks, the rule's match.
+    """
+    routes = routes_state(static_route("192.168.1.1"), static_route("192.168.1.1"))
+    without_gateway = routes_state(
+        static_route("192.168.1.1").model_copy(update={"gateway": MISSING})
+    )
+    qos_rules = state_with_two_rules_named("Web")
+    firewall_rules = validated_state(
+        [firewall_module(outbound_rule("same"), outbound_rule("same"))]
+    )
+    overlaps = networks_state(0, 7)
+    interfaces = unknown_interface_state()
+
+    segment_routes = routes.profile.device_settings.segments[0].routes
+    assert segment_routes is not MISSING
+    (duplicate_key,) = key_uniqueness.validate(routes).errors
+    (missing,) = required_fields.validate(without_gateway).errors
+    (duplicate_rule,) = validate_rule_names_unique.validate(qos_rules).errors
+    (duplicate_firewall_rule,) = validate_rule_names_unique.validate(
+        firewall_rules
+    ).errors
+    overlapping = validate_no_overlapping_subnets.validate(overlaps).errors
+    assert len(overlapping) == 2
+    (unknown,) = validate_interface_firewall_consistency.validate(interfaces).warnings
+    return [
+        (routes, duplicate_key, segment_routes.static[1]),
+        (without_gateway, missing, MISSING),
+        (qos_rules, duplicate_rule, qos_rules.profile.qos.segments[1].rules[1]),
+        (
+            firewall_rules,
+            duplicate_firewall_rule,
+            firewall_rules.profile.firewall.segments[1].outbound[1],
+        ),
+        *(
+            (overlaps, finding, overlaps.profile.device_settings.lan.networks)
+            for finding in overlapping
+        ),
+        (
+            interfaces,
+            unknown,
+            interfaces.profile.firewall.segments[1].outbound[1].match,
+        ),
+    ]
+
+
+def test_the_path_of_a_validators_finding_reaches_what_it_is_about() -> None:
+    """A finding's path, in the data of its module, reaches what it is about."""
+    for state, finding, about in validator_findings():
+        round_trips(finding.path)
+        assert finding.module is not None
+        assert reached(data_of(state, finding.module), finding.path) is about
+
+
 # --- the effective comparison ------------------------------------------------------
 
 
@@ -1040,12 +1217,15 @@ def take_hub_a_out(state: ConfigState) -> None:
     del hubs[0]
 
 
-async def profile_layer_edited() -> LayerNotSavedError:
+async def profile_layer_edited(
+    profile: ConfigState,
+    edit_profile: Callable[[ConfigState], None] = take_hub_a_out,
+) -> LayerNotSavedError:
     """What ``plan()`` raises for an edge whose profile layer was edited.
 
-    The edge is ``make_state``'s, over the profile of ``rule_uses_hub``.
+    The edge is ``make_state``'s, over the profile of *profile*, a state of
+    ``rule_uses_hub`` or one built as it is, which *edit_profile* edits.
     """
-    profile = await rule_uses_hub()
     state = ConfigState(
         edge_config=make_state().edge_config,
         profile_config=profile.profile_config,
@@ -1054,7 +1234,7 @@ async def profile_layer_edited() -> LayerNotSavedError:
         resolvers=profile.resolvers,
     )
     state.take_snapshot()
-    take_hub_a_out(state)
+    edit_profile(state)
     with pytest.raises(LayerNotSavedError) as raised:
         _ = state.plan()
     return raised.value
@@ -1065,7 +1245,7 @@ async def test_the_paths_of_an_unsaved_layer_make_its_edits_in_the_profile() -> 
 
     The paths are the ones a plan of the profile shows for the same edits.
     """
-    error = await profile_layer_edited()
+    error = await profile_layer_edited(await rule_uses_hub())
     assert error.fields == {
         "device_settings": [
             "segments[Guest].vpn.hub_edges.enabled",
@@ -1150,19 +1330,87 @@ async def write_errors() -> dict[str, Exception]:
     }
 
 
+def segment_set_refused(state: ConfigState) -> SegmentSetError:
+    """What ``plan()`` raises once the second segment of *state*'s QoS is deleted."""
+    del state.profile.qos.segments[1]
+    with pytest.raises(SegmentSetError) as segment_set:
+        _ = state.plan()
+    return segment_set.value
+
+
+def segment_set_refused_by_one_module(state: ConfigState) -> SegmentSetError:
+    """The same deletion, refused by a plan of the QoS module alone."""
+    del state.profile.qos.segments[1]
+    with pytest.raises(SegmentSetError) as segment_set:
+        _ = plan_module(state.module("business_policy"))
+    return segment_set.value
+
+
+def hub_list_refused_by_one_module(state: ConfigState) -> HubListError:
+    """Guest's first Branch-to-Hub hub deleted, refused by a plan of the module.
+
+    *state* is ``rule_uses_hub``'s, or one built as it is.
+    """
+    del state.profile.device_settings.segments[GUEST_AT].vpn.hub_edges.vpn_hubs[0]
+    with pytest.raises(HubListError) as hub_list:
+        _ = plan_module(state.module("device_settings"))
+    return hub_list.value
+
+
+def fixed_list_refused(state: ConfigState) -> FixedListError:
+    """Guest's first default QoS rule deleted, refused by ``plan()``.
+
+    *state* is ``rule_uses_hub``'s, or one built as it is.
+    """
+    defaults = state.profile.qos.segments[GUEST_AT].defaults
+    assert isinstance(defaults, list)
+    del defaults[0]
+    with pytest.raises(FixedListError) as fixed_list:
+        _ = state.plan()
+    return fixed_list.value
+
+
 async def one_module_refusals() -> dict[str, Exception]:
     """The refusals of a plan of one module alone: a state's plan makes others."""
-    segments = await in_all_three()
-    del segments.profile.qos.segments[1]
-    with pytest.raises(SegmentSetError) as segment_set:
-        _ = plan_module(segments.module("business_policy"))
-    hubs = await rule_uses_hub()
-    del hubs.profile.device_settings.segments[GUEST_AT].vpn.hub_edges.vpn_hubs[0]
-    with pytest.raises(HubListError) as hub_list:
-        _ = plan_module(hubs.module("device_settings"))
     return {
-        "segment set, one module": segment_set.value,
-        "hub list, one module": hub_list.value,
+        "segment set, one module": segment_set_refused_by_one_module(
+            await in_all_three()
+        ),
+        "hub list, one module": hub_list_refused_by_one_module(await rule_uses_hub()),
+    }
+
+
+async def refusals_below_a_state() -> dict[str, Exception]:
+    """The refusals of a fixed list's merge, a segment addition and ``write_module``.
+
+    Each is made as its own tests make it: the merge into a fixed list of test
+    models, of a patch and of a list value that each change the alternate key;
+    the addition of a segment to a module's data that holds it, and of
+    defaults to one that lacks it; and the write of a firewall module with a
+    plan of QoS.
+    """
+    patched = fixed_list_merge_refused(
+        fixed_segment(), {"defaults": {"Beta": {"rule_id": str(uuid.uuid4())}}}
+    )
+    value = [without_alt_key(given(i)) for i in range(3)]
+    value[1]["ruleId"] = str(uuid.uuid4())
+    listed = fixed_list_merge_refused(fixed_segment(), {"defaults": value})
+    entry = {"segment": {"segmentId": 2, "name": "Guest"}}
+    with pytest.raises(ValueError, match="already") as added_twice:
+        _ = with_additions(
+            {"segments": [copy.deepcopy(entry)]}, (AddedSegment(2, "Guest", entry),)
+        )
+    with pytest.raises(ValueError, match="no segment") as no_segment:
+        _ = with_additions({"segments": []}, (AddedDefaults(2, "Guest", ()),))
+    plan = plan_module(qos_module({"segments": []}), {"segments": [], "x": 1})
+    with pytest.raises(ValueError, match="the plan is for") as another_module:
+        _ = await MockVcoClient().write_module(firewall_disabled(), plan)
+    return {
+        "fixed list, a patch": patched,
+        "fixed list, a list value": listed,
+        "segment added twice": added_twice.value,
+        "defaults for a segment the data lacks": no_segment.value,
+        "write_module of a plan for another module": another_module.value,
     }
 
 
@@ -1217,10 +1465,6 @@ async def refusals() -> dict[str, Exception]:
     Each is raised the way its own tests raise it, but those ``made_by_hand``
     and two of ``write_errors`` make.
     """
-    state = await in_all_three()
-    del state.profile.qos.segments[1]
-    with pytest.raises(SegmentSetError) as segment_set:
-        _ = state.plan()
     pipeline, _, used = await used_hub_save()
     with pytest.raises(HubListError) as hub_in_use:
         _ = await pipeline.save(used, on_hub_in_use="refuse")
@@ -1235,12 +1479,6 @@ async def refusals() -> dict[str, Exception]:
         )
     with pytest.raises(ValueError, match="Unknown module") as unknown_module:
         _ = resolve_module_name("qos")
-    fixed = await rule_uses_hub()
-    defaults = fixed.profile.qos.segments[GUEST_AT].defaults
-    assert isinstance(defaults, list)
-    del defaults[0]
-    with pytest.raises(FixedListError) as fixed_list:
-        _ = fixed.plan()
     comparing, compared_state, client = await loaded()
     client.store.composed[EDGE_ID]["QOS"] = None
     with pytest.raises(ComposedModuleError) as composed:
@@ -1252,13 +1490,14 @@ async def refusals() -> dict[str, Exception]:
         "backhaul without a hub": no_hub.value,
         "hub list": hub_list_refused(await hub_listed_with_the_list_off()),
         "hub in use": hub_in_use.value,
-        "segment set": segment_set.value,
-        "fixed list": fixed_list.value,
+        "segment set": segment_set_refused(await in_all_three()),
+        "fixed list": fixed_list_refused(await rule_uses_hub()),
         "composed module": composed.value,
         "module name": unknown_module.value,
-        "layer not saved": await profile_layer_edited(),
+        "layer not saved": await profile_layer_edited(await rule_uses_hub()),
         **await write_errors(),
         **await one_module_refusals(),
+        **await refusals_below_a_state(),
         **await not_written_refusals(),
         **made_by_hand(),
     }
@@ -1436,6 +1675,22 @@ async def every_text() -> dict[str, str]:
         texts[f"error: {name}"] = str(error)
         if isinstance(error, ModuleWriteError):
             texts[f"error: {name}, rendered"] = error.render()
+            if error.lost_edits:
+                texts[f"redo patch: {name}"] = json.dumps(error.redo_patch())
+                texts[f"not redone: {name}"] = "\n".join(
+                    str(change.path) for change in error.not_redone()
+                )
+    findings = [finding for _, finding, _ in validator_findings()]
+    for position, finding in enumerate(findings):
+        texts[f"finding {position}: {finding.code}"] = (
+            f"{finding.module} {finding.path}: {finding.message}"
+        )
+    whole_module = ValidationError(
+        path=Path(()), message="blocked", code="blocked", module="firewall"
+    )
+    texts["save blocked by validators"] = str(
+        SaveValidationError([*findings, whole_module])
+    )
     for position, (state, warning) in enumerate(await warned()):
         texts[f"warning {position}: {warning.code}"] = warning.message
         texts[f"plan with warning {position}"] = state.plan().render()
@@ -1477,10 +1732,14 @@ async def test_no_text_holds_a_vco_module_name_or_a_wire_key() -> None:
 
     The texts: three plans, an error of each class ``refusals`` makes (the
     refusals of a patch, a reference, the hub lists, the segment set, a fixed
-    list, a composed module, a revert, a module a save does not write, an
-    edit of the layer a save does not write, and every class of write
-    error), each warning of ``warned`` with the plan
-    of its state, and the comparison.
+    list in a plan and in a merge, a segment addition to a module's data,
+    ``write_module`` given another module's plan, a composed module, a
+    revert, a module a save does not write, an edit of the layer a save does
+    not write, and every class of write error), the redo patch and what is
+    not redone of each write error that lost edits, each warning of
+    ``warned`` with the plan of its state, the comparison, and each
+    validator's finding of ``validator_findings`` with its module and path,
+    and the save they block.
 
     What may hold a name of the VCO's: a ref name, which is data, the one
     sentence that tells a caller the VCO's module names are accepted, the
@@ -1488,7 +1747,14 @@ async def test_no_text_holds_a_vco_module_name_or_a_wire_key() -> None:
     is a word, in a sentence (``PROSE``).
 
     Not covered: the paths and messages that the raise sites of the errors of
-    ``made_by_hand`` give them, and the ``defaults_not_template`` warning.
+    ``made_by_hand`` give them; the ``defaults_not_template`` warning; the two
+    refusals of a patch that ``_resolve_items`` of ``core/merge.py`` builds
+    (``... names this item too``, ``... adds this key too``); the
+    ``source`` of a ``Resolved`` value of ``state.effective``, a wire path in
+    the layer the value came from; the path of a
+    ``DetachedObjectError`` that starts at the object an edit was made
+    through, such as a row, and not at a module's data; and the errors that
+    print what the VCO answered (``VcoApiError``, ``VcoOperationError``).
     """
     wire = wire_keys()
     assert set(HAND_LIST) <= wire
@@ -1501,6 +1767,17 @@ async def test_no_text_holds_a_vco_module_name_or_a_wire_key() -> None:
 
     texts = await every_text()
     assert len(texts) > 60
+    assert texts["not redone: refs dropped"]
+    assert {
+        "redo patch: write not applied",
+        "redo patch: write conflict",
+        "finding 0: key_uniqueness",
+        "finding 6: unknown_interface_ref",
+        "save blocked by validators",
+        "error: fixed list, a patch",
+        "error: segment added twice",
+        "error: write_module of a plan for another module",
+    } <= set(texts)
     assert {
         key.partition(": ")[2] for key in texts if key.startswith("warning ")
     } == WARNING_CODES
@@ -1513,3 +1790,51 @@ async def test_no_text_holds_a_vco_module_name_or_a_wire_key() -> None:
     # The exceptions are of the fixtures: a ref name is shown, and so is the sentence.
     assert REF_KEY.search(texts["plan"]) is not None
     assert VCO_FORMS.search(texts["error: module name"]) is not None
+
+
+# --- a secret in a state whose refusals name places ---------------------------------
+
+
+async def a_new_password() -> ConfigState:
+    """``state_with_a_bgp_password`` of ``OLD_PASSWORD``; an edit sets ``NEW``."""
+    state = await state_with_a_bgp_password(OLD_PASSWORD)
+    await edit(state, "device_settings", NEW_PASSWORD_PATCH)
+    return state
+
+
+def take_hub_a_out_and_change_the_password(state: ConfigState) -> None:
+    """``take_hub_a_out``, and ``NEW_PASSWORD`` for the profile's BGP neighbour."""
+    take_hub_a_out(state)
+    _ = state.profile.device_settings.merge_patch(NEW_PASSWORD_PATCH)
+
+
+async def test_a_refusal_that_names_places_holds_no_secret_of_its_state() -> None:
+    """A refusal of paths and names, made over a state that holds a secret.
+
+    The refusals ``refusals`` makes from ``rule_uses_hub``, made again as it
+    makes them from that state with a BGP password in its Global Segment,
+    set anew by an edit (the unsaved profile layer's, by an edit of that
+    layer, which the error names): neither password is in the text.
+    """
+    errors: dict[str, Exception] = {
+        "fixed list": fixed_list_refused(await a_new_password()),
+        "hub list, one module": hub_list_refused_by_one_module(await a_new_password()),
+        "segment set": segment_set_refused(await a_new_password()),
+        "segment set, one module": segment_set_refused_by_one_module(
+            await a_new_password()
+        ),
+        "layer not saved": await profile_layer_edited(
+            await state_with_a_bgp_password(OLD_PASSWORD),
+            take_hub_a_out_and_change_the_password,
+        ),
+    }
+    for name, error in errors.items():
+        text = str(error)
+        assert OLD_PASSWORD not in text, name
+        assert NEW_PASSWORD not in text, name
+    layer = errors["layer not saved"]
+    assert isinstance(layer, LayerNotSavedError)
+    assert (
+        'segments["Global Segment"].bgp.neighbors["192.0.2.1"].md5_password'
+        in layer.fields["device_settings"]
+    )
