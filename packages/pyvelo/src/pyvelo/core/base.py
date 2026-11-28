@@ -704,6 +704,7 @@ class VcoModel(BaseModel):
         """
         from pyvelo.client.exceptions import DetachedObjectError  # noqa: PLC0415 (it imports pyvelo.core)
 
+        from .names import named_path  # noqa: PLC0415 (names imports this module)
         from .rebase import Path  # noqa: PLC0415 (rebase imports this module)
 
         for place, model in _models_inside(self, ()):
@@ -711,7 +712,8 @@ class VcoModel(BaseModel):
                 continue
             if not place:
                 _raise_detached(self, name)
-            where = Path(place)
+            # Shown as every path is: fields by attribute, the item by its name.
+            where = named_path(Path(place), self)
             raise DetachedObjectError(
                 f"{type(self).__name__}.{name}: the {type(model).__name__} at "
                 f"{where} is a detached object (it belongs to a module the state "
@@ -1083,25 +1085,46 @@ class VcoModel(BaseModel):
         or an object of ``add`` entries only.
 
         **Errors.** A patch that cannot be applied raises ``PatchError`` (a
-        ``ValueError``) whose ``path`` is where in the patch it failed and
-        whose ``kind`` says which sort of refusal it is
-        (``patch.PatchErrorKind``); a pydantic ``ValidationError`` behind it
-        is its ``__cause__``. Resolver errors keep their types. A name on a
-        field whose resolver is not registered raises ``PatchError`` at the
-        field, unless the text can be the ID. All or nothing: a patch that
-        raises, ``PatchError``, ``ResolutionError`` or ``LookupError``, leaves
-        self as it was, the same dump and the same ``model_fields_set``. On an
-        object a write replaced (``is_detached``: a save or ``update_module``
-        did it) it raises ``DetachedObjectError`` before anything else, and so
-        it does on a model that holds such an object anywhere inside (one put
-        back as it is, not as a deep copy), naming where it sits, also for a
-        patch that would not reach it (``check_nothing_detached``).
+        ``ValueError``) whose ``path`` is where in the patch it failed, with
+        each item self has named as pyvelo shows it whatever selector the
+        patch used (``names.named_error``: ``rules[#0].bogus`` is
+        ``rules[Web].bogus`` where the first rule is ``Web``; an item of a
+        list value keeps its part, and so does the selector a ``duplicate``
+        gives a second time), and whose ``kind`` says which sort of refusal
+        it is (``patch.PatchErrorKind``); a pydantic
+        ``ValidationError`` behind it is its ``__cause__``. Resolver errors
+        keep their types. A name on a field whose resolver is not registered
+        raises ``PatchError`` at the field, unless the text can be the ID.
+        All or nothing: a patch that raises, ``PatchError``,
+        ``ResolutionError`` or ``LookupError``, leaves self as it was, the
+        same dump and the same ``model_fields_set``. On an object a write
+        replaced (``is_detached``: a save or ``update_module`` did it) it
+        raises ``DetachedObjectError`` before anything else, and so it does on
+        a model that holds such an object anywhere inside (one put back as it
+        is, not as a deep copy), naming where it sits, also for a patch that
+        would not reach it (``check_nothing_detached``).
         """
         self.check_nothing_detached("merge_patch")
         from .merge import apply_patch  # noqa: PLC0415 (merge imports this module)
+        from .names import named_error  # noqa: PLC0415 (names imports this module)
+        from .patch import PatchError  # noqa: PLC0415 (patch imports this module, through rebase)
 
-        _ = apply_patch(self, patch, resolvers)
-        return self
+        try:
+            _ = apply_patch(self, patch, resolvers)
+        except PatchError as error:
+            # Self is as it was, so the selectors the patch wrote name its items.
+            named = named_error(error, self, resolvers, patch=patch)
+            # The frames below this one: the raise adds this one again.
+            below = None if error.__traceback__ is None else error.__traceback__.tb_next
+        else:
+            return self
+        # Raised outside the handler: the error is one, with the cause and the
+        # frames of the error it names, and nothing else as its context. The
+        # locals go, so this frame, which the traceback holds, holds no error.
+        try:
+            raise named.with_traceback(below)
+        finally:
+            del named, below
 
 
 # ---------------------------------------------------------------------------

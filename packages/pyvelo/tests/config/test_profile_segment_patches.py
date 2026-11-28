@@ -223,7 +223,7 @@ async def test_an_addressed_add_assigns() -> None:
     state = await global_only()
 
     _ = await ConfigPipeline(client=None).apply(
-        state, module="qos", segment="Guest", patch=add({})
+        state, module="business_policy", segment="Guest", patch=add({})
     )
 
     assert [m.name for m in state.plan().changed] == [DS, QOS, FIREWALL]
@@ -254,12 +254,12 @@ async def test_a_plus_add_without_a_name_raises() -> None:
 async def test_an_add_of_a_segment_the_module_had_as_read_raises_exists() -> None:
     state = await guest_everywhere()
 
-    for module, wire in (("qos", QOS), ("firewall", FIREWALL), ("device_settings", DS)):
+    for module in ("business_policy", "firewall", "device_settings"):
         with pytest.raises(PatchError) as raised:
             _ = await patch(state, module, {"Guest": add({})})
         assert raised.value.kind == "exists"
         assert raised.value.path == GUEST_AT
-        assert f"Guest is already in {wire}; change it with a plain object" in str(
+        assert f"Guest is already in {module}; change it with a plain object" in str(
             raised.value
         )
     assert state.plan().changed == ()
@@ -273,7 +273,7 @@ async def test_an_add_after_assign_segment_merges_into_the_entry() -> None:
 
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         patch={"segments": {"Guest": add({"rules": [rule("Box")]})}},
     )
 
@@ -433,7 +433,7 @@ async def test_a_profile_without_qos_refuses_an_add() -> None:
 
     assert raised.value.kind == "segment_rule"
     assert raised.value.path == Path(("segments",))
-    assert "QOS" in raised.value.message
+    assert "business_policy" in raised.value.message
     assert state.plan().render() == before
 
 
@@ -464,11 +464,13 @@ async def test_an_add_to_a_module_the_profile_lacks_raises_patch_error(
     }[form]
 
     with pytest.raises(PatchError) as raised:
-        _ = await ConfigPipeline(client=None).apply(state, module="qos", **call)
+        _ = await ConfigPipeline(client=None).apply(
+            state, module="business_policy", **call
+        )
 
     assert raised.value.kind == "segment_rule"
     assert raised.value.path == Path(("segments",))
-    assert "no QOS module" in raised.value.message
+    assert "no business_policy module" in raised.value.message
     assert "not supported" in raised.value.message
     assert state.find_module(QOS) is None
     assert state.plan().render() == before
@@ -832,7 +834,7 @@ async def test_a_list_value_without_an_orphan_is_accepted(module: str) -> None:
     assert names_in(state, module) == ["Global Segment"]
 
 
-@pytest.mark.parametrize("module", ["qos", "firewall", "device_settings"])
+@pytest.mark.parametrize("module", ["business_policy", "firewall", "device_settings"])
 @pytest.mark.parametrize(
     "form",
     [
@@ -845,7 +847,7 @@ async def test_every_other_removal_raises(module: str, form: str) -> None:
     state = await guest_everywhere()
     before = dumps(state)
     rendered = state.plan().render()
-    wire = {"qos": QOS, "firewall": FIREWALL, "device_settings": DS}[module]
+    wire = {"business_policy": QOS, "firewall": FIREWALL, "device_settings": DS}[module]
     first = kept(state, wire)
     segments: object = {
         "delete": {"Guest": delete()},
@@ -921,7 +923,7 @@ async def test_removing_a_segment_device_settings_has_raises_even_from_qos_witho
         ),
     ],
 )
-@pytest.mark.parametrize("module", ["qos", "firewall", "device_settings"])
+@pytest.mark.parametrize("module", ["business_policy", "firewall", "device_settings"])
 async def test_a_descriptor_rewrite_raises(
     module: str, segments: dict[str, object], detail: str
 ) -> None:
@@ -941,7 +943,7 @@ async def test_a_descriptor_rewrite_raises(
     assert state.plan().render() == rendered
 
 
-@pytest.mark.parametrize("module", ["qos", "firewall", "device_settings"])
+@pytest.mark.parametrize("module", ["business_policy", "firewall", "device_settings"])
 async def test_a_descriptor_rewritten_into_anothers_id_raises(module: str) -> None:
     state = await guest_everywhere()
     before = dumps(state)
@@ -997,7 +999,7 @@ async def test_the_saved_assignment_reads_back_and_a_second_add_raises_exists() 
     pipeline, _ = module_store_pipeline(state)
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         patch={"segments": {"Guest": add({"rules": [rule("Box")]})}},
     )
 
@@ -1006,7 +1008,7 @@ async def test_the_saved_assignment_reads_back_and_a_second_add_raises_exists() 
     assert [str(m) for m in result.modules_updated] == [DS, QOS, FIREWALL]
     assert state.plan().changed == ()
     assert state.plan().render() == state.plan().render()
-    for module in ("qos", "firewall", "device_settings"):
+    for module in ("business_policy", "firewall", "device_settings"):
         with pytest.raises(PatchError) as raised:
             _ = await pipeline.apply(
                 state, module=module, patch={"segments": {"Guest": add({})}}

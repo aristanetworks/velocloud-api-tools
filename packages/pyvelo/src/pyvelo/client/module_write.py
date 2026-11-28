@@ -70,8 +70,9 @@ is reported (``legacy_keys``) and left, never written just to strip it.
 """
 
 import copy
+import functools
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from typing import Any, Final, Literal, cast, override
@@ -83,10 +84,11 @@ from pyvelo.client.derived_refs import (
     DerivedRefs,
     PlanWarning,
     RefChange,
-    changed_owners,
+    changed_owner_paths,
     derive_refs,
     sends_refs_always,
 )
+from pyvelo.client.enums.configuration import python_module_name
 from pyvelo.client.exceptions import (
     ConfigConflictError,
     FixedListError,
@@ -139,14 +141,22 @@ from pyvelo.core.base import (
 )
 from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.layers import Edge, Layered, Profile
+from pyvelo.core.merge import nested_under
+from pyvelo.core.names import ChangeNames, named_path, named_value
 from pyvelo.core.owned import UnflaggedInUse, unflagged_in_use_at
 from pyvelo.core.rebase import (
+    ItemMove,
+    ItemPart,
+    ItemPlace,
     Key,
+    PairedList,
     Path,
+    PathPart,
     RawChange,
     carry_unset_defaults,
     find_lossy_assignments,
     is_override_flag,
+    item_text,
     mark_added_items,
     raw_changes,
     rebase,
@@ -159,7 +169,7 @@ from pyvelo.core.response_check import (
     ServerChange,
     check_response,
 )
-from pyvelo.core.show import moves_text, shown, shown_together
+from pyvelo.core.show import MOVES_SHOWN, moves_text, shown, shown_together
 
 type _Operation = Literal["none", "update", "insert"]
 
@@ -333,6 +343,26 @@ class ModulePlan:
     ``update_request`` refuses such an update without it. It changes nothing for
     a module with a version, or for an insert.
     """
+    planned: VcoModel | None = dataclass_field(default=None, repr=False, compare=False)
+    """The module's data as planned: a copy, taken when the plan was made.
+
+    ``named`` finds in it the item a path names, so the text of a plan kept
+    while the data is edited further still names each item as it was when the
+    plan was made. None for a plan made from a mapping. Do not change it. A
+    plan made from this one (the hub rows) keeps it; a rebase plans again, and
+    has the rebased data.
+    """
+    paired_lists: Mapping[Path, PairedList] = dataclass_field(
+        default_factory=dict[Path, PairedList], repr=False, compare=False
+    )
+    """How ``changes`` paired the items of each keyed list, by the list's path.
+
+    It is recorded while the changes are made (``raw_changes``), for each
+    list whose changes are made item by item. ``named`` and ``shown_change``
+    find by it the item a change names, so what shows a change pairs nothing
+    again and reads no name as a selector. Do not change it. A plan made from
+    this one keeps it, with ``changes``.
+    """
 
     @override
     def __repr__(self) -> str:
@@ -341,8 +371,183 @@ class ModulePlan:
             f"changes={len(self.changes)})"
         )
 
+    def named(self, path: Path, *, removed: bool = False) -> Path:
+        """*path* as pyvelo shows it: fields by attribute, items by what names them.
+
+        *path* is one of this plan's: it names a field by the key the VCO uses
+        and an item by its key as read (``changes``, ``legacy_keys``,
+        ``overrides_turned_on``). An item is shown as the data as planned names
+        it, so a change inside a renamed rule is shown under the rule's new
+        name, and the path names the rule in the data the caller holds. An
+        item the plan removes, and all below it, is shown as the data as read
+        names it; give *removed* where the change removes what *path* names,
+        since an item added under the key of one removed has its name
+        (``ChangeNames``). An item is found by how the changes paired the
+        list it is in (``paired_lists``) and never by reading its name as a
+        selector, so a path never names another item; a position still shown
+        (nothing else names the item alone) is its position in the data it is
+        shown in.
+
+        A plan that lacks one of the two (it was made from a mapping, or of a
+        module that never carried data) shows the path in the one the state
+        asks for, and by the class of the data where it lacks that: the fields
+        are named, and each item keeps the key it is written with.
+        """
+        names = self._change_names
+        if names is not None:
+            return names.path(path, removed=removed)
+        data = self.as_read if removed else self.planned
+        return named_path(path, self.model if data is None else data)
+
+    @functools.cached_property
+    def _change_names(self) -> ChangeNames | None:
+        """What names the paths between the data as read and as planned.
+
+        None for a plan that lacks one of the two. It is made once for the
+        plan and keeps what it finds for each list, so the lines of a plan do
+        not each read the lists again.
+        """
+        read, edited = self.as_read, self.planned
+        if read is None or edited is None:
+            return None
+        return ChangeNames(read, edited, self.paired_lists)
+
+    def _shown_items(self, items: Path) -> Callable[[ItemPart], ItemPart]:
+        """What shows an item of the keyed list at *items*, as a change names it.
+
+        The item an added one is placed after, each item of a move, and each
+        name of an order entry: an item of the list as planned, shown by the
+        part ``named`` shows it by (``ChangeNames.items``). The list is named
+        in one pass, so the names of all the items of a long list cost about
+        the list once. A plan that lacks the data as read or as planned
+        keeps each name as written.
+        """
+        names = self._change_names
+        found = None if names is None else names.items(items)
+        return (lambda item: item) if found is None else found
+
+    @staticmethod
+    def _named_place(
+        place: ItemPlace, name: Callable[[ItemPart], ItemPart]
+    ) -> ItemPlace:
+        """*place*, with the item it is after shown by *name*."""
+        if place.after is None:
+            return place
+        return ItemPlace(name(place.after))
+
+    @staticmethod
+    def _named_names(names: object, name: Callable[[ItemPart], ItemPart]) -> object:
+        """*names*, the item names of an order entry, each shown by *name*.
+
+        Each is the text ``Path`` writes an item in (``item_text``); it is read
+        back as that item and written as *name* shows it. A text that does
+        not read as an item (an entry made by hand) is kept as written.
+        """
+        if not is_list(names):
+            return names
+        shown_names: list[object] = []
+        for text in names:
+            part: PathPart | None = None
+            if isinstance(text, str):
+                try:
+                    part = Path.parse(f"[{text}]").parts[0]
+                except ValueError:
+                    part = None
+            shown_names.append(
+                text if part is None or isinstance(part, str) else item_text(name(part))
+            )
+        return shown_names
+
+    @classmethod
+    def _named_moves(
+        cls, moves: Sequence[ItemMove], name: Callable[[ItemPart], ItemPart]
+    ) -> tuple[ItemMove, ...]:
+        """*moves*, with each item shown by *name*."""
+        return tuple(
+            ItemMove(name(move.item), cls._named_place(move.place, name))
+            for move in moves
+        )
+
+    def shown_change(self, change: RawChange) -> RawChange:
+        """*change*, one of ``changes``, as pyvelo shows it.
+
+        The path is shown by ``named`` (as the data as read names it where the
+        change removes what it names). The item a place is after, the items
+        of a move and the values of an order entry (the item names in the
+        order read and in the new order) are items of the list as planned,
+        each shown by the part ``named`` shows that item by
+        (``_shown_items``). A value is written by ``named_value``, with its
+        keys by attribute name. ``render`` writes each line from it but an
+        order line, which names only the moves it prints, by the same
+        ``_shown_items``; ``ConfigState.get_field_changes`` is made of them.
+        """
+        path = self.named(change.path, removed=change.after is MISSING)
+        if change.moves is not None:
+            name = self._shown_items(change.path)
+            return RawChange(
+                path,
+                self._named_names(change.before, name),
+                self._named_names(change.after, name),
+                moves=self._named_moves(change.moves, name),
+            )
+        place = change.place
+        if place is not None:
+            items = Path(change.path.parts[:-1])
+            place = self._named_place(place, self._shown_items(items))
+        return RawChange(
+            path,
+            named_value(change.before, self.model, change.path),
+            named_value(change.after, self.model, change.path),
+            place=place,
+        )
+
+    def shown_names(self, items: Path, names: object) -> object:
+        """*names*, the item names of the keyed list at *items*, each as shown.
+
+        *names* is what an order entry holds for the list (``RawChange`` and
+        the write check's entries): the text of each item, named as the
+        changes name it. Each is written as ``named`` shows that item in the
+        list as planned, as the values of an order entry are in
+        ``shown_change``. They are returned as they are where the data has
+        no keyed list at *items* (the texts are then no item names), and by
+        a plan that lacks the data as read or as planned.
+        """
+        names_of = self._change_names
+        found = None if names_of is None else names_of.items(items)
+        return names if found is None else self._named_names(names, found)
+
+    def _change_line(self, change: RawChange) -> str:
+        """The line of ``render`` for *change*, as ``shown_change`` shows it.
+
+        The secrets are found by the path as the change has it, in the VCO's
+        keys. Of an order entry only the moves the line prints are named:
+        the rest are counted.
+        """
+        if change.moves is not None:
+            name = self._shown_items(change.path)
+            printed = self._named_moves(change.moves[:MOVES_SHOWN], name)
+            moves = (*printed, *change.moves[MOVES_SHOWN:])
+            return f"  ~ {self.named(change.path)}: order: {moves_text(moves)}"
+        seen = self.shown_change(change)
+        if seen.after is MISSING:
+            return f"  - {seen.path}"
+        if seen.before is MISSING:
+            place = "" if seen.place is None else f" ({seen.place})"
+            text = shown(seen.after, model=self.model, path=change.path)
+            return f"  + {seen.path}{place}: {text}"
+        old, new = shown_together(
+            seen.before, seen.after, model=self.model, path=change.path
+        )
+        return f"  ~ {seen.path}: {old} -> {new}"
+
     def render(self) -> str:
         """The plan as text: a headline, then a line for each change.
+
+        The headline names the module by its python name (``business_policy``
+        for the module the VCO calls ``QOS``). A path names a field by its
+        attribute and an item by its name (``named``), and is one ``apply``
+        takes as ``path``; an object is written with its keys by attribute
+        name.
 
         ``+ path: value`` is a key or an item that is added; an item added to a
         keyed list has its place after the path, ``(first)`` or ``(after
@@ -355,9 +560,11 @@ class ModulePlan:
 
         A ref row the edit adds or removes is ``+ refs <name> (<segment>):
         <value>`` or ``- refs <name> (<segment>): <value>``, without the
-        segment for a row of the module; ``refs: sent as read`` says an update
-        or insert sends refs with no row changed, and ``warning: <message>``
-        is something about the refs as read that the plan leaves as it is.
+        segment for a row of the module; the row of a provider is named by
+        the provider's field, ``+ refs <path>: <value>`` (``ref_lines``).
+        ``refs: sent as read`` says an update or insert sends refs with no
+        row changed, and ``warning: <message>`` is something about the refs
+        as read that the plan leaves as it is.
         ``added segments: A, B`` names the segments the pipeline added to a
         profile module, which are no change from it. ``repaired defaults:
         Guest: A, B`` names, for a segment, the ``defaults`` entries the
@@ -365,21 +572,8 @@ class ModulePlan:
         line for entries the plan leaves out (nothing else to write, or the
         repair off).
         """
-        lines = [f"{self.name}: {self.operation}"]
-        for change in self.changes:
-            if change.moves is not None:
-                lines.append(f"  ~ {change.path}: order: {moves_text(change.moves)}")
-            elif change.before is MISSING:
-                place = f" ({change.place})" if change.place is not None else ""
-                after = shown(change.after, model=self.model, path=change.path)
-                lines.append(f"  + {change.path}{place}: {after}")
-            elif change.after is MISSING:
-                lines.append(f"  - {change.path}")
-            else:
-                before, after = shown_together(
-                    change.before, change.after, model=self.model, path=change.path
-                )
-                lines.append(f"  ~ {change.path}: {before} -> {after}")
+        lines = [f"{python_module_name(self.name)}: {self.operation}"]
+        lines.extend(self._change_line(change) for change in self.changes)
         lines.extend(self.ref_lines())
         if self.reconciled_segments:
             label = "missing" if self.operation == "none" else "reconciled"
@@ -392,28 +586,59 @@ class ModulePlan:
                 f"  {label} defaults: {missing.segment}: {', '.join(missing.names)}"
             )
         lines.extend(
-            f"  override turned on: {path} (the edge's own values apply there "
-            "from now on, and the profile's no longer do)"
+            f"  override turned on: {self.named(path)} (the edge's own values "
+            "apply there from now on, and the profile's no longer do)"
             for path in self.overrides_turned_on
         )
         if self.legacy_keys and self.operation == "none":
             lines.append(
                 "  legacy keys (dropped when the module is written): "
-                + ", ".join(self.legacy_keys)
+                + ", ".join(self.named(path, removed=True) for path in self.legacy_keys)
             )
         lines.extend(f"  warning: {warning.message}" for warning in self.warnings)
         return "\n".join(lines)
 
+    def named_owner(self, owner: Path, *, added: bool) -> Path:
+        """*owner*, a provider's field (``RefChange.owner``), as pyvelo shows it.
+
+        *added* says which data *owner* is a path of, which is the
+        ``RefChange.added`` of the change it comes from. The owner of a row
+        the plan adds names each item by its key in the data as planned, and
+        is shown as that data names it (``named_path``). It is not given to
+        ``named``, which reads an item's key in the data as read: where a
+        segment takes the name another had as read, that would be the other
+        segment. The owner of a row the plan removes names each item by its
+        key as read, and is shown as ``named`` shows what a change removes:
+        in the data as planned where the item is still there, so a provider
+        changed in a renamed segment has both its rows at one path, and in
+        the data as read where the item is gone.
+
+        A ref line and the provider's field change both show the field by
+        this, so they show one path.
+        """
+        if not added:
+            return self.named(owner, removed=True)
+        return named_path(owner, self.model if self.planned is None else self.planned)
+
     def ref_lines(self) -> list[str]:
         """The lines of ``render`` about the refs sent.
 
-        A line for each row added or removed.
+        A line for each row added or removed. The row of a provider (a row
+        whose ``RefChange.owner`` is set) is named by the provider's field,
+        as ``named_owner`` shows it: ``+ refs
+        segments[Guest].dns.primary_provider.service: <value>``. Any other
+        row is named by its ref name, with its segment where it is of one:
+        ``- refs deviceSettings:backHaulEdge (Guest): <value>``.
         """
         lines: list[str] = []
         for change in self.ref_changes:
             sign = "+" if change.added else "-"
-            place = f" ({change.segment})" if change.segment is not None else ""
-            lines.append(f"  {sign} refs {change.name}{place}: {change.value}")
+            if change.owner is not None:
+                row = str(self.named_owner(change.owner, added=change.added))
+            else:
+                place = f" ({change.segment})" if change.segment is not None else ""
+                row = f"{change.name}{place}"
+            lines.append(f"  {sign} refs {row}: {change.value}")
         if self.refs is not None and not self.ref_changes:
             lines.append("  refs: sent as read")
         return lines
@@ -445,7 +670,8 @@ def with_hub_rows(
     """
     if plan.operation != "update" or plan.refs is None:
         raise ValueError(
-            f"{plan.name}: hub rows go with an update that sends refs, and this "
+            f"{python_module_name(plan.name)}: hub rows go with an update that "
+            "sends refs, and this "
             f"plan is {
                 'an update with no refs'
                 if plan.operation == 'update'
@@ -494,7 +720,8 @@ def with_hub_rows(
         )
         if index is None:
             raise ValueError(
-                f"{plan.name}: the refs hold no {name} row for object "
+                f"{python_module_name(plan.name)}: the refs hold no {name} row "
+                "for object "
                 f"{row.get('enterpriseObjectId')} in segment object "
                 f"{row.get('segmentObjectId')}, so there is none to remove"
             )
@@ -803,17 +1030,22 @@ def _segment_set_error(
 ) -> SegmentSetError:
     """The refusal of a one-module plan that changes its segments.
 
-    The plan adds the segments *added* or removes *removed*.
+    The plan adds the segments *added* or removes *removed*. The modules are
+    named by their python names.
     """
+    module = python_module_name(module_name)
+    settings, qos, firewall = (
+        python_module_name(name) for name in ("deviceSettings", "QOS", "firewall")
+    )
     did = [
         f"{verb} {', '.join(map(repr, names))}"
         for verb, names in (("adds", added), ("removes", removed))
         if names
     ]
     message = (
-        f"{module_name}: the edit {' and '.join(did)}, but the segments of a "
-        "profile are the same in its three modules (deviceSettings, QOS and "
-        "firewall), and one module alone cannot change them."
+        f"{module}: the edit {' and '.join(did)}, but the segments of a "
+        f"profile are the same in its three modules ({settings}, {qos} and "
+        f"{firewall}), and one module alone cannot change them."
     )
     if added:
         patch = json.dumps({"segments": {name: {"_op": "add"} for name in added}})
@@ -871,7 +1103,10 @@ def _hub_list(entry: object, path: tuple[str, ...]) -> dict[tuple[str, str], str
 
 
 def _hub_patch(segment: str, path: tuple[str, ...], change: dict[str, Any]) -> str:
-    """The patch text that makes *change* to the list at *path* of *segment*."""
+    """The patch text that makes *change* to the list at *path* of *segment*.
+
+    *path* is in attribute names, as every key of a patch pyvelo writes is.
+    """
     node: dict[str, Any] = change
     for key in reversed(path):
         node = {key: node}
@@ -883,8 +1118,11 @@ def _hub_list_error(
 ) -> HubListError:
     """The refusal of a one-module plan that adds or removes the hubs of *changes*.
 
-    Each change is ``(segment, list path, hub, added)``.
+    Each change is ``(segment, list path, hub, added)``, the list's path in
+    attribute names. The module is named by its python name, which the call
+    the message gives takes.
     """
+    module = python_module_name(module_name)
     segments = list(dict.fromkeys(segment for segment, _, _, _ in changes))
     lists = list(dict.fromkeys(".".join(path) for _, path, _, _ in changes))
     hubs = list(dict.fromkeys(hub for _, _, hub, _ in changes))
@@ -900,13 +1138,13 @@ def _hub_list_error(
         {"+": {"_op": "add", "name": hub}} if added else {hub: {"_op": "delete"}},
     )
     message = (
-        f"{module_name}: the edit {did}. A hub added to or removed from these "
+        f"{module}: the edit {did}. A hub added to or removed from these "
         "lists needs its role set or cleared on the hub's service, which one "
         "module write cannot do, so the VCO would list a hub no Edge can use "
         "(or a hub whose roles are lost). The pipeline sets the roles as steps "
         "of the save, in the order the UI does: send the change as a patch, for "
         f"example {example} "
-        f'(pipeline.apply(state, module="{module_name}", patch=...)), then '
+        f'(pipeline.apply(state, module="{module}", patch=...)), then '
         "pipeline.save(state)."
     )
     return HubListError(
@@ -940,15 +1178,16 @@ def _check_hub_lists(module_name: str, as_read: object, payload: object) -> None
             continue
         name = _segment_name(cast("Mapping[str, Any]", entry))
         for field in hub_list_fields():
-            path = field.path
-            read, written = _hub_list(before, path), _hub_list(entry, path)
+            # Read at the wire keys, named in the refusal by the attributes.
+            read = _hub_list(before, field.path)
+            written = _hub_list(entry, field.path)
             changes.extend(
-                (name, path, hub_name, True)
+                (name, field.python_path, hub_name, True)
                 for key, hub_name in written.items()
                 if key not in read
             )
             changes.extend(
-                (name, path, hub_name, False)
+                (name, field.python_path, hub_name, False)
                 for key, hub_name in read.items()
                 if key not in written
             )
@@ -956,27 +1195,45 @@ def _check_hub_lists(module_name: str, as_read: object, payload: object) -> None
         raise _hub_list_error(module_name, changes)
 
 
-def _defaults_path(name: str) -> str:
-    return f"segments[{json.dumps(name)}].defaults"
+def _defaults_path(name: str) -> Path:
+    """The path of the ``defaults`` of the segment *name*, as a warning shows it."""
+    return Path(("segments", Key(name), "defaults"))
 
 
-def _flag_off_warning(found: UnflaggedInUse) -> PlanWarning:
-    """The warning for an edge object the backend uses although its flag is off."""
+def _flag_off_warning(found: UnflaggedInUse, model: type[VcoModel]) -> PlanWarning:
+    """The warning for an edge object the backend uses although its flag is off.
+
+    *found* names the object by the keys the VCO uses; *model* is the class of
+    the module's data, which gives each field its attribute name. The path,
+    the field, the flag and the two patches of the message are written in
+    attribute names, and each item by the key *found* has for it: a patch is
+    built under the parts of the path as shown, so what the message shows is
+    what ``apply`` takes.
+    """
+    parts: list[PathPart] = []
+    for key, item in found.steps:
+        parts.append(key)
+        if item is not None:
+            parts.append(Key(item))
+    path = named_path(Path(parts), model)
+    flag = named_path(Path((*parts, found.flag)), model).parts[-1]
     segments = [(key, item) for key, item in found.steps if item is not None]
     where = (
         f" of segment {segments[0][1]!r}"
         if len(segments) == 1 and segments[0][0] == "segments"
-        else f" at {found.path}"
+        else f" at {path}"
     )
+    inherit = json.dumps(nested_under(path, None))
+    keep = json.dumps(nested_under(path, {}))
     return PlanWarning(
         "flag_off_in_use",
-        found.path,
-        f"The edge stores {found.field}{where} with {found.flag} false or absent. "
+        path,
+        f"The edge stores {path.parts[-1]}{where} with {flag} false or absent. "
         "The VCO uses an edge object that is present whatever its flag, so this "
         "edge runs with it and not with the profile's, though is_local reads "
-        f"False. To inherit the profile's, send {json.dumps(found.inherit_patch())} "
+        f"False. To inherit the profile's, send {inherit} "
         "(inherit()). To keep it, turn its flag on and change no value: "
-        f"localize() does that, or send {json.dumps(found.keep_patch())}.",
+        f"localize() does that, or send {keep}.",
     )
 
 
@@ -1035,6 +1292,15 @@ def _defaults_findings(
     return warnings, repairs, targets
 
 
+def _copy_of(current: object) -> VcoModel | None:
+    """A copy of the data planned that shares nothing with it; None for a mapping.
+
+    The plan keeps it to name items by (``ModulePlan.planned``): the caller
+    goes on editing the data it gave.
+    """
+    return current.model_copy(deep=True) if isinstance(current, VcoModel) else None
+
+
 def _plan_of_unread(
     module: ConfigurationModuleBase,
     current: object,
@@ -1060,6 +1326,7 @@ def _plan_of_unread(
         changes=tuple(raw_changes({}, payload, model_type)),
         reconciled_segments=(),
         model=_document_model(model_type, module),
+        planned=_copy_of(current),
     )
 
 
@@ -1071,6 +1338,33 @@ class _Planned:
     model_type: type[VcoModel] | None
     baseline: VcoModel | None
     ref_baseline: VcoModel | None
+
+
+def _shown_paths(
+    paths: Sequence[Path],
+    models: tuple[VcoModel | None, VcoModel | None],
+    documents: tuple[object, object],
+    model_type: type[VcoModel] | None,
+) -> list[Path]:
+    """*paths*, of an edit from the data as read to the data as edited, as shown.
+
+    Each path names an item as the changes of the edit do: by its key as read,
+    or its position as read where that key does not name it alone. *models*
+    are the data as read and as edited and *documents* the JSON the paths were
+    found in, in that order. The items of each keyed list are paired as the
+    changes pair them (``raw_changes``), so an item both have is shown as the
+    data as edited names it, at its place there: a position as read is never
+    printed against the list as edited (``ChangeNames``). With only one of the
+    models, or neither, the fields are named by *model_type* and each item
+    keeps the part it is written with.
+    """
+    read, edited = models
+    if read is None or edited is None:
+        return [named_path(path, model_type) for path in paths]
+    paired: dict[Path, PairedList] = {}
+    _ = raw_changes(*documents, model_type, lists=paired)
+    names = ChangeNames(read, edited, paired)
+    return [names.path(path) for path in paths]
 
 
 def _planned_payload(
@@ -1115,8 +1409,16 @@ def _planned_payload(
         )
         lossy = find_lossy_assignments(baseline, current, before, after, level)
         if lossy:
-            flags = [path for path in lossy if is_override_flag(model_type, path)]
-            raise LossyFieldError(name, lossy, flags)
+            shown = _shown_paths(
+                lossy, (baseline, current), (before, after), model_type
+            )
+            # A flag is told by the path as found, and held as shown.
+            flags = [
+                named
+                for path, named in zip(lossy, shown, strict=True)
+                if is_override_flag(model_type, path)
+            ]
+            raise LossyFieldError(name, shown, flags)
     else:
         baseline = ref_baseline = None
         model_type = None
@@ -1145,12 +1447,29 @@ def _check_fixed_lists(
     fixed_model: type[VcoModel] | None,
     planned_from: object,
     payload: dict[str, Any],
+    models: tuple[VcoModel | None, VcoModel | None],
 ) -> None:
-    """Raise ``FixedListError`` if *payload* changes a fixed part of a ``FixedList``."""
+    """Raise ``FixedListError`` if *payload* changes a fixed part of a ``FixedList``.
+
+    *models* are the data as read and as edited, where the plan has them: the
+    places the error names are shown in them (``_shown_paths``).
+    """
     if fixed_model is not None and not same_json(payload, planned_from):
         broken = fixed_list_violations(fixed_model, planned_from, payload)
         if broken:
-            raise FixedListError(name, broken)
+            shown = _shown_paths(
+                [path for path, _ in broken],
+                models,
+                (planned_from, payload),
+                fixed_model,
+            )
+            raise FixedListError(
+                name,
+                [
+                    (path, reason)
+                    for path, (_, reason) in zip(shown, broken, strict=True)
+                ],
+            )
 
 
 def _plan_level(
@@ -1239,9 +1558,9 @@ def _planned_refs(
             segment_object_ids=context.segment_ids,
         )
     if ref_baseline is not None and isinstance(current, VcoModel):
-        moved = changed_owners(ref_baseline, current, context.level)
+        moved = changed_owner_paths(ref_baseline, current, context.level)
         if moved:
-            raise RefsNotLoadedError(name, tuple(dict.fromkeys(o.path for o in moved)))
+            raise RefsNotLoadedError(name, moved)
     return DerivedRefs(None, (), ())
 
 
@@ -1337,7 +1656,8 @@ def _flag_off_warnings(
     ):
         held = payload if changed else cast("Mapping[str, object]", module.raw_data)
         flag_off = [
-            _flag_off_warning(found) for found in unflagged_in_use_at(layered, held)
+            _flag_off_warning(found, layered)
+            for found in unflagged_in_use_at(layered, held)
         ]
     return flag_off
 
@@ -1401,8 +1721,8 @@ def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its c
     A mapping given as *data* is converted as the request would write it (a
     ``UUID`` or a ``datetime`` becomes its text), so the plan holds plain JSON
     that shares nothing with the caller's objects. A mapping has no owners to
-    compare, so it changes no ref row; a deviceSettings or QOS module with
-    segments still sends its refs as read.
+    compare, so it changes no ref row; a ``device_settings`` or
+    ``business_policy`` module with segments still sends its refs as read.
     """
     name = str(_attribute(module, "name"))
     current = data if data is not None else _attribute(module, "data")
@@ -1424,7 +1744,13 @@ def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its c
 
     _check_profile_segments(name, level, raw, payload, via_pipeline=via_pipeline)
 
-    _check_fixed_lists(name, _document_model(model_type, module), planned_from, payload)
+    _check_fixed_lists(
+        name,
+        _document_model(model_type, module),
+        planned_from,
+        payload,
+        (planned.baseline, current if isinstance(current, VcoModel) else None),
+    )
 
     restored: list[dict[str, Any]] = []
     if inherited is not None:
@@ -1455,7 +1781,8 @@ def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its c
     legacy = legacy_key_paths(reconciled, name, level)
     if changed:  # never a write just to strip them
         drop_legacy_keys(payload, name)
-    changes = tuple(raw_changes(planned_from, payload, model_type))
+    paired: dict[Path, PairedList] = {}
+    changes = tuple(raw_changes(planned_from, payload, model_type, lists=paired))
     missing_defaults, repair_warnings = _repaired_defaults(
         module,
         repair_targets,
@@ -1487,6 +1814,8 @@ def plan_module(  # noqa: PLR0913 (a public call: each option is a keyword its c
         repair_defaults=repair_defaults,
         missing_defaults=tuple(missing_defaults),
         as_read=planned.baseline,
+        planned=_copy_of(current),
+        paired_lists=paired,
     )
 
 

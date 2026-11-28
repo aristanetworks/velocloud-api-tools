@@ -1,22 +1,17 @@
 """Normalize user-facing configuration module names."""
 
-from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.enums.configuration import (
+    PYTHON_MODULE_NAMES,
+    ConfigurationModuleName,
+)
 
 _MODULE_NAME_MAP: dict[str, ConfigurationModuleName] = {
-    "device_settings": ConfigurationModuleName.DEVICE_SETTINGS,
-    "deviceSettings": ConfigurationModuleName.DEVICE_SETTINGS,
-    "firewall": ConfigurationModuleName.FIREWALL,
-    "qos": ConfigurationModuleName.QOS,
-    "QOS": ConfigurationModuleName.QOS,
-    "wan": ConfigurationModuleName.WAN,
-    "WAN": ConfigurationModuleName.WAN,
-    "control_plane": ConfigurationModuleName.CONTROL_PLANE,
-    "controlPlane": ConfigurationModuleName.CONTROL_PLANE,
+    python_name: module for module, python_name in PYTHON_MODULE_NAMES.items()
 }
 
 
 def resolve_module_name(name: str | ConfigurationModuleName) -> ConfigurationModuleName:
-    """Map a user-facing name to its internal VCO module name."""
+    """Map a module's python name, or the VCO's own name of it, to the module."""
     if isinstance(name, ConfigurationModuleName):
         return name
 
@@ -27,8 +22,9 @@ def resolve_module_name(name: str | ConfigurationModuleName) -> ConfigurationMod
 
     resolved = _MODULE_NAME_MAP.get(name)
     if resolved is None:
-        available = ", ".join(
-            sorted({value.value for value in _MODULE_NAME_MAP.values()})
+        available = ", ".join(sorted(_MODULE_NAME_MAP))
+        raise ValueError(
+            f"Unknown module: {name!r}. Give a module by its name: {available} "
+            "(the VCO's own name, such as QOS or deviceSettings, is accepted too)"
         )
-        raise ValueError(f"Unknown module: {name!r}. Available: {available}")
     return resolved

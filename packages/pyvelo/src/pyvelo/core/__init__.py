@@ -6,6 +6,8 @@ This package is split into these submodules:
 - identity: NewType ID aliases and identity dataclasses
 - patch: the patch helpers (add, delete, move, at) and PatchError
 - merge: applying a patch to a model, and selecting items of a list
+- names: a path and a value as pyvelo shows them: fields by attribute name, each item
+  by the text that names it alone
 - rebase: the path and key types that locate a change
 - owned: Owned, the value an inheritable field holds on the edge layer, its encodings,
   the ownership intents, coupled groups and the binding of an edge layer to its profile
@@ -172,7 +174,8 @@ from .layers import (
     unwrap,
 )
 from .mending import MendingKind, MendingPatch, backhaul_hub_mending
-from .merge import item_selector, nest_patch, select_items
+from .merge import address_path, item_selector, nest_patch, select_items
+from .names import item_part, named_path, named_value
 from .owned import (
     ByFlag,
     ByPresence,
@@ -191,6 +194,7 @@ from .patch import (
     delete,
     key_selector,
     move,
+    patch_key,
     position_of,
     selector_of,
 )
@@ -342,6 +346,7 @@ __all__ = [
     "VcoModel",
     "VcoTimestamp",
     "add",
+    "address_path",
     "at",
     "backhaul_hub_mending",
     "bind_layers",
@@ -371,6 +376,7 @@ __all__ = [
     "is_secret",
     "is_server_owned",
     "item_key_text",
+    "item_part",
     "item_selector",
     "key_selector",
     "key_text",
@@ -380,7 +386,10 @@ __all__ = [
     "missing_or",
     "models_below",
     "move",
+    "named_path",
+    "named_value",
     "nest_patch",
+    "patch_key",
     "position_of",
     "provided",
     "python_name",

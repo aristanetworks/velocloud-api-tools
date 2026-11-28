@@ -15,6 +15,7 @@ from pyvelo.client.models.configuration.qos import CosMapping, QosRule, SlaSetti
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import QosConfigurationModule
 from pyvelo.core import ConfigContext, Edge, Profile
+from pyvelo.core.rebase import Key, Path
 from segment_helpers import GLOBAL, GUEST, descriptor, qos_entry
 
 from .write_helpers import qos_mod
@@ -282,18 +283,20 @@ def test_plan_warns_of_a_cos_mapping_the_backend_uses_with_its_flag_off() -> Non
 
     plan = plan_module(edge, level=EDGE, profile=profile)
     assert plan.operation == "none"
-    assert [(w.code, w.path) for w in plan.warnings] == [
-        ("flag_off_in_use", 'segments["Global Segment"].cosMapping')
+    assert [(w.code, w.path.parts, w.segment) for w in plan.warnings] == [
+        ("flag_off_in_use", ("segments", Key("Global Segment"), "cos_mapping"), None)
     ]
+    assert isinstance(plan.warnings[0].path, Path)
+    assert str(plan.warnings[0].path) == 'segments["Global Segment"].cos_mapping'
     message = plan.warnings[0].message
     assert (
-        "The edge stores cosMapping of segment 'Global Segment' with override false "
+        "The edge stores cos_mapping of segment 'Global Segment' with override false "
         "or absent." in message
     )
-    assert '{"segments": {"Global Segment": {"cosMapping": null}}}' in message
+    assert '{"segments": {"Global Segment": {"cos_mapping": null}}}' in message
     assert "inherit()" in message
     assert "localize()" in message
-    assert '{"segments": {"Global Segment": {"cosMapping": {}}}}' in message
+    assert '{"segments": {"Global Segment": {"cos_mapping": {}}}}' in message
 
     edge.data.segments[0].cos_mapping.inherit()
     after = plan_module(edge, level=EDGE, profile=profile)
@@ -343,7 +346,7 @@ def test_the_flag_off_warning_gives_the_keep_patch_and_localize() -> None:
     )
     plan = plan_module(edge, level=EDGE, profile=profile)
     (warning,) = plan.warnings
-    patch = {"segments": {"Guest": {"cosMapping": {}}}}
+    patch = {"segments": {"Guest": {"cos_mapping": {}}}}
     assert json.dumps(patch) in warning.message
     assert "localize()" in warning.message
 
@@ -355,8 +358,8 @@ def test_an_unrelated_edit_keeps_the_flag_off_warning() -> None:
     edge.data.segments[0].rules.append(QosRule.model_validate(copy.deepcopy(RULE)))
     plan = plan_module(edge, level=EDGE, profile=profile)
     assert plan.operation == "update"
-    assert [(w.code, w.path) for w in plan.warnings] == [
-        ("flag_off_in_use", 'segments["Guest"].cosMapping')
+    assert [(w.code, w.path.parts) for w in plan.warnings] == [
+        ("flag_off_in_use", ("segments", Key("Guest"), "cos_mapping"))
     ]
     assert plan.data["segments"][0]["cosMapping"] == raw["segments"][0]["cosMapping"]
 

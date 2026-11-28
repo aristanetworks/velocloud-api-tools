@@ -164,7 +164,7 @@ class TestGetFieldChanges:
         state, edge_config = self._state_with_snapshot()
         edge_config.firewall.data.firewall_enabled.set_local(False)
         # Only ask about a different module - should be empty
-        assert state.get_field_changes(module_name="qos") == []
+        assert state.get_field_changes(module_name="business_policy") == []
         # Ask about the actual mutated module - should be non-empty
         assert state.get_field_changes(module_name="firewall")
 
@@ -338,9 +338,7 @@ def test_field_changes_take_a_module_by_either_name() -> None:
     state, data = _wan_state([{"internalId": link_id, "name": "A", "type": "WIRED"}])
     _ = data.merge_patch({"links": {"A": {"isp": "x"}}})
     by_vco_name = state.get_field_changes(module_name="WAN")
-    assert [(c.module, c.path) for c in by_vco_name] == [
-        ("WAN", f"links[{link_id},IPv4].isp")
-    ]
+    assert [(c.module, c.path) for c in by_vco_name] == [("wan", "links[A].isp")]
     assert state.get_field_changes(module_name="wan") == by_vco_name
     assert state.get_field_changes() == by_vco_name
     # A module the target does not have has no changes.

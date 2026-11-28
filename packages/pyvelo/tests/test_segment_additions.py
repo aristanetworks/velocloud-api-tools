@@ -189,12 +189,28 @@ def test_a_one_module_plan_refuses_a_new_segment() -> None:
         plan_module(module)
     error = caught.value
     assert (error.module_name, error.segments, error.modules) == (
-        "QOS",
+        "business_policy",
         ("Guest",),
-        ("QOS",),
+        ("business_policy",),
     )
     assert '{"segments": {"Guest": {"_op": "add"}}}' in str(error)
     assert 'pipeline.assign_segment(state, "Guest")' in str(error)
+
+
+def refused_addition() -> SegmentSetError:
+    """The refusal of a plan of the QoS module alone that adds the Guest segment."""
+    module, _, _ = add_guest_to_qos()
+    with pytest.raises(SegmentSetError) as caught:
+        plan_module(module)
+    return caught.value
+
+
+def test_a_segment_set_refusal_names_the_modules_by_name() -> None:
+    error = refused_addition()
+    assert error.module_name == "business_policy"
+    assert error.modules == ("business_policy",)
+    assert str(error).startswith("business_policy: the edit adds 'Guest', ")
+    assert "(device_settings, business_policy and firewall)" in str(error)
 
 
 def test_a_one_module_plan_refuses_a_removed_segment() -> None:

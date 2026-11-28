@@ -304,6 +304,6 @@ class LanSettings(VcoModel):
     interfaces: Annotated[
         list[SerializeAsAny[LanInterface]], EdgeOnly, KeyField("name")
     ] = Field(default_factory=list)
-    networks: Annotated[list[LanNetwork], KeyField("vlan_id")] = Field(
+    networks: Annotated[list[LanNetwork], KeyField("vlan_id", label="name")] = Field(
         default_factory=list
     )

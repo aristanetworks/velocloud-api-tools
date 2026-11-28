@@ -4,8 +4,14 @@ import uuid
 from typing import override
 
 from pydantic import MISSING
-from pyvelo.core.rebase import ItemMove, ItemPlace, Key
-from pyvelo.core.show import moves_text, shown, shown_together, value_text
+from pyvelo.core.rebase import ItemMove, ItemPlace, Key, Path
+from pyvelo.core.show import (
+    moves_text,
+    patch_text,
+    shown,
+    shown_together,
+    value_text,
+)
 
 
 def test_value_text_is_json_with_sorted_keys() -> None:
@@ -87,4 +93,16 @@ def test_moves_text_names_five_moves_and_counts_the_rest() -> None:
     assert moves_text([ItemMove(2, ItemPlace())]) == "#2 first"
     assert moves_text(moves) == (
         "r0 after r1; r1 after r2; r2 after r3; r3 after r4; r4 after r5; and 2 more"
+    )
+
+
+def test_patch_text_writes_each_part_as_its_patch_key() -> None:
+    """A position is ``#n``, which a patch reads as a position, not as a key."""
+    path = Path(("segments", 3, "dns", "primary_provider", "service"))
+    assert patch_text(path, clear=True) == (
+        '{"segments": {"#3": {"dns": {"primary_provider": {"service": null}}}}}'
+    )
+    named = Path(("segments", Key("Global Segment"), "routes", Key(("10.0.0.0", 24))))
+    assert patch_text(named, clear=True) == (
+        '{"segments": {"Global Segment": {"routes": {"10.0.0.0,24": null}}}}'
     )

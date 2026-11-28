@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import copy
+import dataclasses
 import json
 import weakref
 from collections.abc import Collection, Mapping, Sequence
@@ -18,7 +19,10 @@ from typing import (
 
 from pydantic import MISSING, BaseModel
 
-from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.enums.configuration import (
+    ConfigurationModuleName,
+    python_module_name,
+)
 from pyvelo.client.exceptions import (
     DanglingReferenceError,
     DetachedObjectError,
@@ -78,15 +82,17 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 from pyvelo.core.layers import Edge, Effective, Profile
+from pyvelo.core.names import ChangeNames, named_path, named_value
 from pyvelo.core.rebase import (
     ItemMove,
     ItemPlace,
     Key,
+    PairedList,
     Path,
-    python_path,
     raw_changes,
 )
 from pyvelo.core.references import (
+    Reference,
     can_provide,
     check_references,
     provided,
@@ -106,25 +112,37 @@ _SEGMENT_MODULES = (
 
 @dataclass(frozen=True)
 class ConfigFieldChange:
-    """One change of :meth:`ConfigState.plan`: its module, and its path in python names.
+    """One change of :meth:`ConfigState.plan`, in the names its text shows.
+
+    A change of the module's data is the change as ``ModulePlan.shown_change``
+    shows it, so its path and items read as the plan's line for it does. A
+    segment added to a profile module is at the segment as ``ModulePlan.named``
+    shows it, with the entry as written in attribute names; a provider is at
+    the owner's field as ``named`` shows it, with logical IDs as its values.
+    Each names the module by its python name.
 
     Attributes:
-        module: The module's VCO name (e.g. ``"firewall"``, ``"WAN"``).
-        path: Where the change is, in the names a patch uses
+        module: The module's python name (e.g. ``"firewall"``,
+            ``"business_policy"`` for the module the VCO calls ``QOS``).
+        path: Where the change is, as the plan's line names it: a field by
+            its attribute, an item by its name
             (``segments["Global Segment"].outbound[block-ssh].name``). A
             provider change is at the provider's field
             (``segments["Global Segment"].dns.primary_provider.service``).
-        before: The value as read, a JSON value, or ``MISSING`` where there
-            was none. For a keyed list whose items change place, the item
-            names in the order read. For a provider (a field whose value is
-            a ref row), the service's logical ID as lower-case text, or None
-            for no provider.
-        after: The value as it is now, a JSON value, or ``MISSING`` where
-            there is none; the item names in the new order for a reorder.
-            For a provider, as ``before``.
-        place: Where an item added to a keyed list goes, else None.
-        moves: For the order of a keyed list, each item that changes place
-            with its new place, else None.
+        before: The value as read, a JSON value with its keys by attribute
+            name, or ``MISSING`` where there was none. For a keyed list whose
+            items change place, the item names in the order read, as the
+            plan shows them. For a provider (a field whose value is a ref
+            row), the service's logical ID as lower-case text, or None for no
+            provider.
+        after: The value as it is now, a JSON value with its keys by
+            attribute name, or ``MISSING`` where there is none; the item
+            names in the new order for a reorder. For a provider, as
+            ``before``.
+        place: Where an item added to a keyed list goes, after an item as
+            the plan shows it, else None.
+        moves: For the order of a keyed list, each item that changes place,
+            as the plan shows it, with its new place, else None.
     """
 
     module: str
@@ -142,7 +160,8 @@ class ConfigPlan:
     render() is the text to show before a save. Its first line names what is
     written: "edge 101, enterprise 1, configuration 10" or
     'profile "Branch", enterprise 1, configuration 20' (an ID that is not known
-    is left out). Then, for each module of the target, its name and what the
+    is left out). Then, for each module of the target, its python name
+    (``business_policy`` for the module the VCO calls ``QOS``) and what the
     save does with it (none, update or insert), followed by a line for each
     change:
 
@@ -154,8 +173,9 @@ class ConfigPlan:
       change order: the items that move, each with its new place.
     - "+ refs name (segment): value" and "- refs name (segment): value" are
       a ref row the edit adds or removes, with no segment for a row of the
-      module; "refs: sent as read" says the module's refs are sent with no
-      row changed.
+      module. The row of a provider you set or clear is named by the
+      provider's field: "+ refs path: value". "refs: sent as read" says the
+      module's refs are sent with no row changed.
     - "warning: text" is something about the module's refs as read that the
       plan leaves as it is. ``warnings`` holds them all as data; ``render()``
       shows each once, in its module's block.
@@ -184,12 +204,12 @@ class ConfigPlan:
     before the device settings block, as a ``steps:`` line and a line for
     each, in the order they are made:
 
-        QOS: none
+        business_policy: none
         firewall: none
         steps:
           disable backhaul for Hub-B on segment Global Segment
           enable hub for Hub-A on segment Global Segment
-        deviceSettings: update
+        device_settings: update
 
     ``modules`` is in the write order. The device settings are written first,
     and the role steps right before them; in a save that removes a hub from a
@@ -197,25 +217,44 @@ class ConfigPlan:
     other modules, so that a rule stops using a hub before the hub loses its
     role. The other modules are in the order the configuration lists them.
 
-    Paths are in the names the VCO uses. A value is JSON, cut to 80 characters;
-    the two values of a "~" line are cut where they first differ. A secret
-    shows as ``"***"``.
+    A path names a field by its python attribute and an item by its name
+    (``segments[Guest].rules[Web].match.destination_port_low``): in the data as
+    edited, so a renamed rule is under its new name, and an item the save
+    removes in the data as read. It is a path ``apply`` takes as ``path``. A
+    value is JSON, cut to 80 characters, an object with its keys by attribute
+    name; the two values of a "~" line are cut where they first differ. A
+    secret shows as ``"***"``. What the plans hold (``ModulePlan.name``,
+    ``changes``) stays in the names the VCO uses.
 
     Attributes:
         modules: The plan of each module of the target.
         target: What the plan is for (the first line of ``render()``), or "".
         warnings: What each module's plan warns of, one entry per warning,
-            with the module's name before the warning's path
-            (``"deviceSettings: refs deviceSettings:dns:primaryProvider"``),
-            then ``segment_warnings``, then ``check_warnings``.
+            then ``segment_warnings``, then ``check_warnings``. A module's
+            warning holds the module's python name in ``module`` and, in
+            ``path``, the place within that module's data as every path is
+            shown, with no module before it: the field it is about
+            (``segments[Guest].cos_mapping``), or for a ref row that nothing
+            in the data names the row's ref name under ``refs``
+            (``refs."deviceSettings:css:provider"``), with the name of the
+            row's segment in ``segment``.
         segment_warnings: The segments of a profile that its three modules
             disagree about as read, which the edit does not settle: code
-            ``segments_disagree``, at ``segments["<name>"]``. Empty for an edge.
+            ``segments_disagree``, with the segment's name in ``segment`` and
+            ``segments[<name>]`` in ``path``, as every path is shown; it is
+            about three modules, so ``module`` is None. Empty for an edge.
         check_warnings: What the cross-module checks warn of and the save
-            leaves as it is, at ``"<module>: <path>"``: the references that
-            name nothing in the module as read and still name nothing (code
-            ``reference_kept``), and the hubs whose roles as read do not match
-            the lists they are in (``hub_roles_disagree``).
+            leaves as it is: the references that name nothing in the module
+            as read and still name nothing (code ``reference_kept``), the
+            rules that backhaul to hubs and named none as read
+            (``backhaul_without_hub_kept``), the rules for a segment's hub
+            lists that were broken as read (``hub_list_as_read``), and the
+            hubs whose roles as read do not match the lists they are in
+            (``hub_roles_disagree``). Each holds its module's python name in
+            ``module``, its segment's name in ``segment``, and in ``path``
+            the place within that module's data as every path is shown, with
+            no module before it (``segments[Guest].vpn`` for the two about the
+            hub lists).
         steps: The role calls a hub added to or removed from a segment's hub
             lists needs, in the order they are made (``derive_steps``); empty
             for an edge, and for an edit that leaves the lists' members. A list
@@ -238,14 +277,18 @@ class ConfigPlan:
     def warnings(self) -> tuple[ValidationWarning, ...]:
         """The warnings of every module's plan, then the segment and check warnings.
 
-        They are data; ``render()`` shows them in their blocks.
+        They are data; ``render()`` shows them in their blocks. A module's
+        warning has the module's python name, the warning's path as it is (a
+        ``Path``) and its segment.
         """
         return (
             *(
                 ValidationWarning(
-                    path=f"{module.name}: {warning.path}",
+                    path=warning.path,
                     message=warning.message,
                     code=warning.code,
+                    module=python_module_name(module.name),
+                    segment=warning.segment,
                 )
                 for module in self.modules
                 for warning in module.warnings
@@ -489,6 +532,25 @@ class _Replaced:
 
 def _dump(model: BaseModel) -> object:
     return model.model_dump(mode="json", by_alias=True)
+
+
+def _shown_edits(before: VcoModel, data: VcoModel) -> list[str]:
+    """The paths at which *data* differs from *before*, as a plan shows them.
+
+    The changes between the two dumps, each at its path with the fields by
+    attribute name and the items as ``ChangeNames`` shows them (a removed
+    item as *before* names it), then the providers that differ (the
+    ``RefOnly`` fields, which a dump leaves out). Each path once.
+    """
+    paired: dict[Path, PairedList] = {}
+    changes = raw_changes(_dump(before), _dump(data), type(data), lists=paired)
+    names = ChangeNames(before, data, paired)
+    shown = [
+        str(names.path(change.path, removed=change.after is MISSING))
+        for change in changes
+    ]
+    providers = ref_only_changes(ref_only_values(before), ref_only_values(data))
+    return list(dict.fromkeys([*shown, *providers]))
 
 
 def ref_only_changes(
@@ -763,7 +825,7 @@ class ConfigState:
         """
         if not module.is_new:
             raise ValueError(
-                f"module {module.name!r} was read from the VCO; "
+                f"module {python_module_name(module.name)!r} was read from the VCO; "
                 "only a new one is dropped"
             )
         self.unconfirmed_inserts.discard(module.name)
@@ -810,7 +872,9 @@ class ConfigState:
         modules = [] if config.modules is MISSING else config.modules
         index = next((i for i, m in enumerate(modules) if m is old), None)
         if index is None:
-            raise ValueError(f"module {old.name!r} is not in the target config")
+            raise ValueError(
+                f"module {python_module_name(old.name)!r} is not in the target config"
+            )
         modules[index] = new
         self.unconfirmed_inserts.discard(old.name)
         if config is self.edge_config:
@@ -883,13 +947,14 @@ class ConfigState:
             return
         if module.is_new:
             if module.name in self.unconfirmed_inserts:
+                named = python_module_name(module.name)
                 raise ValueError(
-                    f"{module.name}: an insert of this module may have reached the "
+                    f"{named}: an insert of this module may have reached the "
                     "VCO (a save failed after it was sent), so its edits are not "
                     "taken back here, which sends nothing: the state would forget "
                     "the module, and a later save could insert it a second time. "
                     'Revert it with `await pipeline.revert(state, module="'
-                    f'{module.name}")`, which reads the configuration and deletes '
+                    f'{named}")`, which reads the configuration and deletes '
                     "the module on the VCO when it is the one this state holds; or "
                     "save again, which reads the configuration before it inserts; "
                     "or load the state again"
@@ -901,7 +966,8 @@ class ConfigState:
         found = None if snapshot is None else _find_module(snapshot, module.name)
         if found is None:
             raise ValueError(
-                f"{module.name}: this state holds no copy of the module as read "
+                f"{python_module_name(module.name)}: this state holds no copy of "
+                "the module as read "
                 "(take_snapshot() was not called when the state was built), so "
                 "its edits cannot be taken back. Load the state again"
             )
@@ -918,7 +984,9 @@ class ConfigState:
         """
         found: list[tuple[str, list[Path]]] = []
         for record in self._replaced:
-            paths = record.changed_paths()
+            # The module is no longer held: its class names the fields, and
+            # each item keeps the key or the position the comparison gave it.
+            paths = [named_path(path, record.model) for path in record.changed_paths()]
             if paths:
                 found.append((record.name, paths))
         self._replaced = [record for record in self._replaced if record.nodes]
@@ -926,8 +994,8 @@ class ConfigState:
             return
         raise DetachedObjectError(
             "\n".join(
-                f"{name}: objects taken from the state before a save or a revert "
-                "were changed "
+                f"{python_module_name(name)}: objects taken from the state before "
+                "a save or a revert were changed "
                 f"in place at: {', '.join(paths)}. The state holds the module as "
                 "stored; take the objects from the state again and redo the change"
                 for name, paths in found
@@ -965,13 +1033,10 @@ class ConfigState:
             before = snapshot.modules[index].data
             if not isinstance(before, VcoModel):
                 continue
-            changes = raw_changes(_dump(before), _dump(data), type(data))
-            providers = ref_only_changes(ref_only_values(before), ref_only_values(data))
-            if not changes and not providers:
+            edited = _shown_edits(before, data)
+            if not edited:
                 continue
-            fields[module.name] = list(
-                dict.fromkeys([*(str(c.path) for c in changes), *providers])
-            )
+            fields[python_module_name(module.name)] = edited
             snapshot.modules[index] = copy.deepcopy(module)
         if not fields:
             return
@@ -1209,6 +1274,10 @@ class ConfigState:
         target's device settings as edited, or for an edge of the profile's as read);
         returns a ``reference_kept`` warning for one that named nothing as read and does
         still.
+
+        The check and the patches work with each reference as it was found. The error
+        and the warnings carry it as pyvelo shows it (``_shown_reference``): the
+        references of the error and its ``only_hubs`` are the same objects.
         """
         level = self._level()
         profile_models = self._profile_as_read() if level is ConfigContext.EDGE else []
@@ -1227,8 +1296,8 @@ class ConfigState:
             *(provided(model) for model in profile_models),
         )
         findings = check_references(targets, sets_now, sets_as_read)
+        edited_by_name = {name: edited for name, edited, _ in targets}
         if findings.dangling:
-            edited_by_name = {name: edited for name, edited, _ in targets}
             hub_lists = (
                 next(
                     (m for m in profile_models if isinstance(m, DeviceSettingsData)),
@@ -1238,28 +1307,38 @@ class ConfigState:
                 else edited_by_name.get(ConfigurationModuleName.DEVICE_SETTINGS)
             )
             only_hubs = left_without_hub(findings.dangling, edited_by_name)
-            raise DanglingReferenceError(
+            mending = hub_reference_mending(
                 findings.dangling,
-                on_edge=level is ConfigContext.EDGE,
-                mending=hub_reference_mending(
-                    findings.dangling,
-                    edited_by_name,
-                    hub_list_members(hub_lists),
-                    target_type=self.target_type,
-                    only_hubs=only_hubs,
-                ),
+                edited_by_name,
+                hub_list_members(hub_lists),
+                target_type=self.target_type,
                 only_hubs=only_hubs,
             )
+            # A reference is matched by its object, not its value: two are equal
+            # where they hold one value at one path.
+            shown = {
+                id(reference): _shown_reference(reference, edited_by_name)
+                for reference in findings.dangling
+            }
+            raise DanglingReferenceError(
+                tuple(shown.values()),
+                on_edge=level is ConfigContext.EDGE,
+                mending=mending,
+                only_hubs=tuple(shown[id(reference)] for reference in only_hubs),
+            )
+        kept = [_shown_reference(r, edited_by_name) for r in findings.kept]
         return tuple(
             ValidationWarning(
-                path=f"{reference.module}: {reference.path}",
+                path=reference.path,
                 message=(
                     f"{reference_text(reference)} (it was so as read; the save "
                     "leaves it)"
                 ),
                 code="reference_kept",
+                module=reference.module,
+                segment=reference.segment_name,
             )
-            for reference in findings.kept
+            for reference in kept
         )
 
     def _level(self) -> ConfigContext:
@@ -1432,16 +1511,18 @@ class ConfigState:
         for :meth:`get_changed_modules`.
 
         These are the changes a save writes, so a read changes nothing and a
-        rename is one change. Each path is in the names a patch uses, and the
-        values are JSON, as in the plan; the order of a keyed list is one
-        entry whose ``moves`` say which items change place. A provider set,
+        rename is one change. Each is in the names of the plan's text
+        (``ModulePlan.shown_change``): the module by its python name, the path
+        as its line names it and one ``apply`` takes, and the values JSON with
+        their keys by attribute name; the order of a keyed list is one entry
+        whose ``moves`` say which items change place. A provider set,
         replaced or cleared is one entry at the provider's field, with the
         logical ID of the service before and after, or None; a provider
         replaced is one entry, not a removal and an addition. When the
         provider's stub had no ``ref``, setting a provider also writes the
         stub's ``ref``, and that is an entry of its own, before the
         provider's. A segment added to a profile module is one entry, at
-        ``segments["<name>"]``, with ``before`` ``MISSING`` and ``after`` the
+        ``segments[<name>]``, with ``before`` ``MISSING`` and ``after`` the
         entry as written; it comes before the changes to the module's other
         values.
         """
@@ -1451,22 +1532,39 @@ class ConfigState:
             if wanted is not None and module.name != wanted:
                 continue
             held = _find_module(self.target_config, module.name)
-            data = None if held is None else held.data
-            model = type(data) if isinstance(data, VcoModel) else None
             changes.extend(_added_segment_changes(module, held))
-            changes.extend(
-                ConfigFieldChange(
-                    module=module.name,
-                    path=python_path(change.path, model),
-                    before=change.before,
-                    after=change.after,
-                    place=change.place,
-                    moves=change.moves,
+            name = python_module_name(module.name)
+            for change in module.changes:
+                seen = module.shown_change(change)
+                changes.append(
+                    ConfigFieldChange(
+                        module=name,
+                        path=seen.path,
+                        before=seen.before,
+                        after=seen.after,
+                        place=seen.place,
+                        moves=seen.moves,
+                    )
                 )
-                for change in module.changes
-            )
             changes.extend(_provider_changes(module))
         return changes
+
+
+def _shown_reference(reference: Reference, edited: Mapping[str, VcoModel]) -> Reference:
+    """*reference* as an error or a warning carries it.
+
+    *reference* is as the check found it in the data as edited, and *edited*
+    is that data of each module, by the VCO's name. The module is given by its
+    python name, and the path as pyvelo shows it in the data it was found in
+    (``named_path``): a hub entry by the hub's name, where its key is the
+    hub's logical ID. The segment keeps its name, and the holder is the same
+    object.
+    """
+    return dataclasses.replace(
+        reference,
+        module=python_module_name(reference.module),
+        path=named_path(reference.path, edited.get(reference.module)),
+    )
 
 
 def _added_segment_changes(
@@ -1474,21 +1572,25 @@ def _added_segment_changes(
 ) -> list[ConfigFieldChange]:
     """One change for each segment added to *held*, a profile module.
 
-    Each change has the entry as the plan writes it.
+    Each change has the entry as the plan writes it, with its keys by
+    attribute name, at the segment as the plan shows it.
     """
     if held is None:
         return []
     written = _segment_entries(module.data)
-    return [
-        ConfigFieldChange(
-            module=module.name,
-            path=Path(("segments", Key(addition.name))),
-            before=MISSING,
-            after=written[addition.segment_id],
-        )
-        for addition in held.additions
-        if isinstance(addition, AddedSegment) and addition.segment_id in written
-    ]
+    changes: list[ConfigFieldChange] = []
+    for addition in held.additions:
+        if isinstance(addition, AddedSegment) and addition.segment_id in written:
+            path = Path(("segments", Key(addition.name)))
+            changes.append(
+                ConfigFieldChange(
+                    module=python_module_name(module.name),
+                    path=module.named(path),
+                    before=MISSING,
+                    after=named_value(written[addition.segment_id], module.model, path),
+                )
+            )
+    return changes
 
 
 def _segment_entries(data: object) -> dict[Any, Any]:
@@ -1512,7 +1614,9 @@ def _segment_name(entry: object, segment_id: object) -> str:
     return name if isinstance(name, str) else str(segment_id)
 
 
-def _names_text(names: Sequence[str]) -> str:
+def _names_text(modules: Sequence[str]) -> str:
+    """The *modules* as a text lists them, each by its python name."""
+    names = [python_module_name(module) for module in modules]
     return (
         " and ".join(names)
         if len(names) < 3  # noqa: PLR2004  # two names are joined by "and" alone
@@ -1521,8 +1625,9 @@ def _names_text(names: Sequence[str]) -> str:
 
 
 def _add_hint(name: str, modules: Sequence[str]) -> str:
+    """How to give the segment *name* to *modules*, named as ``apply`` takes them."""
     patch = json.dumps({"segments": {name: {"_op": "add"}}})
-    where = " and ".join(modules)
+    where = " and ".join(python_module_name(module) for module in modules)
     return (
         f"Send the patch {patch} to {where}, or assign the segment to all three "
         f'with pipeline.assign_segment(state, "{name}")'
@@ -1597,7 +1702,7 @@ def _check_segment_set(
             has = [m for m in _SEGMENT_MODULES if m not in lacking]
             warnings.append(
                 ValidationWarning(
-                    path=f"segments[{json.dumps(name)}]",
+                    path=Path(("segments", Key(name))),
                     message=(
                         f"Segment {name!r} is in {_names_text(has)} but not in "
                         f"{_names_text(lacking)}, as read, and the segments of a "
@@ -1605,6 +1710,7 @@ def _check_segment_set(
                         f"leaves it as it is. {_add_hint(name, lacking)}."
                     ),
                     code="segments_disagree",
+                    segment=name,
                 )
             )
     if removals or incomplete:
@@ -1643,26 +1749,31 @@ def _check_segment_set(
 
 
 def _provider_changes(module: ModulePlan) -> list[ConfigFieldChange]:
-    """The provider changes of *module*'s plan, one change per owner.
+    """The provider changes of *module*'s plan, one change per provider field.
 
     They are the ref rows of ``RefOnly`` owners.
 
-    The row a change removes is the owner's ``before`` and the row it adds
-    its ``after``, each as the identity's lower-case text.
+    The row a change removes is the field's ``before`` and the row it adds
+    its ``after``, each as the identity's lower-case text. A field is told by
+    its path as the plan shows it (``ModulePlan.named_owner``), not by the
+    owner as each row writes it: the row that goes names a renamed segment by
+    its name as read and the row that comes by its new name, and both are
+    the one field, at the path it has in the data as edited.
     """
     before: dict[Path, str] = {}
     after: dict[Path, str] = {}
     for change in module.ref_changes:
         if change.owner is not None:
-            (after if change.added else before)[change.owner] = str(change.value)
+            shown = module.named_owner(change.owner, added=change.added)
+            (after if change.added else before)[shown] = str(change.value)
     return [
         ConfigFieldChange(
-            module=module.name,
-            path=owner,
-            before=before.get(owner),
-            after=after.get(owner),
+            module=python_module_name(module.name),
+            path=shown,
+            before=before.get(shown),
+            after=after.get(shown),
         )
-        for owner in dict.fromkeys([*before, *after])
+        for shown in dict.fromkeys([*before, *after])
     ]
 
 
@@ -1777,6 +1888,13 @@ class SaveResult:
 
     A dry run says ``"would_send"`` or ``"in_place"``, and sends none."""
     warnings: list[ValidationWarning] = field(default_factory=list)
+    """The warnings of the plan (``ConfigPlan.warnings``) and those of the save.
+
+    Each holds in ``path`` a ``Path`` with no module before it, and the
+    python name of the module it is about in ``module``; a write-time
+    validator's warning is the exception, and keeps the path the validator
+    wrote, as text.
+    """
     validation_errors: list[ValidationError] = field(default_factory=list)
     # Optional count for downstream integrations managing enterprise objects.
     # ConfigPipeline leaves this at zero.
@@ -1844,7 +1962,7 @@ def _wrong_module(module: object, expected: type) -> TypeError:
     Its class is not the one its name has.
     """
     return TypeError(
-        f"the {getattr(module, 'name', '?')} module is a "
+        f"the {python_module_name(str(getattr(module, 'name', '?')))} module is a "
         f"{type(module).__name__}, not a {expected.__name__}"
     )
 
@@ -1865,7 +1983,10 @@ def _module_of(
         return existing
     if create and isinstance(config, EdgeConfiguration):
         if config.id_ is MISSING or config.id_ is None:
-            raise ValueError(f"Cannot create module '{name}': configuration has no ID")
+            raise ValueError(
+                f"Cannot create module '{python_module_name(name)}': "
+                "configuration has no ID"
+            )
         new = new_edge_module(name, config.id_).for_edge()
         if profile is not None:
             _bind_to_profile(new, profile)

@@ -30,7 +30,7 @@ pyvelo = { git = "https://github.com/aristanetworks/velocloud-api-tools.git", su
 | Module | What it provides |
 |---|---|
 | `pyvelo.client` | `VcoClient` (async JSON-RPC), `VcoClientProtocol`, `VcoAuth`, `get_vco_credentials` (reads `VCO_HOST` / `VCO_TOKEN`, optionally from a `.env` file with the `dotenv` extra), `VcoWebSocket` / `PendingDiagnostic`, `ExchangeHook`, request/response schemas, enums, operations, VCO data models |
-| `pyvelo.core` | `VcoModel` base class (with `.merge_patch()`), layer models (`Layered`, generic over a layer: `Edge`, `Profile`, `Effective` or `Composed`) and their field kinds (`Inheritable`, `Additive`, `Unconverted`, and `EdgeOnly` / `ProfileOnly` subscripted), `Default` (the display default of an `Inheritable` field), `Owned` with its encodings `ByPresence` and `ByFlag` (`Encoding` is either) and its intents `set_local`, `inherit` and `localize`, coupled groups (`MemberOf`, `OwnedGroup`, `GroupHandle`), `bind_layers` (links an edge layer to its profile, which `localize` copies from), `effective_view` (computes `Data[Effective]` from an edge layer and its profile layer: each value a `Resolved` with its `Origin` `EDGE`, `PROFILE` or `FACTORY` and its `source`, read-only), `effective_dump` (the view as wire JSON, and the `Resolved` of each wire path in it) and `Authority` (marks an `Inheritable` field whose effective value is the profile's whenever a rule on the profile's value holds), `field_kind`, `FieldKind` and `Kind` (what a field of such a model is, and the names of its kinds), `kind_default` (the default of an `EdgeOnly`, `ProfileOnly`, `Additive` or `Unconverted` field), `layer_for` (the stored layer a `ConfigContext` level reads and writes) and `unwrap` (the value an `Owned` stores; any other value as it is), field markers (`KeyField`, `FixedList`, `Resolvable` (an identity type and an accessor of it, checked against the field's type at class creation), `NameOf`, `OverrideFlag`, `Alias`, `Normalizer`, `ConfigContext`, `ContextDefault`), defaulting helpers (`DefaultingModel`, `DefaultingScalar`), `Secret` (marks a field that holds a secret), `OwnsRef` and `RefOnly` (mark the data field a ref row goes with, and a field that stands for a ref row and is never dumped or read from data), `Provides` and `RefersTo` (mark a list whose items a set of names refers to, and a field that holds one of them), `HubRole` (marks a list of hubs by the role it gives), `get_owns_ref`, `get_ref_only`, `get_provides`, `get_refers_to`, `get_hub_role` and `get_fixed_list`, `is_secret` and `hide_secrets(model, path, value)` (the value with its secrets shown as `***`), identity types (`EdgeId`, `SegmentId`, `ProfileId`, …; for a hub `HubIdentity`, `HubName`, `HubLogicalId` and `HubService`, with `HubServiceNotFoundError`); the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`); `MendingPatch` and `MendingKind` (a patch that mends an error, as JSON data with the `apply` arguments that send it) and `backhaul_hub_mending` (the patch that makes a hub a backhaul hub of a segment, as `HubServiceNotFoundError` gives it); for a tool that works over patches, `Path` and `Key` (the parts of a change's location), `key_text` and `item_key_text`, `list_kind` and `ListKind`, `select_items` and `item_selector`, `key_selector` and `selector_of`, `nest_patch`, `position_of`, `is_positional` and `get_name_of`; facts about a field for a schema view: `wire_name` (the JSON key it is written under), `python_name` (the field a key names; `python_path` in `pyvelo.core.rebase` does the same for the path of a change), `field_models` (the model classes its value, its list items or its map values can be), and `Model.context(level)`, whose entries say whether a field exists at edge or at profile level (`is_present`) |
+| `pyvelo.core` | `VcoModel` base class (with `.merge_patch()`), layer models (`Layered`, generic over a layer: `Edge`, `Profile`, `Effective` or `Composed`) and their field kinds (`Inheritable`, `Additive`, `Unconverted`, and `EdgeOnly` / `ProfileOnly` subscripted), `Default` (the display default of an `Inheritable` field), `Owned` with its encodings `ByPresence` and `ByFlag` (`Encoding` is either) and its intents `set_local`, `inherit` and `localize`, coupled groups (`MemberOf`, `OwnedGroup`, `GroupHandle`), `bind_layers` (links an edge layer to its profile, which `localize` copies from), `effective_view` (computes `Data[Effective]` from an edge layer and its profile layer: each value a `Resolved` with its `Origin` `EDGE`, `PROFILE` or `FACTORY` and its `source`, read-only), `effective_dump` (the view as wire JSON, and the `Resolved` of each wire path in it) and `Authority` (marks an `Inheritable` field whose effective value is the profile's whenever a rule on the profile's value holds), `field_kind`, `FieldKind` and `Kind` (what a field of such a model is, and the names of its kinds), `kind_default` (the default of an `EdgeOnly`, `ProfileOnly`, `Additive` or `Unconverted` field), `layer_for` (the stored layer a `ConfigContext` level reads and writes) and `unwrap` (the value an `Owned` stores; any other value as it is), field markers (`KeyField`, `FixedList`, `Resolvable` (an identity type and an accessor of it, checked against the field's type at class creation), `NameOf`, `OverrideFlag`, `Alias`, `Normalizer`, `ConfigContext`, `ContextDefault`), defaulting helpers (`DefaultingModel`, `DefaultingScalar`), `Secret` (marks a field that holds a secret), `OwnsRef` and `RefOnly` (mark the data field a ref row goes with, and a field that stands for a ref row and is never dumped or read from data), `Provides` and `RefersTo` (mark a list whose items a set of names refers to, and a field that holds one of them), `HubRole` (marks a list of hubs by the role it gives), `get_owns_ref`, `get_ref_only`, `get_provides`, `get_refers_to`, `get_hub_role` and `get_fixed_list`, `is_secret` and `hide_secrets(model, path, value)` (the value with its secrets shown as `***`), identity types (`EdgeId`, `SegmentId`, `ProfileId`, …; for a hub `HubIdentity`, `HubName`, `HubLogicalId` and `HubService`, with `HubServiceNotFoundError`); the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`); `MendingPatch` and `MendingKind` (a patch that mends an error, as JSON data with the `apply` arguments that send it) and `backhaul_hub_mending` (the patch that makes a hub a backhaul hub of a segment, as `HubServiceNotFoundError` gives it); for a tool that works over patches, `Path` and `Key` (the parts of a change's location), `key_text` and `item_key_text`, `list_kind` and `ListKind`, `select_items` and `item_selector`, `key_selector`, `selector_of` and `patch_key` (the key a patch has for one part of a path), `nest_patch` and `address_path` (the patch an addressed call stands for, and its address as one `Path`), `position_of`, `is_positional` and `get_name_of`; facts about a field for a schema view: `wire_name` (the JSON key it is written under), `python_name` (the field a key names; `python_path` in `pyvelo.core.rebase` does the same for the path of a change), `field_models` (the model classes its value, its list items or its map values can be), and `Model.context(level)`, whose entries say whether a field exists at edge or at profile level (`is_present`); what pyvelo shows: `named_path` (a path with each field by its attribute name), `named_value` (a JSON value with its declared keys by attribute name) and `item_part` (the part of a path that names one item of a list) |
 | `pyvelo.client.module_write`, `pyvelo.client.module_check` | `plan_module` and `ModulePlan` (what a write of a module changes), `check_module_write` and `ModuleWrite` (a write that was stored: the module as stored, the changes `applied`, `left_out` and `server_changes`) |
 | `pyvelo.config` | `ConfigPipeline` and `build_default_pipeline` (load → apply → save, and revert), `ConfigState`, `ConfigPlan`, `SaveResult`, the patch helpers and the errors of a patch and a save: see [CONFIGURATION.md](CONFIGURATION.md) |
 | `pyvelo.config.resolver` | `Resolver` Protocol (one type parameter, the identity), `BaseResolver`, `ResolverRegistry` (`lookup`, `lookup_by`, `resolve`, `find`, `identities`), `ResolverContext`, `ResolutionError` |
@@ -112,6 +112,18 @@ the class of `module`. When nothing changed it sends nothing and returns
 `module` itself. It is `plan_module` (`pyvelo.client.module_write`) followed by
 `write_module`.
 
+`plan.render()` is the plan as text: the module's Python name (`device_settings`
+for `deviceSettings`; `python_module_name` in `pyvelo.config` gives it, and
+`ConfigPipeline.apply(state, module=...)` takes a module by that name or by
+the VCO's own), then a line for each change. A line's path names a field
+by its Python attribute and an item by its name, in the data as planned (an
+item the write removes, as it was read), and an added object has its keys by
+attribute name. `plan.named(path)` gives that form for one path of
+`plan.changes`. What the plan holds stays in the VCO's names, because it is
+what is sent and compared: `plan.name`, the paths of `plan.changes` and
+`plan.data`. "What a save writes" in [CONFIGURATION.md](CONFIGURATION.md)
+explains the lines.
+
 The `defaults` rules of a QoS segment are fixed: their entries, keys and order
 stay as read, and only the `action` of a rule can change. `plan_module` compares
 its payload with the module as read, and raises `FixedListError` for a payload
@@ -119,8 +131,11 @@ that changes anything else in them (a rule's `match`, a rule added, removed,
 renamed or moved, the list built or dropped), whatever made the change: an
 attribute assignment, a plain-dict `data` or a patch. It does so at every level,
 an edge's raw `defaults` included, and `validate=False` does not skip it. The
-error lists each path with its reason. A missing entry is repaired when the
-module is written, never built by an edit.
+error lists each path with its reason, as every path is shown
+(`business_policy: ... segments[Guest].defaults[Default-Internet-UDP]: match
+differs`: the module by its python name, which `error.module_name` holds too, a
+field by its attribute, an item by its name). A missing entry is repaired when
+the module is written, never built by an edit.
 
 Every QoS segment of a profile holds the template's four `defaults` rules
 (`Default-Internet-UDP`, `Default-Internet-Other`, `Default-Any-UDP`,
@@ -151,7 +166,9 @@ built from: a model read from the VCO, a model built by hand, or (for
 instead: a segment is assigned through the pipeline, as
 `{"segments": {"Guest": {"_op": "add"}}}` (`pipeline.assign_segment(state,
 "Guest")`), which makes its entry in all three modules; removing one from all
-three together is not supported. The pipeline records what it adds to a profile
+three together is not supported. The error names a module by its python name,
+in its text (`business_policy: the edit adds 'Guest', ...`) and in
+`error.module_name` and `error.modules`. The pipeline records what it adds to a profile
 module (`module.additions`, made with `add_segment_entry` and
 `add_default_entries`), and `plan_module` plans the module against its raw data
 plus those entries. An added entry nobody edited is written exactly as it was
@@ -162,8 +179,8 @@ read, so an added device settings entry adds its `deviceSettings:segment` row.
 plans the three modules together.
 
 The hubs of a profile segment are in the same case. A hub in the hub, bridge or
-backhaul list of a device settings segment (`vpn.edgeToEdgeHub.vpnHubs`,
-`vpn.edgeToEdgeDetail.vpnHubs`, `vpn.backHaulEdges`) works only when its
+backhaul list of a device settings segment (`vpn.hub_edges.vpn_hubs`,
+`vpn.edge_to_edge_detail.vpn_hubs`, `vpn.backhaul_edges`) works only when its
 service has that role, which the VCO's role calls set and a module write does
 not. `plan_module` and `update_module` raise `HubListError` for a profile
 device settings payload whose members of one of those lists differ from the
@@ -171,22 +188,25 @@ module as read, as `(type, logicalId)` pairs (a reorder is no change), and
 nothing is sent: the VCO would list a hub no Edge can use, or lose the roles of
 one taken out. The error names the segment, the lists and the hubs, and says how
 to do it instead: send the change as a patch (`{"segments": {"Global Segment":
-{"vpn": {"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name":
+{"vpn": {"hub_edges": {"vpn_hubs": {"+": {"_op": "add", "name":
 "Hub-A"}}}}}}}`) through `pipeline.apply`, and `pipeline.save`, which sets the
-roles as steps of the save. `via_pipeline=True` skips this refusal too.
+roles as steps of the save. The module and the lists are named as a patch
+names them: the text starts `device_settings:`, the call it gives is
+`pipeline.apply(state, module="device_settings", patch=...)`, and `error.lists`
+holds attribute paths (`vpn.backhaul_edges`). `via_pipeline=True` skips this refusal too.
 
 What a hub is, and what names it, is declared on the models, as the segment
 set is, so that the pipeline needs no list of paths of its own:
 
 - `HubRole("hub" | "bridge" | "backhaul")` marks a list of hubs by the role it
-  gives (`vpn.edgeToEdgeHub.vpnHubs`, `vpn.edgeToEdgeDetail.vpnHubs`,
-  `vpn.backHaulEdges`). Each is keyed by the entry's `logicalId`, with its name
+  gives (`vpn.hub_edges.vpn_hubs`, `vpn.edge_to_edge_detail.vpn_hubs`,
+  `vpn.backhaul_edges`). Each is keyed by the entry's `logicalId`, with its name
   as the label, so a patch or a plan names a hub by logical ID, and by name as
   well where the name is unique. `get_hub_role(field_info)` reads the marker
   of a field.
 - `Provides(name, key=...)` marks a list whose items are the things a set of
   names stands for: the device settings `segments` (`segment`), and a segment's
-  `vpn.backHaulEdges` (`backhaul_hub`, per segment). `RefersTo(name)` marks a
+  `vpn.backhaul_edges` (`backhaul_hub`, per segment). `RefersTo(name)` marks a
   field that holds one of them: a LAN network's or an interface's `segmentId`,
   and a QoS rule's backhaul entry. A value that names nothing is a dangling
   reference, which the pipeline's `plan()` refuses (`DanglingReferenceError`,
@@ -285,7 +305,11 @@ than sent, such as an ID it issued). Otherwise it raises, from
 
 The first three carry `lost_edits` (the planned changes not stored, with the
 values as read, meant and stored), `applied`, `left_out`, `server_changes`, the
-`plan` and the `module` as stored. `error.redo_patch()` is the patch that redoes
+`plan` and the `module` as stored. Each entry keeps the path the check made, in
+the VCO's keys; the message of any of the four (`str(error)`, `error.render()`)
+names the module by its python name, which `error.module_name` holds, and
+shows each path and object as the plan's text does (`ModulePlan.render`): a
+field by its attribute, an item by its name. `error.redo_patch()` is the patch that redoes
 the lost edits on that module (`error.module.data.merge_patch(error.redo_patch())`);
 it leaves out a clash unless asked, and `error.not_redone()` lists what it
 leaves out. It redoes a lost provider row by setting the `RefOnly` field again
@@ -317,7 +341,8 @@ reads the configuration with its modules and checks the module there against the
 plan: it returns that module as the write when it already holds the changes (a
 retry whose first copy was stored), and otherwise raises `ConfigConflictError`
 with nothing sent. The read narrows the race and does not close it, and a
-module with no `version` is not written: `VersionRequiredError`, unless the plan
+module with no `version` is not written: `VersionRequiredError` (its
+`module_name` is the module's python name), unless the plan
 is `unconditional` (`save(..., unconditional=True)`). A write that sends no refs
 makes no extra request.
 
@@ -425,9 +450,14 @@ identity, with their ref name, segment and path.
 The refs of a write are derived from these fields, never given: `plan_module`
 and `update_module` take no `refs`. An edit that sets or changes one of them
 adds the row it goes with, and one that clears it removes the row; every other
-row is sent as read, and `plan.ref_changes` lists the rows added and removed
-(`plan.render()` shows them as `+ refs <name> (<segment>): <value>` and `- refs
-...`). A new row needs the object's ID, which the `resolvers=` argument finds
+row is sent as read, and `plan.ref_changes` lists the rows added and removed.
+`plan.render()` shows the row of a provider by the provider's field, as `+ refs
+segments[Guest].dns.primary_provider.service: <value>` and `- refs ...`, and
+any other row by its ref name, as `+ refs <name> (<segment>): <value>`. What
+disagrees in the refs as read is in `plan.warnings`: each `PlanWarning` has a
+`path` that is a `Path`, the provider's or the identity's field, or
+`refs."<ref name>"` for a row that nothing in the data names, whose segment is
+in `segment`. A new row needs the object's ID, which the `resolvers=` argument finds
 (`ResolverNotLoadedError` when it is missing). A QoS rule's new backhaul hub
 adds a `deviceSettings:backHaulEdge` row that points at the hub's service for
 the profile and segment, which the profile's device settings module holds: give
@@ -437,7 +467,9 @@ always carries its refs, as read when nothing in them changed, because the VCO
 runs its processors on every such write. A module read without its refs
 (`refs_loaded` is `False`) cannot be written that way, nor with an edit to one
 of these fields: `RefsNotLoadedError` says to read it with
-`configuration/getConfiguration` and `modules`, or from the edge stack. The ref
+`configuration/getConfiguration` and `modules`, or from the edge stack (its
+`module_name` is the module's python name, and its `paths` name each field as
+every path is shown). The ref
 names that are not derived are written with `update_configuration_module`, the
 low-level request.
 
@@ -622,13 +654,13 @@ refused), and `inherit()` removes the object. An edge object stored with
 `override: false` is kept as read and is not local, yet the VCO's composer takes
 a present edge object without reading its flag, so the effective view shows it
 as the edge's (`Origin.EDGE`). `plan_module` on an edge module warns of each
-one (code `flag_off_in_use`, at `segments["Global Segment"].cosMapping`),
+one (code `flag_off_in_use`, at `segments["Global Segment"].cos_mapping`),
 whether or not the write changes anything, so nobody reads `is_local == False`
 and believes the edge inherits. Remove it with `inherit()` for the profile's
 mapping to apply. To keep it, `localize()` turns its flag on and changes no
 value: it returns the stored object, not the profile's, and a patch into it
 changes only what the patch names. `{"segments": {"Global Segment":
-{"cosMapping": {}}}}` does the same from text. When the edge stores nothing at
+{"cos_mapping": {}}}}` does the same from text. When the edge stores nothing at
 the key, `localize()` copies the profile segment's mapping (or the display
 default, `CosMapping()`) in with `override: true`; on a segment
 `data.segment(name)` added it copies from the profile's segment of that name.

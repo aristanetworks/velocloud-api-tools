@@ -7,7 +7,10 @@ helpers (``add``, ``delete``, ``move``, ``at``), what a save hands back, and the
 errors a patch or a save raises.
 """
 
-from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.enums.configuration import (
+    ConfigurationModuleName,
+    python_module_name,
+)
 from pyvelo.client.exceptions import (
     BackhaulWithoutHubError,
     ComposedModuleError,
@@ -151,6 +154,7 @@ __all__ = [
     "diff_intents",
     "load_config",
     "move",
+    "python_module_name",
     "save_progress",
     "validator",
 ]

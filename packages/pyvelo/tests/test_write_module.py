@@ -49,7 +49,6 @@ from pyvelo.testing import (
 from refs_helpers import (
     CONFIG,
     DNS_A,
-    PRIMARY,
     changing_after_the_version_read,
     copy_of_data,
     primary_provider_module,
@@ -808,7 +807,7 @@ async def test_an_unknown_outcome_names_the_refs_it_sent(
     assert exc.value.plan is plan
     assert str(exc.value).splitlines()[2:4] == [
         "planned, not checked:",
-        f"  - refs {PRIMARY} (Global Segment): {DNS_A}",
+        f'  - refs segments["Global Segment"].dns.primary_provider.service: {DNS_A}',
     ]
 
 
@@ -827,7 +826,7 @@ async def test_an_unknown_outcome_shows_a_place_and_an_order(
     lines = str(exc.value).splitlines()
     assert lines[2] == "planned, not checked:"
     assert lines[3].startswith(
-        '  inbound[c] (first): read (nothing), meant {"action": {"type": '
+        '  inbound[c] (first): read (nothing), meant {"action": {"type_": '
     )
     assert lines[4] == (
         '  inbound: order: b after c: read ["a", "b"], meant ["c", "b", "a"]'
@@ -1292,7 +1291,8 @@ async def test_if_absent_cannot_use_a_configuration_that_does_not_parse(
     assert isinstance(exc.value.__cause__, ValidationError)
     lines = str(exc.value).splitlines()
     assert lines[0] == (
-        "Configuration module 0 (QOS): the module as stored could not be read: "
+        "Configuration module 0 (business_policy): the module as stored could "
+        "not be read: "
         f"{exc.value.detail}"
     )
     assert lines[1:3] == [

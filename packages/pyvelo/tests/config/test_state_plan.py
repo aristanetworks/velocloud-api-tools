@@ -32,6 +32,7 @@ from pyvelo.config.resolver import ResolutionError, ResolverContext
 from pyvelo.config.state import ConfigFieldChange, ConfigPlan, ConfigState
 from pyvelo.core import PatchError
 from pyvelo.core.patch import PatchErrorKind
+from pyvelo.core.rebase import Key, Path
 from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.testing import MockVcoClient, make_module_json
 
@@ -142,9 +143,13 @@ def test_the_flag_off_warning_reaches_config_plan_warnings() -> None:
     qos = next(m for m in plan.modules if m.name == "QOS")
     assert qos.operation == "none"
     flagged = [w for w in plan.warnings if w.code == "flag_off_in_use"]
-    assert [w.path for w in flagged] == ['QOS: segments["Global Segment"].cosMapping']
+    assert [(w.module, w.path, w.segment) for w in flagged] == [
+        ("business_policy", 'segments["Global Segment"].cos_mapping', None)
+    ]
+    assert isinstance(flagged[0].path, Path)
+    assert flagged[0].path.parts == ("segments", Key("Global Segment"), "cos_mapping")
     assert (
-        '{"segments": {"Global Segment": {"cosMapping": null}}}' in flagged[0].message
+        '{"segments": {"Global Segment": {"cos_mapping": null}}}' in flagged[0].message
     )
     assert f"warning: {flagged[0].message}" in plan.render()
 
@@ -291,7 +296,7 @@ async def test_missing_edge_module_is_inserted_from_an_empty_layer() -> None:
     assert state.plan().changed == ()  # reading it plans nothing
     await ConfigPipeline(client).apply(
         state,
-        module="qos",
+        module="business_policy",
         patch={
             "service_rate_limit": {
                 "enabled": True,
@@ -313,7 +318,7 @@ async def test_missing_edge_module_is_inserted_from_an_empty_layer() -> None:
 def test_views_and_module_errors() -> None:
     state = make_state()
     assert state.profile.firewall.segments[1].segment.name == "Guest"
-    with pytest.raises(ValueError, match="Module 'deviceSettings' not found"):
+    with pytest.raises(ValueError, match="Module 'device_settings' not found"):
         _ = state.edge.device_settings  # not insertable, not present
     profile_only = ConfigState(
         edge_config=None,

@@ -214,7 +214,7 @@ async def test_a_fresh_module_that_already_has_the_segment_is_a_conflict() -> No
 
     error = caught.value
     assert (error.stated, error.sent) == (False, False)
-    assert error.module_name == QOS
+    assert error.module_name == "business_policy"
     assert "holds segment 'Guest'" in error.detail
     assert [store.rows[p["id"]]["name"] for p in updates(store)] == [DS]
     assert [w.name for w in error.completed] == [DS]
@@ -246,7 +246,7 @@ async def test_a_qos_write_that_lost_the_segment_leaves_a_plan_that_raises_segme
     assert [store.rows[p["id"]]["name"] for p in updates(store)] == [DS, QOS]
     with pytest.raises(SegmentSetError) as raised:
         _ = state.plan()
-    assert QOS in raised.value.modules
+    assert "business_policy" in raised.value.modules
     assert raised.value.segments == ("Guest",)
 
 
@@ -258,7 +258,7 @@ async def test_the_redo_of_a_lost_added_segment_assigns_it_again(
     pipeline, store = module_store_pipeline(state)
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         patch={"segments": {"Guest": add({"rules": [rule("Box"), rule("Video")]})}},
     )
     planned = planned_guest(state, QOS)

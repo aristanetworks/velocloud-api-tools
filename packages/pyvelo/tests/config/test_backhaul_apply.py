@@ -68,7 +68,7 @@ async def test_a_hub_named_in_a_profile_rule_gets_its_service() -> None:
 
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment=GLOBAL[1],
         path="rules",
         patch=hub_in_rule(HUB_A.name),
@@ -95,7 +95,7 @@ async def test_a_hub_named_in_an_edge_rule_gets_the_profiles_service() -> None:
 
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment=GLOBAL[1],
         path="rules",
         patch=hub_in_rule(HUB_A.name),
@@ -122,7 +122,7 @@ async def test_a_hub_and_its_rule_in_one_save_is_refused() -> None:
     with pytest.raises(HubServiceNotFoundError) as error:
         _ = await pipeline.apply(
             state,
-            module="qos",
+            module="business_policy",
             segment=GLOBAL[1],
             path="rules",
             patch=hub_in_rule(HUB_B.name),
@@ -130,7 +130,7 @@ async def test_a_hub_and_its_rule_in_one_save_is_refused() -> None:
 
     assert (error.value.hub, error.value.segment) == (HUB_B.name, GLOBAL[1])
     assert "save the hub first" in str(error.value)
-    assert '"vpnHubs": {"+": {"_op": "add", "name": "Hub-B"}}' in str(error.value)
+    assert '"vpn_hubs": {"+": {"_op": "add", "name": "Hub-B"}}' in str(error.value)
     assert backhaul_of(state.profile.qos) == []
     assert state.profile.qos.model_dump() == before
     (segment,) = state.profile.device_settings.segments
@@ -143,7 +143,7 @@ async def test_a_hub_and_its_rule_in_one_save_is_refused() -> None:
 async def test_the_patch_the_error_gives_makes_the_hub_usable_by_the_rule() -> None:
     state = await a_profile()  # Hub-B is in neither list of the Global Segment
     pipeline, _ = hub_pipeline(state, vpn_check=True)
-    rule = {"module": "qos", "segment": GLOBAL[1], "path": "rules"}
+    rule = {"module": "business_policy", "segment": GLOBAL[1], "path": "rules"}
     with pytest.raises(HubServiceNotFoundError) as error:
         _ = await pipeline.apply(state, patch=hub_in_rule(HUB_B.name), **rule)
     patch = backhaul_hub_mending(GLOBAL[1], HUB_B.name).patch
@@ -165,7 +165,7 @@ async def test_an_edge_rule_on_a_hub_the_profile_has_no_service_for_is_refused()
     with pytest.raises(HubServiceNotFoundError) as error:
         _ = await pipeline.apply(
             state,
-            module="qos",
+            module="business_policy",
             segment=GLOBAL[1],
             path="rules",
             patch=hub_in_rule(HUB_B.name),
@@ -191,7 +191,7 @@ async def test_an_edge_rule_on_a_new_qos_module_inserts_its_backhaul_row() -> No
 
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment=GLOBAL[1],
         path="rules",
         patch={"+": add(rule)},
@@ -216,7 +216,7 @@ async def test_an_edge_rule_on_a_new_qos_module_inserts_its_backhaul_row() -> No
         "ref": BACKHAUL_REF,
         "segmentObjectId": GLOBAL[3],
     }
-    module = state.module("qos")
+    module = state.module("business_policy")
     assert not module.is_new
     (stored_id,) = [
         i
@@ -264,7 +264,7 @@ async def test_a_segment_added_with_a_rule_on_a_hub_it_has_no_service_for_is_ref
 
     with pytest.raises(HubServiceNotFoundError) as error:
         _ = await pipeline.apply(
-            state, module="qos", patch={"segments": {"+": add(guest)}}
+            state, module="business_policy", patch={"segments": {"+": add(guest)}}
         )
 
     assert (error.value.hub, error.value.segment) == (HUB_A.name, GUEST[1])
@@ -289,7 +289,7 @@ async def test_an_entry_that_lacked_its_service_as_read_does_not_stop_another_ed
 
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment=GLOBAL[1],
         path="rules",
         patch=hub_in_rule(HUB_A.name),
@@ -297,3 +297,57 @@ async def test_an_entry_that_lacked_its_service_as_read_does_not_stop_another_ed
 
     (entry,) = backhaul_of(state.profile.qos)
     assert str(entry.logical_id) == SERVICE_A
+
+
+async def test_a_hub_with_no_service_is_named_by_its_rule_and_its_name() -> None:
+    state = await a_profile()
+    pipeline, _ = hub_pipeline(state)
+    rule = {"module": "business_policy", "segment": GLOBAL[1], "path": "rules"}
+
+    with pytest.raises(HubServiceNotFoundError) as error:
+        _ = await pipeline.apply(state, patch=hub_in_rule(HUB_B.name), **rule)
+
+    shown = (
+        'segments["Global Segment"].rules[r1].action.edge_to_edge_route_action'
+        ".route_cfg.backhaul_edges[Hub-B]"
+    )
+    assert error.value.path == shown
+    assert str(error.value).startswith(f"{shown} names the hub 'Hub-B'")
+
+
+async def test_the_service_patch_of_an_entry_without_one_is_accepted_by_the_rule() -> (
+    None
+):
+    state = await a_profile()
+    entry = backhaul_entry(HUB_A, SERVICE_A)
+    del entry["logicalId"]  # an entry built by assignment, without its service
+    (segment,) = state.profile.qos.segments
+    (held,) = segment.rules
+    held.action.edge_to_edge_route_action.route_cfg.backhaul_edges = [
+        BackhaulEdge.model_validate(entry)
+    ]
+
+    with pytest.raises(HubServiceNotFoundError) as error:
+        _ = state.plan()
+
+    text = str(error.value)
+    shown = (
+        'segments["Global Segment"].rules[r1].action.edge_to_edge_route_action'
+        ".route_cfg.backhaul_edges[Hub-A]"
+    )
+    assert error.value.path == shown
+    assert text.startswith(f"{shown} names the hub 'Hub-A' and no service for it")
+    patch, _ = json.JSONDecoder().raw_decode(text[text.index('{"segments"') :])
+    route = patch["segments"]["Global Segment"]["rules"]["r1"]["action"][
+        "edge_to_edge_route_action"
+    ]["route_cfg"]
+    assert list(route["backhaul_edges"]) == ["Hub-A"]
+    assert list(route["backhaul_edges"]["Hub-A"]) == ["logical_id"]
+    route["backhaul_edges"]["Hub-A"]["logical_id"] = SERVICE_A
+
+    pipeline, _ = hub_pipeline(state)
+    _ = await pipeline.apply(state, module="business_policy", patch=patch)
+
+    (filled,) = backhaul_of(state.profile.qos)
+    assert str(filled.logical_id) == SERVICE_A
+    assert [m.name for m in state.plan().changed] == ["QOS"]

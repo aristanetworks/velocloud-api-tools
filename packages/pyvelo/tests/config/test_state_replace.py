@@ -202,7 +202,7 @@ def test_replace_leaves_the_other_modules_edits() -> None:
 
     assert [m.name for m in state.plan().changed] == ["QOS"]
     assert [(c.module, c.path, c.before) for c in state.get_field_changes()] == [
-        ("QOS", "service_rate_limit", MISSING)
+        ("business_policy", "service_rate_limit", MISSING)
     ]
 
 
@@ -285,7 +285,7 @@ def test_in_place_edits_of_two_replaced_modules_are_one_report() -> None:
     assert exc.value.paths == [outbound_path("new"), removed]
     assert str(exc.value) == (
         f"firewall: {IN_PLACE}{outbound_path('new')}{REDO}\n"
-        f"QOS: {IN_PLACE}{removed}{REDO}"
+        f"business_policy: {IN_PLACE}{removed}{REDO}"
     )
     assert state.plan().changed == ()
 
@@ -324,7 +324,7 @@ def test_dropped_objects_cost_nothing() -> None:
 
     # An inserted module: module(create=True) holds what it made until it is replaced.
     state = make_state(modules=False)
-    made = state.module("qos", create=True)
+    made = state.module("business_policy", create=True)
     made_ref = weakref.ref(made)
     state.replace_module(made, as_stored(made, {"segments": []}))
     del made
@@ -367,14 +367,14 @@ def test_replace_of_a_module_that_is_not_in_the_state_raises() -> None:
 
 def test_an_inserted_module_is_replaced_and_no_longer_new() -> None:
     state = make_state()
-    made = state.module("qos", create=True)
+    made = state.module("business_policy", create=True)
     assert made.is_new
     new = as_stored(made, {"segments": []})
 
     state.replace_module(made, new)
 
-    assert state.module("qos") is new
-    assert state.module("qos").is_new is False
+    assert state.module("business_policy") is new
+    assert state.module("business_policy").is_new is False
     with pytest.raises(ValueError, match="read from the VCO"):
         state.drop_module(new)
     snapshot = state.snapshot_for_target()
@@ -445,3 +445,47 @@ def test_a_held_model_that_is_not_a_vco_model_is_compared() -> None:
         Path(("data", "segments", Key("Global Segment"), "vrrp", "enabled"))
     ]
     assert state.plan().changed == ()
+
+
+# --- a text that names a module names it by its python name -------------------------
+
+
+def test_the_refusals_of_drop_and_replace_name_the_module_by_its_python_name() -> None:
+    state = make_state(
+        [
+            fw_row(),
+            make_module_json(
+                "QOS", copy.deepcopy(EDGE_QOS), module_id=4, configuration_id=10
+            ),
+        ]
+    )
+    qos = state.module("QOS")
+    twin = copy.deepcopy(qos)
+
+    with pytest.raises(ValueError, match="only a new one is dropped") as dropped:
+        state.drop_module(qos)
+    with pytest.raises(ValueError, match="is not in the target config") as replaced:
+        state.replace_module(twin, twin)
+
+    assert str(dropped.value).startswith(
+        "module 'business_policy' was read from the VCO"
+    )
+    assert str(replaced.value) == (
+        "module 'business_policy' is not in the target config"
+    )
+
+
+def test_a_module_that_cannot_be_created_is_named_by_its_python_name() -> None:
+    edge = EdgeConfiguration.model_validate({"name": "Edge Specific Profile"})
+    profile = EnterpriseConfigurationProfile.model_validate({"name": "P", "id": 20})
+    state = ConfigState(
+        edge_config=edge,
+        profile_config=profile,
+        target_type="edge",
+        resolver_context=ResolverContext(),
+    )
+
+    with pytest.raises(ValueError, match="configuration has no ID") as exc:
+        _ = state.module("QOS", create=True)
+
+    assert str(exc.value).startswith("Cannot create module 'business_policy'")

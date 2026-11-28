@@ -48,7 +48,7 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 from pyvelo.core.layers import Edge, Profile, layer_for
-from pyvelo.core.rebase import AddedItem, Key
+from pyvelo.core.rebase import AddedItem, Key, Path
 from pyvelo.testing import make_module_json
 from refs_helpers import (
     DNS_A,
@@ -69,6 +69,7 @@ from refs_helpers import (
     table_registry,
     unset_provider_module,
 )
+from shown_paths import reached
 
 EDGE = ConfigContext.EDGE
 
@@ -546,7 +547,7 @@ def test_render_of_a_move_is_one_short_line_beside_the_edit() -> None:
     rules[1].logging_enabled = True
     assert plan_module(mod, level=EDGE).render().splitlines() == [
         "firewall: update",
-        f"  + {OUTBOUND}[a].loggingEnabled: true",
+        f"  + {OUTBOUND}[a].logging_enabled: true",
         f"  ~ {OUTBOUND}: order: c first",
     ]
 
@@ -1542,7 +1543,7 @@ def test_a_patch_inside_an_inherited_section_turns_its_override_on_and_the_plan_
         ("segments", Key("Global Segment"), "bgp")
     ]
     lines = plan.render().splitlines()
-    assert lines[0] == "deviceSettings: update"
+    assert lines[0] == "device_settings: update"
     assert lines[1] == f"  ~ {BGP}.override: false -> true"
     assert lines[2].startswith(f'  + {BGP}.neighbors["10.0.0.2"] (first): ')
     assert lines[3:] == [
@@ -1586,7 +1587,7 @@ def test_the_flag_of_a_list_item_is_listed_at_the_item() -> None:
     assert [str(p) for p in plan.overrides_turned_on] == ["lan.networks[1]"]
     assert (
         plan.render().splitlines()[-1]
-        == f"  override turned on: lan.networks[1] {OVERRIDE_NOTE}"
+        == f"  override turned on: lan.networks[n] {OVERRIDE_NOTE}"
     )
 
 
@@ -1693,7 +1694,7 @@ def test_a_provider_cleared_plans_an_update_that_removes_its_row() -> None:
     assert change.row == primary_provider_row()
     assert plan.refs == {SEGMENT: segment_row(0, SEG0_OBJECT, SEG0)}
     lines = plan.render().splitlines()
-    assert f"  - refs {PRIMARY} (Global Segment): {DNS_A}" in lines
+    assert f"  - refs {PRIMARY_PATH}: {DNS_A}" in lines
 
 
 def test_a_data_edit_of_device_settings_with_segments_sends_its_refs_as_read() -> None:
@@ -1753,7 +1754,7 @@ def test_a_plan_with_nothing_to_write_has_no_refs() -> None:
     plan = plan_module(module)
     assert (plan.operation, plan.refs, plan.ref_changes) == ("none", None, ())
     assert plan.data == module.raw_data
-    assert plan.render() == "deviceSettings: none"
+    assert plan.render() == "device_settings: none"
     unread = plan_module(primary_provider_module(refs_loaded=False))
     assert (unread.operation, unread.refs) == ("none", None)
 
@@ -1780,7 +1781,7 @@ async def test_a_module_whose_refs_were_not_read_refuses_an_owner_edit() -> None
     set_primary_provider(current, uuid.UUID(DNS_A))
     with pytest.raises(RefsNotLoadedError) as caught:
         plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
-    assert caught.value.module_name == "deviceSettings"
+    assert caught.value.module_name == "device_settings"
     assert caught.value.paths == (PRIMARY_PATH,)
     message = str(caught.value)
     assert PRIMARY_PATH in message
@@ -1798,7 +1799,7 @@ def test_a_module_whose_refs_were_not_read_refuses_a_write_with_segments() -> No
     an_edit_of_the_data(current)
     with pytest.raises(RefsNotLoadedError) as caught:
         plan_module(module, current)
-    assert (caught.value.module_name, caught.value.paths) == ("deviceSettings", ())
+    assert (caught.value.module_name, caught.value.paths) == ("device_settings", ())
     assert NOT_READ in str(caught.value)
     assert "replace" in str(caught.value)
 
@@ -1833,14 +1834,14 @@ def test_render_lists_ref_rows_and_warnings() -> None:
     plan = plan_module(module, current)
     lines = plan.render().splitlines()
     assert lines[:2] == [
-        "deviceSettings: update",
-        f"  - refs {PRIMARY} (Global Segment): {DNS_A}",
+        "device_settings: update",
+        f"  - refs {PRIMARY_PATH}: {DNS_A}",
     ]
     (warning,) = plan.warnings
     assert warning.code == "ref_without_owner"
     assert lines[2:] == [f"  warning: {warning.message}"]
     # A module nobody edited still reports what disagrees in it.
-    assert plan_module(module).render().splitlines()[0] == "deviceSettings: none"
+    assert plan_module(module).render().splitlines()[0] == "device_settings: none"
     assert f"  warning: {warning.message}" in plan_module(module).render()
 
 
@@ -1850,8 +1851,34 @@ async def test_render_lists_an_added_row_with_its_value() -> None:
     set_primary_provider(current, uuid.UUID(DNS_A))
     plan = plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
     assert plan.render().splitlines() == [
-        "deviceSettings: update",
-        f"  + refs {PRIMARY} (Global Segment): {DNS_A}",
+        "device_settings: update",
+        f"  + refs {PRIMARY_PATH}: {DNS_A}",
+    ]
+
+
+async def test_a_providers_ref_line_names_its_field() -> None:
+    module = unset_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_A))
+    plan = plan_module(module, current, resolvers=await table_registry(DNS_A_IDENTITY))
+    (change,) = plan.ref_changes
+    assert change.owner is not None
+    (line,) = plan.ref_lines()
+    assert line.startswith("  + refs segments[")
+    assert line == f"  + refs {PRIMARY_PATH}: {DNS_A}"
+    shown = Path.parse(line.removeprefix("  + refs ").removesuffix(f": {DNS_A}"))
+    assert shown == plan.named(change.owner)
+    assert reached(current, shown) == uuid.UUID(DNS_A)
+
+
+async def test_a_changed_provider_has_both_its_ref_lines_at_its_field() -> None:
+    module = primary_provider_module()
+    current = copy_of_data(module)
+    set_primary_provider(current, uuid.UUID(DNS_B))
+    plan = plan_module(module, current, resolvers=await table_registry(DNS_B_IDENTITY))
+    assert plan.ref_lines() == [
+        f"  - refs {PRIMARY_PATH}: {DNS_A}",
+        f"  + refs {PRIMARY_PATH}: {DNS_B}",
     ]
 
 
@@ -1943,11 +1970,18 @@ async def test_with_hub_rows_refuses_a_row_to_remove_that_the_refs_lack_and_a_pl
     None
 ):
     plan = await plan_with_refs({HUB_ROW_REF: hub_ref_row(601)})
-    with pytest.raises(ValueError, match="there is none to remove"):
+    with pytest.raises(ValueError, match="there is none to remove") as lacking:
         _ = with_hub_rows(plan, added=[], removed=[hub_ref_row(699)])
     bare = await plan_with_refs(None)
-    with pytest.raises(ValueError, match="hub rows go with an update that sends refs"):
+    with pytest.raises(
+        ValueError, match="hub rows go with an update that sends refs"
+    ) as no_refs:
         _ = with_hub_rows(bare, added=[hub_ref_row(601)], removed=[])
+    # The module by its python name; the row by its ref name, which is data.
+    assert str(lacking.value).startswith(
+        f"device_settings: the refs hold no {HUB_ROW_REF} row for object 699"
+    )
+    assert str(no_refs.value).startswith("device_settings: hub rows go with")
 
 
 def _stored_rule(name: str, **extra: object) -> dict[str, Any]:
@@ -2163,3 +2197,32 @@ def test_a_keyed_list_of_several_kinds_of_item_dumps_each_item_as_its_own_kind()
     unmarked = mod.data.model_dump(mode="json", by_alias=True)
     lag.mark_added()
     assert mod.data.model_dump(mode="json", by_alias=True) == unmarked
+
+
+def test_a_lossy_edit_names_its_module_and_the_item_as_the_edited_data_has_it() -> None:
+    # Two networks share a VLAN ID, so the edit is found at a position as read.
+    def network(name: str, vlan: int) -> dict[str, object]:
+        return {"name": name, "vlanId": vlan, "segmentId": 0}
+
+    raw = {
+        "lan": {
+            "networks": [network("A", 1), network("B", 5), network("C", 5)],
+            "interfaces": [],
+        },
+        "segments": [{"segment": desc(0, "Global Segment")}],
+    }
+    module = DeviceSettingsConfigurationModule.model_validate(
+        make_module_json("deviceSettings", raw), context={"config_level": EDGE}
+    )
+    networks = module.data.lan.networks
+    del networks[0]  # the third network as read is the second now
+    networks[1].cost = 10  # absent as read, and its default
+
+    with pytest.raises(LossyFieldError) as exc:
+        plan_module(module, level=EDGE)
+
+    assert exc.value.module == "device_settings"
+    assert exc.value.fields == ["lan.networks[C].cost"]
+    assert str(exc.value).startswith(
+        "device_settings: a save cannot write these edits: lan.networks[C].cost. "
+    )

@@ -40,6 +40,7 @@ from pyvelo.core.identity import (
     ResolverNotLoadedError,
     SegmentIdentity,
 )
+from pyvelo.core.names import named_path
 from pyvelo.core.rebase import Path
 from pyvelo.core.show import patch_text
 from pyvelo.core.walk import can_hold_field, walk_fields
@@ -71,14 +72,18 @@ class HubListField:
     role: Literal["hub", "bridge", "backhaul"]
     path: tuple[str, ...]
     """The wire keys from the segment entry to the list:
-    ``("vpn", "backHaulEdges")``."""
+    ``("vpn", "backHaulEdges")``. The raw JSON is read at them."""
+    python_path: tuple[str, ...]
+    """The attribute names from the segment entry to the list:
+    ``("vpn", "backhaul_edges")``. A message and a patch name the list by them."""
 
 
 @functools.cache
 def hub_list_fields() -> tuple[HubListField, ...]:
     """The fields of a device settings segment entry marked ``HubRole``.
 
-    Each with its role and wire path, in field order.
+    Each with its role, its wire path and its path in attribute names, in
+    field order.
 
     This is the one declaration of which lists hold hubs; the planner of the
     role steps walks the models for the same marker, and the one-module
@@ -87,17 +92,20 @@ def hub_list_fields() -> tuple[HubListField, ...]:
     """
     found: list[HubListField] = []
 
-    def visit(model_cls: type[VcoModel], prefix: tuple[str, ...]) -> None:
+    def visit(
+        model_cls: type[VcoModel], prefix: tuple[str, ...], names: tuple[str, ...]
+    ) -> None:
         for name, field_info in model_cls.model_fields.items():
             here = (*prefix, wire_name(model_cls, name))
+            named = (*names, name)
             role = get_hub_role(field_info)
             if role is not None:
-                found.append(HubListField(role.role, here))
+                found.append(HubListField(role.role, here, named))
             elif list_kind(field_info) is None:
                 for below in field_models(field_info):
-                    visit(below, here)
+                    visit(below, here, named)
 
-    visit(DeviceSegment, ())
+    visit(DeviceSegment, (), ())
     return tuple(found)
 
 
@@ -340,7 +348,9 @@ def fill_services(
         )
         if service is None:
             raise HubServiceNotFoundError(
-                hub=hub_name(entry), segment=_segment_name(segment), path=path
+                hub=hub_name(entry),
+                segment=_segment_name(segment),
+                path=named_path(path, data),
             )
         found.append((entry, service.logical_id))
     for entry, logical_id in found:
@@ -356,8 +366,10 @@ def missing_service_error(
 
     An entry that was so as *as_read* is left out: the module as it stands
     was stored with it, and an edit that does not touch it is no cause to
-    refuse. The message says to give the entry its ``logicalId``, or to add
-    the hub through ``apply``, which fills it.
+    refuse. The message says to give the entry its ``logical_id``, or to add
+    the hub through ``apply``, which fills it. The entry is named as pyvelo
+    shows a path (``named_path``), in the error's ``path``, in the message and
+    in the patch the message gives.
     """
     known: frozenset[Path] | None = None
     for path, entry, segment in _unserved(data):
@@ -370,16 +382,17 @@ def missing_service_error(
         hub = hub_name(entry)
         metadata: object = getattr(segment, "segment", None)
         name: object = getattr(metadata, "name", None)
+        shown = named_path(path, data)
         return HubServiceNotFoundError(
             hub=hub,
             segment=name if isinstance(name, str) else "",
-            path=path,
+            path=shown,
             message=(
-                f"{path} names the hub {hub!r} and no service for it: the row "
+                f"{shown} names the hub {hub!r} and no service for it: the row "
                 "that goes with the rule points at the hub's service for this "
                 "profile and segment, so it cannot be added. Give the entry's "
-                "logicalId, the hub's service: "
-                f"{patch_text(path.child('logical_id'))}, "
+                "logical_id, the hub's service: "
+                f"{patch_text(shown.child('logical_id'))}, "
                 "or add the hub through apply, which fills it."
             ),
         )

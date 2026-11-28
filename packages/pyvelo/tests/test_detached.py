@@ -16,7 +16,7 @@ from pyvelo.client.models.configuration.firewall.segment import FirewallSegment
 from pyvelo.client.schemas.configuration import DeviceSettingsConfigurationModule
 from pyvelo.core import ConfigContext, PatchError, VcoModel, add
 from pyvelo.core.layers import Edge
-from pyvelo.core.rebase import Path
+from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import make_module_json
 
 GLOBAL: dict[str, Any] = {
@@ -175,7 +175,7 @@ def test_merge_patch_on_a_model_that_holds_a_detached_model_changes_nothing() ->
         _ = data.merge_patch(patch)
 
     assert (dump(data), set(data.model_fields_set)) == (before, fields)
-    assert exc.value.paths == [Path(("segments", 0))]
+    assert exc.value.paths == [Path(("segments", Key("Global Segment")))]
     assert "FirewallData[Edge].merge_patch: the FirewallSegment[Edge] at " in str(
         exc.value
     )

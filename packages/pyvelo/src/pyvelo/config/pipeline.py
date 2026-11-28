@@ -12,7 +12,10 @@ from typing import Any, Final, Literal, Protocol, TypeIs, cast, runtime_checkabl
 from pydantic import MISSING
 from pydantic.fields import FieldInfo
 
-from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.client.enums.configuration import (
+    ConfigurationModuleName,
+    python_module_name,
+)
 from pyvelo.client.enums.profiles import GetConfigurationWith
 from pyvelo.client.exceptions import (
     ComposedModuleError,
@@ -52,6 +55,7 @@ from pyvelo.client.schemas.configuration import (
     WanConfigurationModule,
 )
 from pyvelo.client.schemas.edge import (
+    EdgeConfigurationModulesResult,
     GetEdgeConfigurationModules,
     GetEdgeConfigurationStack,
 )
@@ -117,8 +121,16 @@ from pyvelo.config.state import (
 from pyvelo.config.validation import ValidationError as ValidatorError
 from pyvelo.config.validation import ValidationResult, ValidatorRegistry
 from pyvelo.config.validation_warning import ValidationWarning
-from pyvelo.core import PatchError, RowsModifiedConfirmation, effective_dump
-from pyvelo.core.base import IdentityLookup, IdentityResolver, VcoModel, is_dict
+from pyvelo.core import PatchError, RowsModifiedConfirmation, effective_dump, item_part
+from pyvelo.core.base import (
+    IdentityLookup,
+    IdentityResolver,
+    VcoModel,
+    is_dict,
+    is_list,
+    list_kind,
+    python_name,
+)
 from pyvelo.core.fields import get_resolvable
 from pyvelo.core.identity import (
     EdgeName,
@@ -131,9 +143,17 @@ from pyvelo.core.identity import (
     SegmentName,
 )
 from pyvelo.core.layers import Edge, Effective, Layered, Profile
-from pyvelo.core.merge import nest_patch, read_given_id, select_items
-from pyvelo.core.patch import ItemOp, is_new, parse_item_op
-from pyvelo.core.rebase import Path, raw_changes
+from pyvelo.core.merge import (
+    address_path,
+    nest_patch,
+    nested_under,
+    read_given_id,
+    select_items,
+)
+from pyvelo.core.names import named_error, named_path
+from pyvelo.core.owned import unwrap
+from pyvelo.core.patch import ItemOp, at, is_new, parse_item_op, patch_key
+from pyvelo.core.rebase import Key, Path, PathPart, raw_changes
 
 
 @dataclass
@@ -284,6 +304,16 @@ _WRITABLE_MODULES = (
     FirewallConfigurationModule,
 )
 
+
+def _written_modules() -> str:
+    """The modules a save writes, by their python names, as a sentence lists them."""
+    names = [
+        python_module_name(str(cls.model_fields["name"].default))
+        for cls in _WRITABLE_MODULES
+    ]
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
 _CHANGED_BY_DEVICE_SETTINGS = (
     ConfigurationModuleName.QOS,
     ConfigurationModuleName.FIREWALL,
@@ -394,8 +424,10 @@ class _Sending:
         self.result.left_out[name] = write.left_out
         self.result.written = tuple(self.done)
         if paths:
+            paths = [_shown_edit(path, mod) for path in paths]
             error = DetachedObjectError(
-                f"{mod.name}: the module was edited while this save was writing "
+                f"{python_module_name(mod.name)}: the module was edited while "
+                "this save was writing "
                 f"it, at: {', '.join(paths)}. The write is stored without those "
                 "edits and the state holds the module as stored; take the objects "
                 "from the state again and redo them. A path that is a placeholder "
@@ -409,7 +441,7 @@ class _Sending:
             if later := self.modules[at + 1 :]:
                 note += (
                     "; the save stopped here, so these are not written: "
-                    + ", ".join(m.name for m in later)
+                    + ", ".join(python_module_name(m.name) for m in later)
                     + ". The next save writes them"
                 )
             error.add_note(note)
@@ -477,6 +509,17 @@ class _Edit:
                 data, self.nested, self.state.resolvers, self.inherited
             )
         return self.nested
+
+
+@dataclass(frozen=True)
+class _ComparedEdge:
+    """The edge one effective comparison checks, its view, and the VCO's modules."""
+
+    edge_id: int
+    enterprise_id: int | None
+    view: EffectiveView
+    composed: EdgeConfigurationModulesResult
+    """What ``edge/getEdgeConfigurationModules`` answered for the edge."""
 
 
 class ConfigPipeline:
@@ -682,7 +725,7 @@ class ConfigPipeline:
         module: str,
         patch: object,
         segment: str | None = None,
-        path: str | None = None,
+        path: str | Path | None = None,
     ) -> ConfigState:
         """Apply *patch* to the data of *module* on the state's target.
 
@@ -697,31 +740,62 @@ class ConfigPipeline:
         nested under the address, and nothing else:
 
         - ``path="a.b"`` is ``patch={"a": {"b": patch}}``;
+        - ``path="rules[Web].match"`` is
+          ``patch={"rules": {"Web": {"match": patch}}}``;
         - ``segment="S"`` is ``patch={"segments": {"S": patch}}``;
-        - both are ``patch={"segments": {"S": {"a": {"b": patch}}}}``.
+        - both are ``patch={"segments": {"S": {"a": {"b": patch}}}}``, and so
+          is ``path="segments[S].a.b"`` alone.
 
         With neither, *patch* must be a ``dict`` (``TypeError`` otherwise).
         With either, it is any JSON value; ``None`` means what ``null`` means
-        at that place. *path* is one or more field names joined by dots, each
-        by any name ``merge_patch`` accepts. Every part but the last must be
-        a field that holds a sub-model; where it holds a union of several, the
-        next part may name a field of any of them. *path* does not step into
-        list items, which the patch names. With *segment*, *path* starts at the
-        item class of the module's ``segments`` field, else at the module
-        data's class. *segment* is a selector of the ``segments`` list like
-        any other: the segment's name in any case (through the segment
-        resolver) or its ``segmentId``. The address is checked against the
-        model classes, not the instances (``nest_patch``), so an unset
-        intermediate field is fine. A part that names no field, a part before
-        the last that holds no sub-model, an empty *path* or part, and
-        *segment* for a module with no ``segments`` field (WAN, control
-        plane) raise ``PatchError``.
+        at that place. *path* is a ``Path`` or the text of one, in the form a
+        path is printed in: field names joined by dots, with an item in
+        brackets after its list (``rules[Web]``, ``rules[#0]``,
+        ``collectors["10.0.0.1",UDP,514]``). Its parts map one for one onto
+        patch keys. A field part is the key of that field, by any name
+        ``merge_patch`` accepts. The part after a list, or after a map of
+        models, is the selector of one of its items, whatever its kind: an
+        item in brackets, or a bare name (``rules.Web`` is ``rules[Web]``).
+        The parts below an item are its fields, and a path may end at an
+        item, whose patch is then the item's own (a plain object, or
+        ``{"_op": "delete"}``). Where a field holds a union of several
+        models, the next part may name a field of any of them, and the patch
+        reaches the variant the stored value is. With *segment*, *path*
+        starts at the item class of the module's ``segments`` field, else at
+        the module data's class. *segment* is a selector of the ``segments``
+        list like any other: the segment's name in any case (through the
+        segment resolver) or its ``segmentId``. ``segments[S]`` at the head
+        of *path* stands for *segment*, so a path printed from the top of a
+        module is taken as it is, and the rules for a patch that adds or
+        removes a segment (step 2) hold for it as they do for *segment*.
+        Giving the segment both ways raises ``PatchError``, whether or not
+        the two name one segment: one of them would be dropped without a
+        word. The address is checked
+        against the model classes, not the instances (``nest_patch``), so an
+        unset intermediate field is fine, and an item its list lacks is
+        refused when the patch is merged (``no_item``). A position
+        (``rules[#1]``) is the item at that position of the list as read. It
+        goes into the patch as the key ``"#1"``, which a patch reads first as
+        the key of an item, or as an entry of a list of values; so where
+        another item of the list has the text ``#1`` as its key or its value,
+        the position is refused (``PatchError``, ``address``, at its path),
+        with the ways to reach either item, because the patch would change
+        that other item without a word. A quoted ``rules["#1"]`` is a key, and
+        is read as a patch key is: the item with that key, else the position.
+        A field that takes one model or a list of them (a DNS provider) is
+        walked as what the path names: a name that is a field of the model is
+        that field, an item in brackets an item of the list. A text that is not a
+        path, an empty path, a part that names no field, an item where no
+        list or map is, a part below a plain value or a list of untyped
+        items, and *segment* for a module with no ``segments`` field (WAN,
+        control plane) raise ``PatchError``.
 
         **Steps.**
 
-        1. Locate the module on the target config. A ``firewall`` or ``QOS``
-           module that an edge lacks starts as an empty layer (nothing is
-           copied from the profile) and is inserted on save. A module a save
+        1. Locate the module on the target config. A ``firewall`` or
+           ``business_policy`` module that an edge lacks starts as an empty
+           layer (nothing is copied from the profile) and is inserted on save.
+           A module a save
            does not write (control plane) raises ``PatchError``, with an empty
            path, before the patch is read.
         2. On a profile target, the ``segments`` of device settings, QoS and
@@ -798,8 +872,8 @@ class ConfigPipeline:
            does not write at the level of the target.
         5. Return the updated :class:`ConfigState`.
 
-        A QoS patch that names a hub in a rule's ``backhaulEdges`` entry (on a
-        profile or an edge) gives the entry its ``logicalId``, the hub's
+        A QoS patch that names a hub in a rule's ``backhaul_edges`` entry (on a
+        profile or an edge) gives the entry its ``logical_id``, the hub's
         service for the profile and the rule's segment
         (:meth:`ConfigState.fill_hub_services`), on the copy and again on the
         module's data, so the state and its dump hold it. A hub with no
@@ -1077,7 +1151,8 @@ class ConfigPipeline:
         client = self._client
         if client is None:
             raise ValueError(
-                f"{module.name}: an insert of this module may have reached the VCO "
+                f"{python_module_name(module.name)}: an insert of this module may "
+                "have reached the VCO "
                 "(a save failed after it was sent), and this pipeline has no "
                 "client to read the configuration and delete the module with, so "
                 "its edits are not taken back: the state would forget the module, "
@@ -1136,13 +1211,14 @@ class ConfigPipeline:
 
         1. Plan the write of every module (:meth:`ConfigState.plan`), and
            raise ``TypeError`` if a changed module is not one a save writes
-           (device settings, QoS, WAN, firewall), also for ``dry_run``. The
-           plan is in the write order: the device settings are written first,
-           and the role steps right before them; in a save that removes a hub
-           from a list (a plan with a ``disable`` step) they are written last,
-           after the other modules, so that a rule stops using a hub before
-           the hub loses its role. A profile's three modules (device settings,
-           QoS and firewall) hold the same segments, so the plan raises
+           (``device_settings``, ``business_policy``, ``wan``, ``firewall``),
+           also for ``dry_run``. The plan is in the write order: the device
+           settings are written first, and the role steps right before them;
+           in a save that removes a hub from a list (a plan with a ``disable``
+           step) they are written last, after the other modules, so that a
+           rule stops using a hub before the hub loses its role. A profile's
+           three modules (device settings, QoS and firewall) hold the same
+           segments, so the plan raises
            ``SegmentSetError`` for an edit that removes a segment from one, or
            adds it to some and not all, and carries a ``segments_disagree``
            warning for a profile whose modules disagree as read.
@@ -1360,13 +1436,15 @@ class ConfigPipeline:
         """
         result.warnings.extend(
             ValidationWarning(
-                path=module_plan.name,
+                path=Path(()),
                 message=(
-                    "an earlier insert of this module may have reached the "
-                    "VCO; the save reads the configuration first, and takes a "
-                    "module of this name it finds there as the insert's answer"
+                    f"an earlier insert of the {python_module_name(module_plan.name)} "
+                    "module may have reached the VCO; the save reads the "
+                    "configuration first, and takes a module of this name it "
+                    "finds there as the insert's answer"
                 ),
                 code="insert_unconfirmed",
+                module=python_module_name(module_plan.name),
             )
             for module_plan in plan.changed
             if module_plan.name in state.unconfirmed_inserts
@@ -1711,7 +1789,7 @@ class ConfigPipeline:
                 raise step_error from error
             raise
 
-    async def compare_effective(  # noqa: C901 (existing: split it when it next changes)
+    async def compare_effective(
         self, state: ConfigState, *, modules: Sequence[str] | None = None
     ) -> EffectiveComparison:
         """Check the client's effective view of an edge against the VCO's modules.
@@ -1726,7 +1804,9 @@ class ConfigPipeline:
         not a finding; *state* is not changed, except that a resolver the plan
         needs is loaded into it, as ``save`` does. Every difference is an
         entry, and the ones that say the view and the VCO disagree are
-        ``EffectiveComparison.findings``.
+        ``EffectiveComparison.findings``. An entry names its module by its
+        python name and its path as every other output does
+        (``EffectiveDifference``).
 
         When a rule of the firewall view names a security service group, the
         security objects of the enterprise (the groups, and the URL category,
@@ -1784,52 +1864,73 @@ class ConfigPipeline:
             ask.enterprise_id = enterprise_id
         composed = await self.client.get_edge_configuration_modules(ask)
 
-        view = EffectiveView(edge_config, fresh)
+        edge = _ComparedEdge(
+            edge_id, enterprise_id, EffectiveView(edge_config, fresh), composed
+        )
         entries: list[EffectiveDifference] = []
         objects: SecurityObjects | None = None
         for name in names:
-            attribute = module_attribute(name)
-            module: object = getattr(composed, attribute, None)
-            data: object = getattr(module, "raw_data", MISSING)
-            if module is None or module is MISSING:
-                said = (
-                    f"answered null for the {name} module"
-                    if module is None
-                    else f"gave no {name} module"
-                )
-                raise ComposedModuleError(
-                    f"edge/getEdgeConfigurationModules {said} of edge {edge_id}. "
-                    "The VCO hides a composition error that way, so there is "
-                    "nothing to compare the view with. Open the edge in the VCO "
-                    "to see why its modules do not compose, or compare the other "
-                    f"modules with modules=[...] (not {name!r})",
-                    module=name,
-                )
-            if not isinstance(data, dict):
-                raise ComposedModuleError(
-                    f"edge/getEdgeConfigurationModules gave the {name} module of "
-                    f"edge {edge_id} no data object, so there is nothing to "
-                    "compare the view with. Read the module with "
-                    "get_edge_configuration_modules to see what the VCO sent",
-                    module=name,
-                )
-            module_view = cast("Layered[Effective]", getattr(view, attribute))
-            if (
-                name == "firewall"
-                and objects is None
-                and rules_naming_a_group(effective_dump(module_view)[0])
-            ):
-                objects = await self._read_security_objects(enterprise_id)
-            entries.extend(
-                compare_module(
-                    name,
-                    module_view,
-                    cast("dict[str, Any]", data),
-                    ignores=EFFECTIVE_IGNORES,
-                    security_objects=objects if name == "firewall" else None,
-                )
-            )
+            found, objects = await self._composed_module(edge, name, objects)
+            entries.extend(found)
         return EffectiveComparison(tuple(entries))
+
+    async def _composed_module(
+        self, edge: _ComparedEdge, name: str, objects: SecurityObjects | None
+    ) -> tuple[list[EffectiveDifference], SecurityObjects | None]:
+        """Compare one module with the VCO's, and pass on the security objects read.
+
+        *name* is the VCO's name of the module. *objects* are the enterprise's
+        security objects where an earlier module's comparison read them. They
+        are read here only when none were passed in and a rule of the firewall
+        view names a security service group, and what was read is returned
+        for the next module: so one comparison of an edge reads them at most
+        once, and not at all where no rule names a group.
+
+        Raises ``ComposedModuleError``, which names the module by its python
+        name, for a module the VCO answered ``null`` for or left out, and for
+        one whose answer holds no data object.
+        """
+        attribute = module_attribute(name)
+        shown = python_module_name(name)
+        module: object = getattr(edge.composed, attribute, None)
+        data: object = getattr(module, "raw_data", MISSING)
+        if module is None or module is MISSING:
+            said = (
+                f"answered null for the {shown} module"
+                if module is None
+                else f"gave no {shown} module"
+            )
+            raise ComposedModuleError(
+                f"edge/getEdgeConfigurationModules {said} of edge {edge.edge_id}. "
+                "The VCO hides a composition error that way, so there is "
+                "nothing to compare the view with. Open the edge in the VCO "
+                "to see why its modules do not compose, or compare the other "
+                f"modules with modules=[...] (not {shown!r})",
+                module=name,
+            )
+        if not isinstance(data, dict):
+            raise ComposedModuleError(
+                f"edge/getEdgeConfigurationModules gave the {shown} module of "
+                f"edge {edge.edge_id} no data object, so there is nothing to "
+                "compare the view with. Read the module with "
+                "get_edge_configuration_modules to see what the VCO sent",
+                module=name,
+            )
+        module_view = cast("Layered[Effective]", getattr(edge.view, attribute))
+        if (
+            name == "firewall"
+            and objects is None
+            and rules_naming_a_group(effective_dump(module_view)[0])
+        ):
+            objects = await self._read_security_objects(edge.enterprise_id)
+        found = compare_module(
+            name,
+            module_view,
+            cast("dict[str, Any]", data),
+            ignores=EFFECTIVE_IGNORES,
+            security_objects=objects if name == "firewall" else None,
+        )
+        return found, objects
 
     async def _read_security_objects(
         self, enterprise_id: int | None
@@ -1991,7 +2092,9 @@ def build_default_pipeline(
 def _converted(modules: Sequence[str] | None) -> tuple[str, ...]:
     """The converted modules *modules* names (all of them for ``None``).
 
-    ``ValueError`` for another.
+    Each is given by either of its names, and returned by the VCO's.
+    ``ValueError`` for another: it names the module as it was given and lists
+    the converted modules by their python names.
     """
     if modules is None:
         return CONVERTED_MODULES
@@ -1999,10 +2102,11 @@ def _converted(modules: Sequence[str] | None) -> tuple[str, ...]:
     for module in modules:
         name = _resolve_module_name(module).value
         if name not in CONVERTED_MODULES:
+            converted = ", ".join(map(python_module_name, CONVERTED_MODULES))
             raise ValueError(
                 f"compare_effective: {module!r} has no effective view yet, so "
                 "every key the VCO composes for it would be reported as "
-                f"server_only. Converted modules: {', '.join(CONVERTED_MODULES)}"
+                f"server_only. Converted modules: {converted}"
             )
         names.append(name)
     return tuple(names)
@@ -2495,7 +2599,7 @@ def _refuse_segment_ops_to_a_missing_module(
     module_name: str,
     patch: object,
     segment: str | None,
-    path: str | None,
+    path: str | Path | None,
 ) -> None:
     """Raise ``PatchError`` for segment operations to a module the profile lacks.
 
@@ -2503,23 +2607,22 @@ def _refuse_segment_ops_to_a_missing_module(
 
     A profile target only, for device settings, QoS and firewall: an ``add``,
     a ``delete`` or a list value for ``segments`` works on all three modules,
-    and inserting a module into a profile is not supported. A patch without
-    them is left to ``state.module``, which raises ``ValueError`` as ever.
+    and inserting a module into a profile is not supported. The patch is read
+    at its address, however that is given (``address_path``): by *segment*,
+    by a *path* that starts at ``segments``, or by neither. A patch without
+    segment operations is left to ``state.module``, which raises
+    ``ValueError`` as ever; an address that cannot be read raises as
+    ``address_path`` does.
     """
     if state.target_type != "profile" or module_name not in PROFILE_SEGMENT_MODULES:
         return
-    nested: object
-    if segment is not None and path is None:
-        nested = {"segments": {segment: patch}}
-    elif segment is None and path is None:
-        nested = patch
-    else:
-        return
+    nested = nested_under(address_path(segment, path), patch)
     if isinstance(nested, dict) and holds_segment_ops(
         cast("dict[str, object]", nested)
     ):
         raise PatchError(
-            f"the profile has no {module_name} module, and a patch that adds, "
+            f"the profile has no {python_module_name(module_name)} module, and a "
+            "patch that adds, "
             "removes or replaces a segment works on all three of device "
             "settings, QoS and firewall together. Inserting a module into a "
             "profile is not supported: add it in the VCO",
@@ -2571,7 +2674,7 @@ def _patched_module(
     module: str,
     patch: object,
     segment: str | None,
-    path: str | None,
+    path: str | Path | None,
 ) -> tuple[_WritableModule, bool]:
     """The module of *state* that ``apply``'s patch goes to, and whether this made it.
 
@@ -2591,8 +2694,8 @@ def _patched_module(
         if existing is None:
             state.drop_module(mod)
         raise PatchError(
-            f"{mod.name}: a save does not write this module (it writes "
-            "device settings, QoS, WAN and firewall modules), so a "
+            f"{python_module_name(mod.name)}: a save does not write this module "
+            f"(it writes the modules {_written_modules()}), so a "
             "patch to it is not applied. Make the change in the VCO",
             Path(()),
             "address",
@@ -2605,15 +2708,18 @@ def _edit_of(
     mod: _WritableModule,
     patch: object,
     segment: str | None,
-    path: str | None,
+    path: str | Path | None,
 ) -> _Edit:
     """The ``_Edit`` of *patch* at its address to *mod* of *state*.
 
     Raises ``PatchError`` for an address the class of the module's data does
-    not have (``nest_patch``).
+    not have (``nest_patch``), with each item the data has named as pyvelo
+    shows it (``_nested_patch``), and for a position in it that the patch would
+    read as another item of the data (``_refuse_misread_positions``).
     """
     data = mod.data
-    nested = nest_patch(type(data), patch, segment=segment, path=path)
+    nested = _nested_patch(data, patch, segment, path, state.resolvers)
+    _refuse_misread_positions(data, address_path(segment, path), state.resolvers)
     edge = state.target_type == "edge"
     profile_rules = (
         not edge
@@ -2639,6 +2745,170 @@ def _edit_of(
         profile_rules=profile_rules,
         inherited=inherited,
         unserved=unserved,
+    )
+
+
+def _nested_patch(
+    data: VcoModel,
+    patch: object,
+    segment: str | None,
+    path: str | Path | None,
+    resolvers: IdentityResolver | None,
+) -> dict[str, object]:
+    """*patch* nested under its address for the class of *data* (``nest_patch``).
+
+    A ``PatchError`` is raised with each item *data* has named as pyvelo shows
+    it (``named_error``), outside the handler: the error is one, with the
+    cause and the frames of the error it names.
+    """
+    try:
+        return nest_patch(type(data), patch, segment=segment, path=path)
+    except PatchError as error:
+        named = named_error(
+            error, data, resolvers, patch=_addressed(segment, path, patch)
+        )
+        # The frames below this one: the raise adds this one again.
+        below = None if error.__traceback__ is None else error.__traceback__.tb_next
+    # The locals go, so this frame, which the traceback holds, holds no error.
+    try:
+        raise named.with_traceback(below)
+    finally:
+        del named, below
+
+
+def _addressed(segment: str | None, path: str | Path | None, patch: object) -> object:
+    """*patch* under the keys of its address, as written; None for no address.
+
+    For naming an error of ``nest_patch`` (``named_error``): an item the
+    address selects is an item of the data, and one in a list value of
+    *patch* is not. None where the address cannot be read: its error is at
+    the empty path.
+    """
+    try:
+        return nested_under(address_path(segment, path), patch)
+    except PatchError:
+        return None
+
+
+def _refuse_misread_positions(
+    data: VcoModel, address: Path, resolvers: IdentityResolver | None
+) -> None:
+    """Raise ``PatchError`` for a position of *address* a patch would read as a key.
+
+    A position part ``[#n]`` goes into the patch as the key ``"#n"``, and a
+    patch reads that text first as the key of an item of a keyed list, or as
+    an entry of a list of values, and as a position only when no item has it.
+    So where another item of the list has the text ``#n`` as its key or its
+    value, the patch would change that item and not the one at position ``n``,
+    and say nothing. Such a position is refused, at its path, with the ways
+    to reach either item. The parts before it are shown as pyvelo shows them
+    (``named_path``); the position is kept, since the refusal is about it.
+
+    *address* is followed over *data* for as long as the data has what it
+    names: a field by any name a patch accepts, an item as a patch selects it
+    (with *resolvers*). Where the data ends (a field that is unset, an item
+    the list lacks, a selector that cannot be read) nothing below is looked
+    at: the merge refuses what it does not find. A position that selects
+    exactly its own item is accepted, and so is one the list is too short for
+    when no item has its text.
+    """
+    here: object = data
+    walked = Path(())
+    items: tuple[VcoModel, str] | None = None
+    for part in address.parts:
+        if items is not None:
+            # Only a position is refused, at a path whose parts before it are
+            # shown as pyvelo shows them: a segment given by its ID is its name.
+            where = walked.child(part)
+            if isinstance(part, int):
+                where = named_path(walked, data, resolvers=resolvers).child(part)
+            walked = walked.child(part)
+            here = _addressed_item(items[0], items[1], part, where, resolvers)
+            items = None
+        elif isinstance(here, VcoModel) and isinstance(part, str):
+            name = python_name(type(here), part)
+            if name is None:
+                return
+            walked = walked.child(name)
+            value = unwrap(getattr(here, name))
+            kind = list_kind(type(here).model_fields[name])
+            if kind not in (None, "untyped") and (is_list(value) or is_dict(value)):
+                items = (here, name)
+            here = value
+        else:
+            return
+
+
+def _addressed_item(
+    owner: VcoModel,
+    name: str,
+    part: PathPart,
+    where: Path,
+    resolvers: IdentityResolver | None,
+) -> object:
+    """The item of the list or map *name* of *owner* that *part* names, or None.
+
+    None where it names no item or several, and where the selector cannot be
+    read: the merge reads it again and raises what it finds.
+
+    Raises ``PatchError`` at *where* for a position whose text selects
+    another item than the one at that position (``_refuse_misread_positions``).
+    """
+    entries = unwrap(getattr(owner, name))
+    try:
+        found = select_items(owner, name, patch_key(part), resolvers)
+    except (PatchError, LookupError):
+        return None
+    if isinstance(part, int) and is_list(entries) and found and found != [part]:
+        raise PatchError(_misread_position(owner, name, part, found), where, "address")
+    if len(found) != 1:
+        return None
+    if is_dict(entries):
+        return list(entries.values())[found[0]]
+    return entries[found[0]] if is_list(entries) else None
+
+
+def _misread_position(
+    owner: VcoModel, name: str, position: int, found: Sequence[int]
+) -> str:
+    """Why the position *position* of the list *name* of *owner* is refused.
+
+    *found* are the positions the text of the position selects in place of
+    it. The message says where the patch would go, and how to reach the item
+    at the position and the item that has the text.
+    """
+    entries = unwrap(getattr(owner, name))
+    is_values = list_kind(type(owner).model_fields[name]) == "value"
+    item, key = ("entry", "value") if is_values else ("item", "key")
+    text = at(position)
+    places = ("position " if len(found) == 1 else "positions ") + ", ".join(
+        str(index) for index in found
+    )
+    named = (
+        item_part(owner, name, position)
+        if is_list(entries) and position < len(entries)
+        else None
+    )
+    if not is_list(entries) or position >= len(entries):
+        instead = f"The list has no position {position}"
+    elif isinstance(named, Key):
+        instead = (
+            f"Name the {item} at position {position} by what names it alone: "
+            f"{Path((name, named))}"
+        )
+    else:
+        instead = (
+            f"Nothing names the {item} at position {position} alone, so change "
+            f"it in a patch of the whole list: end the path at {name} and give "
+            "the list as the patch"
+        )
+    return (
+        f"{Path((position,))} is position {position} of "
+        f"{type(owner).__name__}.{name}, but as a patch key the text {text!r} "
+        f"is read first as the {key} of an {item}, and the list has that {key} "
+        f"at {places}: the patch would go there, not to position {position}, "
+        f"without a word. {instead}. To reach the {item} whose {key} is "
+        f"{text!r}, write it in quotes: {Path((name, Key(text)))}"
     )
 
 
@@ -2690,7 +2960,7 @@ def _qos_rules_json(
 ) -> list[dict[str, object]] | None:
     """The JSON of *rules*, each validated as a ``QosRule``, in order; None for None.
 
-    Raises ``ValueError`` for two rules of one name or one ``ruleLogicalId``,
+    Raises ``ValueError`` for two rules of one name or one ``rule_logical_id``,
     and pydantic's ``ValidationError`` (a ``ValueError``) for a rule that is not one.
     """
     if rules is None:
@@ -2701,14 +2971,14 @@ def _qos_rules_json(
         ).model_dump(mode="json", by_alias=True)
         for rule in rules
     ]
-    for key in ("name", "ruleLogicalId"):
+    for key, shown in (("name", "name"), ("ruleLogicalId", "rule_logical_id")):
         seen: set[object] = set()
         for rule in dumped:
             if rule[key] in seen:
                 raise ValueError(
-                    f"qos_rules holds more than one rule with the {key} "
+                    f"qos_rules holds more than one rule with the {shown} "
                     f"{rule[key]!r}: each rule of a QoS entry has a name and a "
-                    "ruleLogicalId of its own."
+                    "rule_logical_id of its own."
                 )
             seen.add(rule[key])
     return dumped
@@ -2728,9 +2998,12 @@ def _may_be_stored(error: ModuleWriteError) -> bool:
 
 
 def _written_note(done: Sequence[ModuleWrite[Any]]) -> str:
-    """The note of an error that stops a save: the modules it wrote before."""
+    """The note of an error that stops a save: the modules it wrote before.
+
+    Each by its python name.
+    """
     return "written before this failure: " + ", ".join(
-        f"{w.name} ({w.operation})" for w in done
+        f"{python_module_name(w.name)} ({w.operation})" for w in done
     )
 
 
@@ -2752,13 +3025,28 @@ def _dump(mod: AnyStoredModule) -> object:
     return mod.model_dump(mode="json", by_alias=True)
 
 
+def _shown_edit(path: Path, mod: AnyStoredModule) -> Path:
+    """*path*, of an edit of *mod* made while it was written, as pyvelo shows it.
+
+    The path is one from the module as it was sent to the module as it is: it
+    names an item by its key as sent, which *mod* is asked for, so the item
+    is shown by what names it now. A path with a position is named by the
+    class alone, its fields by attribute: the position counts in the list as
+    it was sent, which this holds no model of, so it is kept as written and
+    read as no item of the list as it is.
+    """
+    by_position = any(isinstance(part, int) for part in path.parts)
+    return named_path(path, type(mod) if by_position else mod)
+
+
 def _require_writable(mod: AnyStoredModule) -> _WritableModule:
     """*mod*, if it is a module a save writes; else ``TypeError``."""
     if not isinstance(mod, _WRITABLE_MODULES):
+        named = python_module_name(mod.name)
         raise TypeError(
-            f"{mod.name}: this state has an edit to a {type(mod).__name__}, which a "
-            "save does not write (it writes device settings, QoS, WAN and firewall "
-            f"modules). Take the edit back with revert (module {mod.name}), or "
+            f"{named}: this state has an edit to a {type(mod).__name__}, which a "
+            f"save does not write (it writes the modules {_written_modules()}). "
+            f"Take the edit back with revert (module {named}), or "
             "load the state again; nothing was sent"
         )
     return mod
@@ -2890,7 +3178,8 @@ def _plan_to_compare(state: ConfigState, module: AnyStoredModule) -> ModulePlan:
         if isinstance(error, ResolverNotLoadedError):
             raise
         raise ValueError(
-            f"{module.name}: an insert of this module may have reached the VCO, "
+            f"{python_module_name(module.name)}: an insert of this module may "
+            "have reached the VCO, "
             f"and this state's module cannot be planned ({error}), so it cannot "
             "be compared with a module the VCO may hold. Nothing was read or "
             "deleted. To go on, load the state again, which then holds the "
@@ -2910,7 +3199,8 @@ def _require_the_states(
     """
     if plan.operation != "insert":
         raise ValueError(
-            f"{module.name}: the VCO holds a module of this name (module "
+            f"{python_module_name(module.name)}: the VCO holds a module of this "
+            "name (module "
             f"{found.id_}), and this state's module holds nothing a save would "
             "insert, so it cannot be told whether the stored module is the one "
             "this state sent, and it was not deleted. To go on, load the state "
@@ -2920,11 +3210,19 @@ def _require_the_states(
         write = check_found_insert(module, plan, found)
     except ModuleWriteError as error:
         raise ValueError(
-            _not_this_states(module.name, found.id_, _how_it_differs(error))
+            _not_this_states(module.name, found.id_, _how_it_differs(error, plan))
         ) from error
     more = [c for c in write.server_changes if not is_vco_assigned(module, plan, c)]
     if more:
-        paths = [str(change.path) for change in more]
+        # Named in the plan's data: a key the model does not declare, and an
+        # item only the stored module has, keep the part they are written with.
+        # A refs entry is written as a write error writes it.
+        paths = [
+            f"refs {change.path}"
+            if change.part == "refs"
+            else str(plan.named(change.path))
+            for change in more
+        ]
         raise ValueError(
             _not_this_states(
                 module.name, found.id_, f"it also holds {_some_paths(paths)}"
@@ -2933,9 +3231,13 @@ def _require_the_states(
 
 
 def _not_this_states(name: str, module_id: int, what: str) -> str:
-    """The refusal to delete module *module_id*, which is not this state's."""
+    """The refusal to delete module *module_id*, which is not this state's.
+
+    *name* is the module's name; the text names it by its python name.
+    """
     return (
-        f"{name}: the VCO holds a module of this name (module {module_id}) that "
+        f"{python_module_name(name)}: the VCO holds a module of this name "
+        f"(module {module_id}) that "
         f"is not the one this state holds ({what}), so it was not deleted: "
         "deleting it could remove another writer's module. To go on, save again, "
         "which reads the configuration before it inserts and goes on from the "
@@ -2952,11 +3254,22 @@ def _some_paths(paths: Sequence[str]) -> str:
     return f"{', '.join(distinct[:_SHOWN_PATHS])}{tail}"
 
 
-def _how_it_differs(error: ModuleWriteError) -> str:
-    """In a few words, why the module *error* was raised for is not this state's."""
+def _how_it_differs(error: ModuleWriteError, plan: ModulePlan) -> str:
+    """In a few words, why the module *error* was raised for is not this state's.
+
+    The places it differs at are shown as *plan*, which holds the state's
+    module, names them: an item the plan removes in the data as read, any
+    other in the data as planned. The path of a refs entry is no path of the
+    data: it is kept, with ``refs`` before it, as a write error writes it.
+    """
     if isinstance(error, WriteOutcomeUnknownError):
         return error.detail
-    paths = [str(change.path) for change in error.lost_edits]
+    paths = [
+        f"refs {change.path}"
+        if change.part == "refs"
+        else str(plan.named(change.path, removed=change.intended is MISSING))
+        for change in error.lost_edits
+    ]
     if not paths:
         return "it does not hold what this state's module holds"
     return f"it differs at {_some_paths(paths)}"

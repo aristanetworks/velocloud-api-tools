@@ -71,8 +71,10 @@ firewall: update
   + firewall_logging_enabled: true
 ```
 
-Its first line names what would be written to. A module the save would create
-shows as `firewall: insert`; `preview.modules_inserted` and
+Its first line names what would be written to. Each module is headed by its
+Python name (`business_policy` for the module the VCO calls `QOS`), and a line
+names a field by its Python attribute and an item by its name. A module the
+save would create shows as `firewall: insert`; `preview.modules_inserted` and
 `preview.modules_updated` hold the names. "What a save writes" explains the
 lines.
 
@@ -128,16 +130,24 @@ network services, a new resolver if the pipeline has none), and raises
 
 ## The patch format
 
-`apply` takes a module, a patch and, optionally, an address. The address is
+`apply` takes a module, a patch and, optionally, an address. The module is
+given by its python name, the name pyvelo prints it by: `device_settings`,
+`business_policy`, `firewall`, `wan`, `control_plane`, `management_plane`,
+`image_update`, `meta_data`, `properties`, `analytics_settings` or
+`atp_metadata` (`python_module_name` gives it for the VCO's name). The VCO's
+own name (`deviceSettings`, `QOS`) is accepted too. The address is
 shorthand for nesting: `segment="Global Segment", path="outbound", patch=P` is
-`patch={"segments": {"Global Segment": {"outbound": P}}}`. `path` is field
-names joined by dots, each a field that holds one sub-model, except the last,
-which may be any field; it does not step into list items, which the patch
-names. A path goes through a field that holds one of several kinds of object
-(the cloud security configuration's GRE and IPsec forms) to a field any of
-them has. `segment` names a segment like any other selector of the `segments`
-list: by name, in any case, or by `segmentId`. Without an address, `patch`
-must be a `dict`.
+`patch={"segments": {"Global Segment": {"outbound": P}}}`. `path` is a path
+in the form pyvelo prints one: field names joined by dots, with an item in
+brackets after its list, so `path="outbound[allow-web].match"` steps into the
+rule `allow-web` (see "Paths" below). A path goes through a field that holds
+one of several kinds of object (the cloud security configuration's GRE and
+IPsec forms) to a field any of them has, and reaches the form that is stored.
+`segment` names a segment like any other selector of the `segments` list: by
+name, in any case, or by `segmentId`. A path that starts at `segments[...]`
+names its segment itself, so `path='segments["Global Segment"].outbound'` is
+the same address; give the segment one way or the other, not both. Without an
+address, `patch` must be a `dict`.
 
 `apply` changes `state` in place and returns that same object: `candidate =
 await pipeline.apply(state, ...)` gives no second state to fall back on
@@ -178,7 +188,11 @@ that does not parse, `WriteOutcomeUnknownError`) or delete, or a delete
 answered with an error or a row count of 0 (`VcoOperationError`), leaves the
 state as it was, and `revert` can be called again; an answer with no row count
 is taken as the delete done. `state.revert_module(name)` sends nothing, so it
-refuses such a module and names `pipeline.revert`.
+refuses such a module and names `pipeline.revert`. Each of these refusals
+starts with the module's python name (`business_policy: the VCO holds a module
+of this name ...`), and a place it names (`it differs at ...`, `it also holds
+...`) is shown as a plan shows a path; a row of refs is `refs <path>`, as a
+write error writes it (see "After a save").
 `revert` takes back edits, not what a save already did: a role step a save
 sent before it stopped (see "Hubs", "When a step fails") stays on the VCO, and
 a state whose device settings edits are taken back plans nothing that mends
@@ -224,8 +238,8 @@ A patch is strict and all or nothing:
 - A key that names no field raises, at every depth, and so do two keys that
   name one field (`rule_id` and `ruleId`). Keys that start with `_` are
   directives: `_op` and `_position`, on a list item only.
-- A hub is added to a `vpn` list (`edgeToEdgeHub.vpnHubs`,
-  `edgeToEdgeDetail.vpnHubs`, `backHaulEdges`) or to a QoS rule's
+- A hub is added to a `vpn` list (`hub_edges.vpn_hubs`,
+  `edge_to_edge_detail.vpn_hubs`, `backhaul_edges`) or to a QoS rule's
   `backhaulEdges` by its name, `{"+": add({"name": "Hub-A"})}`, or by its
   logical ID, `{"+": add({"logicalId": "<logical ID>"})}` (in a rule,
   `edgeLogicalId`): the other fields of the entry come from the Edge or the hub
@@ -233,11 +247,22 @@ A patch is strict and all or nothing:
 - A patch that cannot be applied raises `PatchError` (a `ValueError`). Its
   `path` is where in the patch it failed, its `message` the reason, and its
   `kind` one of the thirteen values below, for a caller that reacts to the
-  cause. Resolver errors keep their types (`ResolutionError` for an unknown
-  name). A patch that applies but that a
-  save could not write raises `LossyFieldError` (see "What a save writes"),
-  and a patch to a module a save does not write (control plane) raises
-  `PatchError`. In every case the state, and `plan()`, are as they were.
+  cause. The path is written as pyvelo shows one (see "Paths"): an item the
+  data has is named by what names it alone, whatever selector the patch
+  used, so `{"segments": {"Guest": {"rules": {"#0": {"bogus": 1}}}}}` fails
+  at `segments[Guest].rules[Web].bogus` where the first rule is `Web`, and an
+  entry of a map is its key after a dot. An item the data lacks keeps the
+  selector as written (`rules[Nope]`), and so does an item of a list the
+  patch gives whole, which is the list value's item and not the data's
+  (`rules[#0]` is the first item of the value). An error of kind `duplicate`
+  keeps its last part as the patch wrote it, since that is the second
+  selector the message is about: `{"rules": {"Web": {}, "#0": {}}}` fails at
+  `rules[#0]`, with the message that `rules[Web]` names this item too.
+  Resolver errors keep their types (`ResolutionError` for an unknown name).
+  A patch that applies but that a save could not write raises
+  `LossyFieldError` (see "What a save writes"), and a patch to a module a
+  save does not write (control plane) raises `PatchError`. In every case the
+  state, and `plan()`, are as they were.
 
 | `kind` | The patch... |
 |---|---|
@@ -510,7 +535,7 @@ patch; `state.profile` holds the profile's values. The plan shows the flag as
 a change and names the section in a line of its own:
 
 ```text
-deviceSettings: update
+device_settings: update
   ~ segments["Global Segment"].bgp.override: false -> true
   + segments["Global Segment"].bgp.neighbors["10.0.0.2"] (first): {...}
   override turned on: segments["Global Segment"].bgp (the edge's own values apply there from now on, and the profile's no longer do)
@@ -555,6 +580,124 @@ inherits. A segment's `defaults` belong to the profile: a patch of `defaults`
 on an edge is refused (the VCO would add an edge's to the profile's); patch
 the profile's state.
 
+### Paths
+
+A path names a place in a module's data. `path` takes one as a `Path`
+(`pyvelo.core`) or as its text, which `Path.parse` reads. Its parts are
+written left to right:
+
+| Part | How it is written | Example |
+|---|---|---|
+| A field | Its Python attribute name. A dot joins it to the part before; the first part has none. | `vpn.backhaul_edges` |
+| An item of a list, by its name, its key or its alt key | The text in brackets after the list. It is bare when it is made of letters, digits, `_` and `-`, does not start with `-`, is not all digits, and does not read as a JSON number, `true` or `false`; else it is a JSON string. | `segments[Guest]`, `segments["Global Segment"]`, `rules["24"]`, `rules["a]b"]` |
+| An item whose key has several parts | The parts, each written by that rule, joined by commas in one pair of brackets. A number part is bare, and a text part that reads as a number is quoted. | `collectors["10.0.0.1",UDP,514]` (a syslog collector, by its `host`, `protocol` and `port`), `static["10.0.0.0","24","192.168.1.1",GE3]` (a static route, whose prefix is text) |
+| An item by its position | `[#n]`, counting from 0 in the list as the state holds it, with your edits. This is for an item that no name or key names alone, and for an item of a list without a key. | `rules[#0]` |
+| An entry of a map, and a key the model does not declare | The key as stored, after a dot. It is bare when it is letters, digits and `_` and does not start with a digit; else it is a JSON string. | `refs."deviceSettings:backHaulEdge"` |
+
+Not every path that is shown is a place `apply` takes. A key the model does
+not declare, and a module's `refs` (which are not part of its data), are shown
+in a plan or a warning so that you can find them, and `apply` refuses both as
+fields the model lacks. An entry of a map of models is a place `apply` takes,
+by its key.
+
+A segment is an item of `segments` like any other: `segments[Guest]`. At the
+head of a path it stands for `segment`: `path="segments[Guest].rules"` is
+`segment="Guest", path="rules"`, and the rules for a patch that adds or
+removes a segment hold for both. Giving the segment both ways is refused
+(`PatchError`, kind `address`), whether or not the two name one segment,
+because one of them would be dropped without a word: leave out `segment`, or
+start the path below the segment. `address_path(segment, path)`
+(`pyvelo.core`) gives the whole address of a call as one `Path`.
+
+Given to `apply`, the parts of a path map one for one onto the keys of a
+patch, so `apply(path=P, patch=body)` is `apply(patch=...)` with the body
+nested under `P`:
+
+- A field part is the key of that field. `path` also takes any other name a
+  patch accepts for a field, such as the VCO's key.
+- The part after a list is the selector of one of its items, whatever its
+  kind. `[Web]` is the selector `"Web"`, a key of several parts is
+  `key_selector` of it (`"10.0.0.1,UDP,514"`), `[#0]` is `"#0"`, and a bare
+  name after a list is that text, so `rules.Web` is `rules[Web]`.
+- The part after a map of models is the key of one of its entries, written
+  after a dot or in brackets. A map has no order, so a position names nothing
+  there, and the merge refuses it.
+- After a field that takes one object or a list of them (a segment's DNS
+  providers), a name that is a field of the object is that field
+  (`dns.primary_provider.service`), and an item in brackets is an item of the
+  list (`dns.private_providers[#0]`). The patch is then read by what the field
+  holds.
+- A path may end at a field, at a list or at an item. A body sent to an item
+  is that item's own: an object of its fields, or an operation such as
+  `{"_op": "delete"}`.
+
+So a path read off a plan line, such as
+`~ segments["Global Segment"].outbound[allow-web].match.destination_port_high: 443 -> 8443`,
+names the same place when it is given back:
+
+```python
+await pipeline.apply(
+    state,
+    module="firewall",
+    path='segments["Global Segment"].outbound[allow-web].match',
+    patch={"destination_port_high": 8080},
+)
+# is
+await pipeline.apply(
+    state,
+    module="firewall",
+    patch={
+        "segments": {
+            "Global Segment": {
+                "outbound": {"allow-web": {"match": {"destination_port_high": 8080}}}
+            }
+        }
+    },
+)
+```
+
+So does the path of an error. `BackhaulWithoutHubError` names a route action
+as `segments[Guest].rules[Web].action.edge_to_cloud_route_action`, and the
+patch that routes the rule another way goes to that path:
+
+```python
+await pipeline.apply(
+    state,
+    module="business_policy",
+    path="segments[Guest].rules[Web].action.edge_to_cloud_route_action",
+    patch={"route_policy": "gateway"},
+)
+```
+
+`[#n]` in a path is a position: the item at place `n` of the list as the
+state holds it, with your edits. That is the list pyvelo counts in where it
+prints a position (in a plan line, a field change or the error of a patch),
+so the path is one `apply` takes. The one exception is a plan line or a
+field change that removes an item: the item is no longer in the state, and
+its position is the one it had in the list as it was read. As a patch key it
+is the text `"#n"`, and a patch reads that text first as the key of an item
+(in a list of values, as an entry) and as a position only when no item has
+it. So in the
+one case where another item of the list has the text `#n` as its key or its
+value, `apply` refuses the position (`PatchError`, kind `address`, at
+`rules[#1]`): the patch would change that other item without a word. The
+message names what to write instead: the selector that names the item alone
+where it has one (its key, its name or its alt key), else a patch of the list
+as a whole (end the path at the list and give the list); and the quoted form
+for the item that has the text. A quoted `rules["#0"]` is a key or a name,
+not a position. It is read as a patch key is: it names the item whose key is
+`#0`, and only where the list has none, the item at position 0.
+
+A path is checked against the models before the patch is merged, and a bad
+one raises `PatchError` of kind `address`. A text that is not a path is
+refused with the form above. So is an empty path, which would send the patch
+to the whole module: leave `path` out for that. An item written where no list
+or map is (`vpn[Web]`) is refused with the field named: put the item after the
+list it is in. A part after a list of untyped items is refused too, since a
+patch replaces such a list whole. Whether a list has the item a path names is
+found when the patch is merged: a path to an item the list lacks raises
+`PatchError` of kind `no_item` at that item, `segments[Guest].rules[Nope]`.
+
 ## What a save writes
 
 A save sends each changed module's `data` as it was read, with only your
@@ -565,9 +708,16 @@ Beside its `data`, a device settings or QoS module has `refs`: the rows that
 tie the module to the enterprise objects it uses (segments, address groups,
 services). The library derives them from the data, so you edit the data and
 never the refs. Setting a provider adds the row it goes with and clearing it
-removes the row; `state.plan().render()` lists each as `+ refs <name>
-(<segment>): <value>` or `- refs <name> (<segment>): <value>`, without the
-segment for a row of the module, and a module that sends its refs with no row
+removes the row; `state.plan().render()` lists each by the provider's field, as
+`+ refs <path>: <value>` or `- refs <path>: <value>`
+(`+ refs segments[Guest].dns.primary_provider.service: <service's logical ID>`),
+where the path is the one `get_field_changes()` gives for the provider: the
+field's place in the data as you edited it, so under a renamed segment's new
+name. A row
+that goes with a value the data holds (a QoS rule's backhaul hub, a segment) is
+listed by its ref name, as `+ refs <name> (<segment>): <value>` or `- refs
+<name> (<segment>): <value>`, without the segment for a row of the module. A
+module that sends its refs with no row
 changed says `refs: sent as read`. A device settings or QoS write with segments
 always carries its refs, because the VCO's processors run on every such write.
 The row of a hub added to or removed from a Branch-to-Hub list is the one
@@ -576,16 +726,28 @@ steps have run, so the plan shows `refs: sent as read` and the save adds or
 removes the row for the write that follows the steps (see "Hubs").
 What disagrees in the refs as read is a `warning: <message>` line, and the
 write leaves it as it is. `ConfigPlan.warnings` holds the same warnings as
-data, each with its module's name before its path, and `save` and `dry_run`
-copy them to `SaveResult.warnings`.
+data, and `save` and `dry_run` copy them to `SaveResult.warnings`. Each has its
+module's python name in `module` and, in `path`, a place within that module's
+data as every path is shown, with no module before it. An identity the data
+holds that has no row (`owner_without_ref`: a cloud security provider, a QoS
+rule's backhaul hub) is at the field that holds it
+(`segments[Guest].css.provider.logical_id`). A provider that only its row
+tells (a DNS or authentication provider) and that has several rows for one
+segment (`several_refs`) is at the provider's field
+(`segments[Guest].dns.primary_provider.service`), which shows the first of
+them; with no row such a provider is not set, and that is no warning. A row
+that nothing in the data names (`ref_without_owner`) has no field: it is at its
+ref name under `refs` (`refs."deviceSettings:css:provider"`), and `segment`
+holds the name of the segment the row is of.
 An edge module that stores an object the VCO uses although its flag says it
-inherits (a segment's `cosMapping` with `override` false: the composer takes a
+inherits (a segment's `cos_mapping` with `override` false: the composer takes a
 present edge object whatever its flag) has a `flag_off_in_use` warning, at the
-object's path, in the same list and in `render()`, also when nothing else in
+object's path (`segments[Voice].cos_mapping`), in the same list and in
+`render()`, also when nothing else in
 the module changes; its message gives the patch that inherits
-(`{"segments": {"Voice": {"cosMapping": null}}}`) and the one that keeps the
+(`{"segments": {"Voice": {"cos_mapping": null}}}`) and the one that keeps the
 object as stored with its flag turned on (`{"segments": {"Voice":
-{"cosMapping": {}}}}`; `localize()` in Python). A patch that names values
+{"cos_mapping": {}}}}`; `localize()` in Python). A patch that names values
 inside such an object changes only those values and turns the flag on, so
 the edge keeps running with the object `state.effective` showed as the edge's.
 
@@ -633,9 +795,9 @@ edge module lacks:
 ```text
 edge 101, enterprise 1, configuration 10
 firewall: update
-  ~ segments["Global Segment"].outbound[allow-web].match.dport_high: 443 -> 8443
+  ~ segments["Global Segment"].outbound[allow-web].match.destination_port_high: 443 -> 8443
   - segments["Global Segment"].outbound[old-rule]
-  + segments["Global Segment"].outbound[block-ssh] (after guest-wifi): {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…
+  + segments["Global Segment"].outbound[block-ssh] (after guest-wifi): {"action": {"allow_or_deny": "deny"}, "comments": null, "logging_enabled": false…
   ~ segments["Global Segment"].outbound: order: guest-wifi first
   ~ firewall_enabled: false -> true
   reconciled segments: Guest
@@ -661,6 +823,44 @@ firewall: update
   count. A value is shown as JSON, cut to 80 characters, and the two values of
   a `~` line are cut where they first differ. `SaveResult.plan` is the same
   plan, and `dry_run=True` reports it without writing.
+- The plan reads in the names you write a patch in. A module is headed by its
+  Python name (`business_policy`, `device_settings`). A line's path is written
+  as "Paths" describes: a field by its Python attribute, an item by its name
+  where it has one that is its alone, else by its key, else by its position.
+  An item is named in the data as edited, so a change inside a rule you
+  renamed is listed under the rule's new name, and the path is one `apply`
+  takes as `path`. An item the save removes is named as it was read, below
+  the parts above it as they are now. A position is counted in the list the
+  item is named in: the list as edited, and the list as read for an item the
+  save removes. The same holds for the item a `+` line is placed after and
+  for the items of an `order:` line, which are all in the data as edited.
+  Each item a line names is the one the save paired when it made the change,
+  found at its place in the list and never by reading its name again: a rule
+  you add under a name that reads as another rule's ID or as a position
+  (`lb`, `#2`) is shown as itself, in its own line and where another item is
+  placed after it. An item you `add` under the key of one the same edits
+  delete is another item: the `-` line names the one deleted and the `+` line
+  the one added. That holds for `add` only. A model you put in the list in
+  Python where the one deleted was, with its key and no other item of that
+  key, is taken for the same item changed, and shows as `~` lines. In a list
+  whose key is the name and that has no other key (a LAN interface), a
+  renamed item is a `-` line under the old name and a `+` line under the new
+  one. An object after `+` has its keys by attribute name; a key the model
+  does not declare stays as stored.
+  The plan's own data is in the names the VCO uses: `ModulePlan.name` is
+  `QOS`, and the paths of `ModulePlan.changes` have the VCO's keys and each
+  item's key as read. `ModulePlan.named(path)` shows one of those paths as
+  `render()` does (with `removed=True` for a path the change removes), from
+  the copy of the data the plan took when it was made (`ModulePlan.planned`)
+  and from how its changes paired the items of each list
+  (`ModulePlan.paired_lists`), so a plan you keep while you edit further
+  still names each item as it was then. `ModulePlan.shown_change(change)` is
+  one of those changes as `render()` shows it. `state.get_field_changes()`
+  lists the same changes in the same names, through the same naming, so a
+  line and its field change never differ: a `ConfigFieldChange` has the
+  module's Python name as `module`, the line's path as `path`, `before` and
+  `after` with their keys by attribute name, and the items of a move, a place
+  and an order entry's `before` and `after` named as the line names them.
 - The plan lists the modules in the order a save writes them. The device
   settings are written first, and the role steps right before them; in a save
   that removes a hub from a list (a plan with a `disable` step) they are written
@@ -674,21 +874,36 @@ firewall: update
   they were read. An edit that adds a segment to one or two of the three
   raises it too, naming the segments and the modules that lack them, with the
   patch `{"segments": {"Guest": {"_op": "add"}}}` and the call
-  `pipeline.assign_segment(state, "Guest")` that complete it. Modules that
+  `pipeline.assign_segment(state, "Guest")` that complete it. The modules are
+  named by their python names, in the text (`adds the segment 'Guest' to
+  device_settings and business_policy but not to firewall ... Send the patch
+  ... to firewall`) and in `error.modules`, so each is a name `apply` takes as
+  `module=`. Modules that
   already disagreed when read, with nothing added, are left as they are: each
   such segment is a warning with the code `segments_disagree`, at
-  `segments["Guest"]`, in `ConfigPlan.segment_warnings` (also in
+  `segments[Guest]` (its `path`; `segment` holds the name, and `module` is
+  `None`, since it is about three), in `ConfigPlan.segment_warnings` (also in
   `ConfigPlan.warnings` and `SaveResult.warnings`), and `render()` ends with a
   `warning: <message>` line for it. A profile that lacks one of the three
   modules has nothing to compare.
 - A value that names a segment (a LAN network's or an interface's `segmentId`)
   or a backhaul hub (a QoS rule's backhaul entry) must name one the
   configuration has: a segment of the device settings `segments`, a hub in the
-  `vpn.backHaulEdges` of the rule's segment. `plan()` checks every module of
+  `vpn.backhaul_edges` of the rule's segment. `plan()` checks every module of
   the target, on every save and with `validate=False` too, and raises
   `DanglingReferenceError` (from `pyvelo.config`), naming each value, its
   module and its path, for a value the edit adds, or one whose segment or hub
-  the edit removes. An edge's values are checked against its profile's device
+  the edit removes. The module is named by its python name, the path is in
+  the form every path has (fields by attribute, items by name) and a hub's
+  segment is named too, in the message and in `error.references` (`module`,
+  `path`, `segment_name`):
+
+  ```text
+  1 reference(s) name nothing:
+    business_policy segments[Guest].rules[Web].action.edge_to_edge_route_action.route_cfg.backhaul_edges[Hub-A].edge_logical_id: a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1 is not a backhaul_hub of segment Guest
+  ```
+
+  An edge's values are checked against its profile's device
   settings as read as well as its own. `apply` accepts an edit that leaves such
   a value, so that two edits that are only right together go in either order;
   `plan()`, `save` and a dry run refuse the state until it is mended. For a
@@ -697,7 +912,14 @@ firewall: update
   that says what the patch does), `target_type`, `module`, `patch`, `segment`
   and `path`. A `remove_reference` patch takes the hub out of the rule that
   names it; an `add_member` patch makes it a backhaul hub of the rule's
-  segment. The `remove_reference` patches come first, and the patches of one
+  segment. `module` is the module's python name and `patch` names each field
+  by its attribute: for the reference above, `{"segments": {"Guest": {"rules":
+  {"Web": {"action": {"edge_to_edge_route_action": {"route_cfg":
+  {"backhaul_edges": {"Hub-A": {"_op": "delete"}}}}}}}}}}` for
+  `business_policy`, and `{"segments": {"Guest": {"vpn": {"enabled": true,
+  "hub_edges": {"enabled": true, "vpn_hubs": {"+": {"_op": "add", "name":
+  "Hub-A"}}}, "backhaul_edges": {"+": {"_op": "add", "name": "Hub-A"}}}}}}`
+  for `device_settings`. The `remove_reference` patches come first, and the patches of one
   kind together mend every hub reference of the error: send those of one kind.
   No `remove_reference` patch is offered, for any reference of the error, when
   those patches together would leave a rule that backhauls through hubs
@@ -706,7 +928,7 @@ firewall: update
   `BackhaulWithoutHubError` below). `error.only_hubs` then holds those
   references, as `Reference` objects, and the message says so: make the hub a
   backhaul hub again with the `add_member` patch; or first give the rule
-  another hub or change its `routePolicy`, and the next `plan()` offers the
+  another hub or change its `route_policy`, and the next `plan()` offers the
   `remove_reference` patch again, which mends the reference; or delete the
   rule, which takes the reference with it. Emptying a rule that does not
   backhaul through hubs withholds nothing: the removal patches are withheld,
@@ -723,7 +945,10 @@ firewall: update
   with `pipeline.revert(state, module=...)`. A value that named nothing as read, at the same path, is left as it is: a
   `reference_kept` warning in `ConfigPlan.check_warnings` (also in
   `ConfigPlan.warnings` and `SaveResult.warnings`), and a
-  `warning: <message>` line in `render()`. `client.update_module` writes one
+  `warning: <message>` line in `render()`. The warning's `module` is the
+  module's python name, its `path` the value's path within that module
+  (`lan.networks[Guests].segment_id`), and its `segment` the name of a hub
+  reference's segment. `client.update_module` writes one
   module and does not run the check.
 - A QoS rule's route action (`edge2EdgeRouteAction`,
   `edge2DataCenterRouteAction` or `edge2CloudRouteAction`, whatever the rule's
@@ -735,26 +960,28 @@ firewall: update
   the references, and raises `BackhaulWithoutHubError` (from `pyvelo.config`)
   for a route action the edits leave with no hub: a patch that deletes its
   last hub, a rule added with none, a rule set to backhaul with none.
-  `error.places` names each route action, with its `module`, `path`,
-  `segment_name` and `rule_name`; the message gives the patches that mend the
-  first, with the module they go to, and says that the others are mended the
-  same way. `apply` accepts the edit, as for a reference. After
+  `error.places` names each route action, with its `module` (the python
+  name), `path`, `segment_name` and `rule_name`; the message gives the patches
+  that mend the first, each field by its attribute (it calls the fields above
+  `route_policy`, `route_cfg.type_` and `route_cfg.backhaul_edges`), with the
+  module they go to, and says that the others are mended the same way. `apply` accepts the edit, as for a reference. After
   `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge2CloudRouteAction":
   {"routeCfg": {"backhaulEdges": {"Hub-A": {"_op": "delete"}}}}}}}}}}` takes the
   only hub out of the rule `Web`, the error begins:
 
   ```text
   1 backhaul rule(s) name no hub:
-    QOS segments[Guest].rules[Web].action.edge_to_cloud_route_action: rule 'Web' of segment 'Guest'
+    business_policy segments[Guest].rules[Web].action.edge_to_cloud_route_action: rule 'Web' of segment 'Guest'
   ```
 
-  Any one of these, sent to `QOS`, mends it: give the rule a hub that is a
-  backhaul hub of its segment (one of the segment's `vpn.backHaulEdges`), by
-  name or `edgeLogicalId`, with
-  `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge2CloudRouteAction":
-  {"routeCfg": {"backhaulEdges": {"+": {"_op": "add", "name": "Hub-B"}}}}}}}}}}`;
+  Any one of these, sent to `business_policy`, mends it: give the rule a hub
+  that is a backhaul hub of its segment (one of the segment's
+  `vpn.backhaul_edges`), by `edge_name` or `edge_logical_id`, with
+  `{"segments": {"Guest": {"rules": {"Web": {"action":
+  {"edge_to_cloud_route_action": {"route_cfg": {"backhaul_edges": {"+":
+  {"_op": "add", "edge_name": "Hub-B"}}}}}}}}}}`;
   route it another way with `{"segments": {"Guest": {"rules": {"Web":
-  {"action": {"edge2CloudRouteAction": {"routePolicy": "gateway"}}}}}}}`
+  {"action": {"edge_to_cloud_route_action": {"route_policy": "gateway"}}}}}}}`
   (`"auto"`, `"direct"` or `"gateway"`); or delete the rule with
   `{"segments": {"Guest": {"rules": {"Web": {"_op": "delete"}}}}}`. A rule of
   the segment's `defaults` cannot be deleted: when the first rule listed is one,
@@ -762,12 +989,15 @@ firewall: update
   rule that is not a default rule can be deleted too); when the first rule
   listed can be deleted, the default rules listed after it are named as rules
   that cannot be deleted and take the first two ways only. Or take the
-  module's edits back with `pipeline.revert(state, module="QOS")`. A route
-  action that had no hub as read, at the same path (the same route action of
-  the same rule of the same segment), is left as it is: a
+  module's edits back with `pipeline.revert(state, module="business_policy")`.
+  A route action that had no hub as read, at the same path (the same route
+  action of the same rule of the same segment), is left as it is: a
   `backhaul_without_hub_kept` warning in `ConfigPlan.check_warnings` (also in
   `ConfigPlan.warnings` and `SaveResult.warnings`), and a `warning: <message>`
-  line in `render()`.
+  line in `render()`. The warning's `module` is `business_policy`, its `path`
+  the route action's path within that module
+  (`segments[Guest].rules[Web].action.edge_to_cloud_route_action`) and its
+  `segment` the segment's name.
 - A hub added to or removed from a profile segment's hub, bridge or backhaul
   list has role steps (`ConfigPlan.steps`), which `render()` shows right before
   the device settings block and a save sends right before it writes the device
@@ -775,9 +1005,10 @@ firewall: update
   removes a hub writes the device settings, and so the steps, after the other
   modules. "Hubs", below, has all of it.
 - A segment added to a profile module has an `added segments: Guest` line, and
-  `get_field_changes()` lists it as one change at `segments["Guest"]`, from
-  `MISSING` to the entry as written. A QoS segment that lacks template
-  `defaults` has them added to the module's write when the module is written
+  `get_field_changes()` lists it as one change at `segments[Guest]`, from
+  `MISSING` to the entry as written, with its keys by attribute name. A QoS
+  segment that lacks template `defaults` has them added to the module's write
+  when the module is written
   (`repaired defaults: Guest: Default-Any-UDP, Default-Any-Other`); the plan
   warns with the code `defaults_repaired` either way, and `missing defaults`
   is the same line for entries it leaves out. A repaired default's
@@ -787,8 +1018,11 @@ firewall: update
 - A state loaded with `load` saves the edge's own layer. `state.profile` is
   there to read: an edit made through it is not saved, and the next `plan()`,
   `get_changed_modules()` or `save()` raises `LayerNotSavedError` (from
-  `pyvelo.config`) with the fields, once, before anything is sent. To change
-  the profile, load it with `load_profile`.
+  `pyvelo.config`) with the fields, once, before anything is sent. Its
+  `fields` maps each module's python name to the paths edited in it, as a
+  plan of the profile shows them (`segments[Guest].vpn.backhaul_edges[Hub-A]`).
+  To change the profile, load it with `load_profile`: each of those paths,
+  with its module, is one `apply` takes there.
 - When the profile has segments the edge module lacks, a write to that module
   adds them as entries that inherit everything, after the edge's own entries
   and in the profile's order. The plan lists them under "reconciled segments".
@@ -821,7 +1055,10 @@ firewall: update
   edit made by assigning to the models is found later: `plan()`,
   `get_changed_modules()` and `save()` raise it, before anything is sent, until
   the assignment is changed to a value that can be written or the state is
-  loaded again. The message names the fields. `LossyFieldError` is exported by
+  loaded again. The message names the module by its python name and the
+  fields as every path is shown, in the data as edited
+  (`device_settings: a save cannot write these edits: lan.networks[Corp].cost`);
+  `error.module` and `error.paths` hold the same. `LossyFieldError` is exported by
   `pyvelo.config` (and by `pyvelo`, `pyvelo.client` and
   `pyvelo.client.exceptions`).
 - Names resolve on an exact or case-insensitive match; a near miss raises with
@@ -906,8 +1143,10 @@ with the value itself, its `origin` and its `source`:
 | `Origin.PROFILE` | the profile's, because the edge inherits it |
 | `Origin.FACTORY` | a display default, because neither layer stores one; it is never written |
 
-`source` is where the value sits in the layer it came from (for a rule,
-`segments[1].outbound[0]`). The view is read-only, is computed again on each
+`source` is where the value sits in the layer it came from, as text in the
+VCO's keys with each list item by its position in that layer (for a rule,
+`segments[1].outbound[0]`: the first rule of that layer's second segment). The
+view is read-only, is computed again on each
 read so it follows your edits, and creates nothing: an edge with no row for a
 module has the profile's view. A value the profile has turned off for every
 edge (`firewall_enabled: false`) is shown as the profile's, whatever the edge
@@ -924,8 +1163,8 @@ state.effective.qos.service_rate_limit.origin  # the same, for QoS
 The view is the client's reading of rules the VCO applies on its own, so
 `pipeline.compare_effective(state)` checks it against the VCO's answer. It reads
 the modules the library has converted (`modules=None`, which is the firewall
-and QoS; name one with `modules=["QOS"]`, and another module raises
-`ValueError`) with
+and QoS; name one with `modules=["business_policy"]`, by either of its names,
+and another module raises `ValueError`) with
 `edge/getEdgeConfigurationModules` for the edge the state was loaded for, and
 compares each with `state.effective`, by wire path and by value only, since the
 VCO's answer has no origins. Before it compares, it reads the state's profile
@@ -941,7 +1180,45 @@ assert not comparison.findings
 ```
 
 Each difference is an `EffectiveDifference` (module, path, the two values,
-the view's origin and source, a category, and a reason where there is one).
+the view's origin and source, a category, and a reason where there is one),
+and it is shown as every other output is:
+
+```text
+business_policy
+  differs segments[Guest].rules[#0].name: client "Web", server "Mail" [profile segments[#1].rules[#0]]
+firewall
+  differs syslog_forwarding: client true, server false [edge syslog_forwarding]
+  unconverted services.icmp: client (none), server {"allowSelectedIp": [], "enabled": true} [the library does not know this key yet, so the view has no value]
+```
+
+- `module` is the module's python name (`business_policy`, not `QOS`).
+- `path` is a `Path`: each field by its attribute name and a segment by its
+  name (`segments[Guest]`). A segment the view lacks keeps the ID the VCO gives
+  it (`segments[9]`).
+- **An item of a list below a segment is shown by its position, not by its
+  name**: `rules[#0]`. In `path` the position counts in the view's list, which
+  for a segment's rules is the edge's entries and then the profile's. So
+  `rules[#0]` is the first rule the edge uses, and it is the first rule of your
+  own data only where your layer's rules come first: look a position up in
+  `state.effective`, and do not send it in a patch as it is.
+- `source` is the view's `source` of that value, shown in names: fields by
+  attribute name, and every item by its position in the layer the value came
+  from, the segment too. `[profile segments[#1].rules[#0]]` is the first rule
+  of the profile's second segment, whatever its place in the view.
+- A key no model declares is kept as the VCO writes it, after the parts that
+  are named (`services.icmp`, `etm`, `qosClientConnector`, and the keys the
+  composer adds to a rule, below). A key that holds a dot or a bracket is one
+  part, quoted (`services."x.y"`). A path the two documents hold in more than
+  one way, which only such a key can cause, is not named at all: it is the
+  comparison's own text as one quoted part, and its values are as the VCO
+  writes them.
+- The two values are JSON. An object has the keys its model declares by
+  attribute name (`{"allow_selected_ip": []}`), at every depth; a key no model
+  declares, and a scalar, stay as the VCO writes them.
+
+These paths say where the view and the VCO differ. The view is not a layer, so
+none of them is promised to be a path `apply` takes.
+
 There are six categories, and three of them are findings:
 
 | Category | Meaning | A finding? |
@@ -951,7 +1228,7 @@ There are six categories, and three of them are findings:
 | `server_only` | the server's answer has a value the view lacks | yes |
 | `factory` | the view gives a display default where the server has no value, or the same one | no, information |
 | `ignored` | the path is on the ignore list, is a secret, or is a segment the composer left out; reported with its reason | no |
-| `unconverted` | the path is not converted yet (the firewall's `inbound`, `inboundV6` and `services.icmp`, a segment's `firewall_logging_enabled` and `etm`, a QoS segment's `webProxy` and a QoS module's `qosClientConnector`), so the view has no value to compare | no, information |
+| `unconverted` | the path is not converted yet (the firewall's `inbound`, `inbound_v6` and `services.icmp`, a segment's `firewall_logging_enabled` and `etm`, a QoS segment's `web_proxy` and a QoS module's `qosClientConnector`), so the view has no value to compare | no, information |
 
 `comparison.findings` is the entries that are findings, and `entries` all of
 them. A key is reported once, at the highest path that is absent from a side.
@@ -962,9 +1239,9 @@ empty list the server lacks is `client_only`. Segments are matched by
 `segmentId` in any order (the view puts the profile's first and the composer
 the edge's), and the rules of a segment, edge entries then profile entries, by
 position. For QoS the segments' `rules` are compared the same way, and a
-segment's `cosMapping` is the edge's stored object even when its `override` flag
-is off, because that is the object the composer takes; the module's
-`serviceRateLimit` and `qoe` and a segment's `cosMapping`
+segment's `cos_mapping` is the edge's stored object even when its `override`
+flag is off, because that is the object the composer takes; the module's
+`service_rate_limit` and `qoe` and a segment's `cos_mapping`
 are display defaults (`factory`) where neither layer stores one and the server
 has none.
 
@@ -974,8 +1251,8 @@ loopback, and the Global Segment) in its device settings, QoS and firewall. A
 segment the view has and the composed module lacks is `ignored` with that
 reason; one the composed module has and the view lacks is `server_only`. The
 composed read also returns `null` for a module it could not compose, which it
-does without saying why: that is `ComposedModuleError` (its `module` is the
-module's name), not a finding.
+does without saying why: that is `ComposedModuleError` (its `module` and its
+message name the module by its python name), not a finding.
 
 The call does not ask the VCO for encrypted keys (`encryptKeys`), which a VCO
 may refuse. A secret is never compared: a path that holds one is `ignored` with
@@ -983,7 +1260,9 @@ that reason, and its value is shown as `***`.
 
 When a rule of the view names a security service group
 (`securityServiceGroup`), the composer adds three keys to it that neither layer
-stores: `urlCategoryFiltering`, `urlReputationFiltering` and `atp_action`. They
+stores: `urlCategoryFiltering`, `urlReputationFiltering` and `atp_action`. No
+model declares them, so a difference at one shows the VCO's key
+(`segments[Guest].outbound[#0].urlCategoryFiltering.unknownCategoryAction`). They
 are confirmed, not ignored. `compare_effective` reads the enterprise's security
 objects (`enterprise/getSecurityObjects` for `securityServiceGroup`,
 `urlCategoryFiltering`, `urlReputationFiltering` and `idps`: four reads, with
@@ -998,7 +1277,7 @@ rules are not searched), and expects:
 
 A group that names no object of a type expects no key for it. The expected
 values are compared like the rule's own keys, with the rule's origin and a
-source of its `securityServiceGroup`: a match makes no entry, a different value
+source of its `security_service_group`: a match makes no entry, a different value
 is `differs`, an expected key the server lacks is `client_only`, and a key on a
 rule that names no group is `server_only`. When the group, or an object it
 names, is not among the enterprise's security objects, nothing can be expected
@@ -1012,7 +1291,13 @@ expected: a key the composer adds for one is `server_only`.
 `pyvelo.config.effective.EFFECTIVE_IGNORES` is the list of known
 divergences, each an `EffectiveIgnore` with its module, a path (whole parts,
 `*` for one part, `[*]` for one list item; it covers everything below it) and
-the reason. It is empty: an entry is added only after a divergence is
+the reason. An ignore is input, and it is written in the form the comparison
+computes in, not the one a difference shows: the module by the VCO's name
+(`QOS`), and the path in the VCO's keys with a segment as
+`segments[<segmentId>]` and any other list item as `[<index>]`. The ignore of
+what is shown as `segments[Guest].rules[#0].rule_logical_id`, where Guest has
+the ID 2, is `EffectiveIgnore("QOS", "segments[2].rules[0].ruleLogicalId",
+reason)`. The list is empty: an entry is added only after a divergence is
 understood, so that a divergence is visible in the comparison and never hidden.
 A finding you meet is either a wrong rule in the library, which gets fixed, or
 a divergence you have understood, which gets an entry with its reason.
@@ -1040,7 +1325,9 @@ result = await pipeline.save(state)
 
   ```python
   await pipeline.apply(
-      state, module="qos", patch={"segments": {"Guest": add({"rules": [rule]})}}
+      state,
+      module="business_policy",
+      patch={"segments": {"Guest": add({"rules": [rule]})}},
   )
   await pipeline.apply(
       state,
@@ -1151,11 +1438,11 @@ edit needs, then writes the module.
               "Global Segment": {
                   "vpn": {
                       "enabled": True,
-                      "edgeToEdgeHub": {
+                      "hub_edges": {
                           "enabled": True,
-                          "vpnHubs": {"+": add({"name": "Hub-A"})},
+                          "vpn_hubs": {"+": add({"name": "Hub-A"})},
                       },
-                      "backHaulEdges": {"+": add({"logicalId": "<logical ID>"})},
+                      "backhaul_edges": {"+": add({"logicalId": "<logical ID>"})},
                   }
               }
           }
@@ -1165,7 +1452,7 @@ edit needs, then writes the module.
   ```
 
   The same edit as JSON is `{"segments": {"Global Segment": {"vpn":
-  {"edgeToEdgeHub": {"vpnHubs": {"+": {"_op": "add", "name": "Hub-A"}}}}}}}`.
+  {"hub_edges": {"vpn_hubs": {"+": {"_op": "add", "name": "Hub-A"}}}}}}}`.
   The resolver reads the enterprise's Edges and clusters on first use
   (`HubIdentity`, once per state: the Edge list is paged at 200, so a VCO with
   15,000 Edges takes about 75 requests, plus one for the clusters and one for
@@ -1189,15 +1476,15 @@ edit needs, then writes the module.
 
   ```text
   profile "Branch profile", configuration 100
-  QOS: none
+  business_policy: none
   firewall: none
   steps:
     disable hub for Hub-A on segment Global Segment
     enable hub for Hub-B on segment Global Segment
     enable backhaul for Hub-B on segment Global Segment
-  deviceSettings: update
-    - segments["Global Segment"].vpn.edgeToEdgeHub.vpnHubs[a1a1a1a1-...]
-    + segments["Global Segment"].vpn.edgeToEdgeHub.vpnHubs[b2b2b2b2-...] (first): {...
+  device_settings: update
+    - segments["Global Segment"].vpn.hub_edges.vpn_hubs[Hub-A]
+    + segments["Global Segment"].vpn.hub_edges.vpn_hubs[Hub-B] (first): {...
   ```
 
   A plan with steps is for a profile; an edge has none. An added hub is looked
@@ -1210,12 +1497,17 @@ edit needs, then writes the module.
 - **The checks.** `plan()` checks a segment whose `vpn` an edit changes against
   the UI's rules for its lists, before any call. A save that breaks one raises
   `HubListError` (from `pyvelo.config`), which names the segment, the lists and
-  the hubs, and gives the patch that mends it. The rules: the Branch-to-Hub
-  list is non-empty if and only if `edgeToEdgeHub.enabled` (so the patch that
+  the hubs, and gives the patch that mends it. Its text starts with the module's
+  python name (`device_settings: segment 'Global Segment': ...`), `error.lists`
+  holds each list's path from the segment in attribute names
+  (`vpn.hub_edges.vpn_hubs`, `vpn.edge_to_edge_detail.vpn_hubs`,
+  `vpn.backhaul_edges`), and the patch is written in attribute names, to send
+  as it is with `module="device_settings"`. The rules: the Branch-to-Hub
+  list is non-empty if and only if `hub_edges.enabled` (so the patch that
   adds the first hub to a segment must also set it, and `vpn.enabled`, as
   above: the library sets neither; and turning either off needs the hubs
   removed first); no hub is listed twice in one list;
-  with `edgeToEdge` on and `useCloudGateway` off the bridge list is not empty;
+  with `edge_to_edge` on and `use_cloud_gateway` off the bridge list is not empty;
   a hub in the backhaul or bridge list is in the Branch-to-Hub list too (so a
   hub that leaves that list leaves the others); a segment with hubs has
   `vpn.enabled` on; and an added hub is an Edge or cluster of the enterprise,
@@ -1227,9 +1519,13 @@ edit needs, then writes the module.
   as read do not match the lists it is in, `reference_kept` for a value that
   names nothing as read and still does not, `backhaul_without_hub_kept` for a
   rule that backhauls to hubs and named none as read, and `hub_in_use`
-  (below). One module
-  alone cannot change these lists: `client.update_module` and `plan_module`
-  raise `HubListError` for a payload that does.
+  (below). Each of the five names its `module` by its python name
+  (`device_settings`, or `business_policy` for a rule), its `segment` by name,
+  and in `path` the place within that module's data, with no module before it
+  (`segments["Global Segment"].vpn` for the three about the hub lists). One
+  module alone cannot change these lists: `client.update_module` and
+  `plan_module` raise `HubListError` for a payload that does, which names the
+  module, the lists and the patch in the same names.
 - **The save.** A save with steps does this, in order. It reads the version of
   the profile's device settings module (another writer's change stops the save
   here with `ConfigConflictError`, and nothing is sent; the state then holds
@@ -1259,8 +1555,10 @@ edit needs, then writes the module.
 - **When a step fails.** A request that fails once a step may have been sent is
   raised as `SaveStepError` (from `pyvelo.config`), from the VCO's error: `step`
   is the step whose call failed, or `None` when a module write failed
-  (`module_name` names it), `steps_done` and `steps_in_place` list the others,
-  and `written` the modules stored; `save_progress(error)` gives the modules
+  (`module_name` names it, by its python name: `device_settings`), `steps_done`
+  and `steps_in_place` list the others,
+  and `written` the modules stored (the message lists them by their python
+  names); `save_progress(error)` gives the modules
   not written. A failure before any step was sent (the version read, the
   services read, a write of a module before the steps, a write when every step
   was in place) propagates as it is, and so does a cancellation. Nothing a step
@@ -1311,10 +1609,10 @@ edit needs, then writes the module.
   and the rule after, in two saves, and `apply` raises `HubServiceNotFoundError`
   for a hub added to the lists in the same unsaved edit, with the patch that
   adds it to both lists. An entry built by assignment without its `logicalId` raises the same
-  error at `plan()`. The rule's hub must be in the segment's `backHaulEdges`,
+  error at `plan()`. The rule's hub must be in the segment's `backhaul_edges`,
   and a value that names a segment or a hub the configuration does not have is a
   `DanglingReferenceError` (see "What a save writes"). Taking a hub that a rule
-  of the profile still names out of `backHaulEdges`, and out of the rule, are
+  of the profile still names out of `backhaul_edges`, and out of the rule, are
   two edits that go in either order: `plan()` refuses the state until both
   are made, and the error's `mending` holds the patch for each way to mend it
   (no patch takes the last hub out of a rule that backhauls through hubs:
@@ -1528,21 +1826,50 @@ whoever put it there: an edit that another writer made identically is under
 `applied`, not under `lost_edits`.
 
 The entries are `PlannedChange` and `ServerChange`, which `pyvelo.config`
-exports (they are defined in `pyvelo.core.response_check`). The message lists
-them by path. A path uses the VCO's names for fields.
-`change.python_path(type(data))`, with `data` the module's data
-(`state.module("firewall").data`), gives the same path in the names a patch is
-written in. Here, a change to a rule's port and a new rule are
-refused, and another writer had changed the same port and another key:
+exports (they are defined in `pyvelo.core.response_check`). An entry is as the
+check made it: its `path` names a field by the VCO's key and an item by its
+key, and its values are as stored. For a lost or stored edit,
+`error.plan.named(change.path, removed=change.intended is MISSING)` is the path
+the message shows; `change.python_path(type(data))`, with `data` the module's
+data (`state.module("firewall").data`), renames the fields only, and keeps each
+item's key.
+
+The message (`str(error)`, `error.render()`) lists them by path, and reads as
+the plan's text does. The module is named by its python name, which
+`error.module_name` holds (`business_policy` for the module the VCO calls
+`QOS`; `error.plan.name` is the VCO's name). A lost edit and a stored one have
+the path of the plan's line for that change: a field by its attribute, an
+item by its name, in the data as planned, or as read for an item you removed.
+It is a path `apply` takes. An object among the values has its keys by
+attribute name. Here, a change to a rule's port and a new rule are refused, and
+another writer had changed the same port and another key:
 
 ```text
 Configuration module 11 (firewall) changed since it was read (version v1): the VCO refused the version
 lost edits (not stored; `error.redo_patch()` redoes those it can, `error.not_redone()` lists the rest):
-  segments["Global Segment"].outbound[block-ssh] (first): read (nothing), meant {"action": {"allow_or_deny": "deny"}, "comments": null, "loggingEnabled": false,…, stored (nothing)
-  segments["Global Segment"].outbound[allow-web].match.dport_high: read 443, meant 8080, stored 8443  [clash: also changed on the VCO]
+  segments["Global Segment"].outbound[block-ssh] (first): read (nothing), meant {"action": {"allow_or_deny": "deny"}, "comments": null, "logging_enabled": false…, stored (nothing)
+  segments["Global Segment"].outbound[allow-web].match.destination_port_high: read 443, meant 8080, stored 8443  [clash: also changed on the VCO]
 stored otherwise than sent:
   syslog_forwarding: read false, stored true
 ```
+
+Under `stored otherwise than sent` a path is named the same way where the
+check compared an item you sent with the one stored, with two exceptions. An
+item below a value the write added or replaced whole (a new rule, a list sent
+whole) is shown by its position in that value, also where it has a name
+(`segments[Guest].rules[#0].serverAdded` is the first rule you sent): the
+check compares such a value position by position. An item only the stored
+module has keeps the key it has there, or its position there
+(`lan.networks[#0]` is the first network of `error.module`, not of your data),
+in its own line and in the order of its list (`lan.networks: read ["Users",
+"Voice", "Guests"], stored ["#0", "Guests", "Users", "Voice"]`). A key the
+model does not declare is kept as stored
+(`segments[Guest].rules[Web].match.serverAdded`). A row of refs
+is `refs <path>`, the ref's name and the row's identity as stored
+(`refs "deviceSettings:backHaulEdge"[<logical ID>,<segment object ID>]`), and
+its values are shown as `"***"`. `written before this one: business_policy
+(update)` names the earlier writes of the save. An error made without a plan
+has nothing to name an item by, and keeps each path as the check wrote it.
 
 The message shows at most 20 entries of each list and says how many more there
 are; `error.render(limit=None)` has them all.
@@ -1646,7 +1973,8 @@ object as a new item, put a deep copy of it in the state
 (`copy.deepcopy(rule)`): the copy is not detached. A detached object put back
 as it is makes its module refuse every patch (`merge_patch`, `apply`,
 `assign_segment`) with `DetachedObjectError`, which names where it sits
-(`paths`) and changes nothing, also for a patch that would not reach it: put a
+(`paths`, as every path is shown: `segments[Guest]`) and changes nothing, also
+for a patch that would not reach it: put a
 deep copy there, take the object from the state again, or take the module's
 edits back with `pipeline.revert(state, module=...)`.
 
@@ -1663,7 +1991,9 @@ insert carries no version, so the state remembers it
 A module of that name found there is taken as the insert's answer and checked
 against the plan like any write, and nothing is inserted again; with none
 there, the save inserts. A `dry_run` does not read: it plans the insert and
-adds a warning with the code `insert_unconfirmed`. To give up the module
+adds a warning with the code `insert_unconfirmed`, whose message and `module`
+name the module by its python name and whose `path` is empty (it is about the whole
+module). To give up the module
 instead, `pipeline.revert(state, module=...)` reads the configuration in the
 same way and deletes the module it finds there when it holds exactly what this
 state's module holds (see `revert` above).
@@ -1723,7 +2053,16 @@ Known limits:
   on save. Control plane modules can be read. A save does not write them:
   `apply` refuses a patch to one (`PatchError`), and a state whose control
   plane module was edited by assignment cannot be saved or dry-run
-  (`TypeError`, before anything is sent) until it is loaded again.
+  (`TypeError`, before anything is sent) until it is loaded again. Both name
+  the module by its python name (`control_plane: a save does not write this
+  module ...`), as the refusals of `apply`, `assign_segment`, `revert` and of
+  a save before it sends do, and the error for a module a configuration lacks
+  (`Module 'business_policy' not found in configuration`). So do the errors
+  of a write that is not stored as planned (`Configuration module 11
+  (business_policy): 3 of 4 planned changes are not stored as sent`), whose
+  `module_name` holds that name, as `SaveStepError.module_name` does. The
+  low-level `write_module` keeps the VCO's name in its refusal of a plan made
+  for another module (`the plan is for QOS, not firewall`).
 - A profile's segment is assigned with `assign_segment` or an `add`, but not
   removed: an edit that removes a segment the device settings module has
   raises `SegmentSetError` (a patch: `PatchError`), and only an orphan, a QoS
@@ -1739,10 +2078,15 @@ Known limits:
   state as stored, and a second `save` writes only what still differs. An edit
   made by assigning to the models while a save is writing is not waited for.
   The save stores the module without it, puts the module as stored in the
-  state, and raises `DetachedObjectError` with the paths of such edits: redo
+  state, and raises `DetachedObjectError` with the paths of such edits
+  (`wan: the module was edited while this save was writing it, at:
+  data.links[Internet].description`: the module by its python name, each path
+  from the module's row, a field by its attribute and an item by its name): redo
   them. A path that is a placeholder a lookup added (`segment(name)`, for a
   segment the edge only inherits) is no edit and needs no redo. The save stops
-  at that module: the error's note names the modules written, and the next
+  at that module: the error's note names the modules written and those left
+  (`written before this failure: firewall (update), business_policy (update);
+  ... these are not written: wan`), and the next
   save writes the rest. To make such an edit safely, hold the lock around it
   (`async with state.lock:`). Those four take the lock themselves: called
   inside that block by the same task they raise `RuntimeError`, so call them
@@ -1780,7 +2124,7 @@ Known limits:
 
 | Module | What it provides |
 |---|---|
-| `pyvelo.config` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the types a save hands back (`ModulePlan` in `ConfigPlan.modules`, `ModuleWrite` in `SaveResult.written`, `ConfigFieldChange` from `get_field_changes()`), the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, `StepOutcome` (in `SaveResult.steps`) and `HubStep` (in `ConfigPlan.steps`), the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`), `MendingPatch` (a patch that mends an error, as data: `kind`, `does`, `target_type`, and the `module`, `patch`, `segment` and `path` of the `apply` call that sends it), diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `GroupOwnershipError` (an edit through one member of a coupled group), `ComposedModuleError` (`compare_effective` found a module the VCO composed as `null`), the comparison types `EffectiveComparison`, `EffectiveDifference` and `EffectiveCategory`, `LossyFieldError` and `ResolutionError`, helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
+| `pyvelo.config` | Re-exports the public surface: `ConfigPipeline`, `ConfigState`, `SaveResult`, `ConfigPlan`, the types a save hands back (`ModulePlan` in `ConfigPlan.modules`, `ModuleWrite` in `SaveResult.written`, `ConfigFieldChange` from `get_field_changes()`), the entries a save reports (`PlannedChange`, `ServerChange`), `SaveProgress` and `save_progress`, `StepOutcome` (in `SaveResult.steps`) and `HubStep` (in `ConfigPlan.steps`), the patch helpers (`add`, `delete`, `move`, `at`), `PatchError` and `PatchErrorKind` (the type of its `kind`), `MendingPatch` (a patch that mends an error, as data: `kind`, `does`, `target_type`, and the `module`, `patch`, `segment` and `path` of the `apply` call that sends it), diff types (`DiffResult`, `Added`, `Removed`, `Modified`, `Unchanged`, `FieldChange`), the intent error types, the write errors `ModuleWriteError` (the base of the next three), `ConfigConflictError`, `WriteNotAppliedError`, `WriteOutcomeUnknownError` and `DetachedObjectError` (from `pyvelo.client.exceptions`), `GroupOwnershipError` (an edit through one member of a coupled group), `ComposedModuleError` (`compare_effective` found a module the VCO composed as `null`), the comparison types `EffectiveComparison`, `EffectiveDifference` and `EffectiveCategory`, `LossyFieldError` and `ResolutionError`, the module enum `ConfigurationModuleName` and `python_module_name` (the name pyvelo prints a module by), helpers (`build_default_pipeline`, `confirm_save`, `load_config`) |
 | `pyvelo.config.pipeline` | `ConfigPipeline` (load/load_profile → apply → save, and revert), `build_default_pipeline` |
 | `pyvelo.config.state` | `ConfigState`, `StateLock`, `SaveResult`, `StepOutcome`, `ConfigPlan`, `SaveProgress`, `save_progress`, `ConfigFieldChange`, `ValidationWarning` |
 | `pyvelo.config.helpers` | `load_config` (a YAML file validated against a model; `ConfigInputError` for a file it cannot use, a key given twice included), `confirm_save` (a yes or no prompt, which prints the plan it is given: `confirm_save(plan=preview.plan)`) |

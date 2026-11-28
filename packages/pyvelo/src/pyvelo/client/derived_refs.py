@@ -48,13 +48,14 @@ from pyvelo.core.identity import (
     SegmentIdentity,
     entity_label,
 )
+from pyvelo.core.names import named_path
+from pyvelo.core.rebase import Path
 from pyvelo.core.show import patch_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from pyvelo.client.schemas.configuration import ConfigurationModuleBase
-    from pyvelo.core.rebase import Path
 
 APPEND_ONLY_REF_NAMES: Final = frozenset(
     {"deviceSettings:vnfs:edge", "objectGroup:addressGroup", "objectGroup:portGroup"}
@@ -107,10 +108,30 @@ class PlanWarning:
     """
 
     code: str
-    """``"ref_without_owner"``, ``"owner_without_ref"`` or ``"several_refs"``."""
-    path: str
-    """``refs <name> (<segment name>)``, or ``refs <name>`` without a segment."""
+    """What disagrees.
+
+    Of the refs as read (``derive_refs``): ``"ref_without_owner"``,
+    ``"owner_without_ref"`` or ``"several_refs"``. Of the data
+    (``plan_module``): ``"flag_off_in_use"``, ``"defaults_not_template"`` or
+    ``"defaults_repaired"``.
+    """
+    path: Path
+    """Where it is, as pyvelo shows a path.
+
+    The field the warning is about, each field by its attribute name and each
+    item by what names it (``segments[Guest].dns.primary_provider.service``).
+    A row that nothing in the data names has no such field: its path is the
+    row's ref name under ``refs``, as stored
+    (``refs."deviceSettings:css:provider"``), and ``segment`` says which
+    segment the row is of.
+    """
     message: str
+    segment: str | None = None
+    """The name of the segment a row that nothing names is of.
+
+    None for a row of the module, for a row of a segment the data does not
+    have, and for every warning whose path names its segment.
+    """
 
 
 @dataclass(frozen=True)
@@ -239,10 +260,6 @@ def _by_key(owners: tuple[RefOwner, ...]) -> dict[_Key, RefOwner]:
     for owner in owners:
         _ = found.setdefault(_key(owner), owner)
     return found
-
-
-def _warning_path(name: str, segment_name: str | None) -> str:
-    return f"refs {name}" if segment_name is None else f"refs {name} ({segment_name})"
 
 
 _MAX_SERVICES_SHOWN = 20
@@ -490,18 +507,23 @@ def _warnings(
     level: ConfigContext | None,
     context: _Context,
 ) -> list[PlanWarning]:
-    """What disagrees in the module as read: the rows and the owners of *baseline*."""
+    """What disagrees in the module as read: the rows and the owners of *baseline*.
+
+    A warning about an owner is at the owner's field, as *baseline* names it
+    (``named_path``). A row nothing names is at its ref name under ``refs``,
+    with the name of the segment it is of where the data has that segment.
+    """
     found: list[PlanWarning] = []
     for owner in owners:
         rows = rows_named(read, owner.name)
-        path = _warning_path(owner.name, owner.segment_name)
         if isinstance(owner.marker, OwnsRef):
             if not any(_row_matches(owner, row, context) for row in rows):
+                path = named_path(owner.path, baseline)
                 found.append(
                     PlanWarning(
                         "owner_without_ref",
                         path,
-                        f"The data holds {owner.value} at {owner.path}, but the "
+                        f"The data holds {owner.value} at {path}, but the "
                         f"module has no {owner.name} row for it. The row is left "
                         f"missing: {_ONLY_THE_EDIT}.",
                     )
@@ -514,12 +536,13 @@ def _warnings(
                 if row_is_of_segment(row, segment, context.object_ids)
             ]
             if len(of_segment) > 1:
+                path = named_path(owner.path, baseline)
                 found.append(
                     PlanWarning(
                         "several_refs",
                         path,
                         f"The module has {len(of_segment)} {owner.name} rows for "
-                        f"one segment, and {owner.path} shows the first. Every row "
+                        f"one segment, and {path} shows the first. Every row "
                         f"is left as it is: {_ONLY_THE_EDIT}, and a change removes "
                         "only the row shown.",
                     )
@@ -548,9 +571,10 @@ def _warnings(
             found.append(
                 PlanWarning(
                     "ref_without_owner",
-                    _warning_path(name, segment_name),
+                    Path(("refs", name)),
                     f"The module has a {name} row that nothing in the data names. "
                     f"The row is left as it is: {_ONLY_THE_EDIT}.",
+                    segment=segment_name,
                 )
             )
     return found
@@ -588,11 +612,40 @@ def changed_owners(
     identity is no change. It needs no resolver, no refs and no rows: for a
     module whose refs were not read, it says which edit would need them.
     """
+    gone, new = _owners_apart(baseline, current, level)
+    return (*gone, *new)
+
+
+def _owners_apart(
+    baseline: VcoModel, current: VcoModel, level: ConfigContext | None
+) -> tuple[tuple[RefOwner, ...], tuple[RefOwner, ...]]:
+    """The owners only *baseline* has, and those only *current* has."""
     before = _by_key(ref_owners(baseline, level))
     now = _by_key(ref_owners(current, level))
     return (
-        *(owner for key, owner in before.items() if key not in now),
-        *(owner for key, owner in now.items() if key not in before),
+        tuple(owner for key, owner in before.items() if key not in now),
+        tuple(owner for key, owner in now.items() if key not in before),
+    )
+
+
+def changed_owner_paths(
+    baseline: VcoModel, current: VcoModel, level: ConfigContext | None
+) -> tuple[Path, ...]:
+    """The path of each owner ``changed_owners`` gives, as pyvelo shows it.
+
+    Each once, in that order. An owner only *baseline* has is named in
+    *baseline*, where its item may be gone from *current*, and one only
+    *current* has in *current*: an item is shown by what names it there
+    (``named_path``), and a position is one of the list it counts in.
+    """
+    gone, new = _owners_apart(baseline, current, level)
+    return tuple(
+        dict.fromkeys(
+            (
+                *(named_path(owner.path, baseline) for owner in gone),
+                *(named_path(owner.path, current) for owner in new),
+            )
+        )
     )
 
 

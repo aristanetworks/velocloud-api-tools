@@ -162,7 +162,21 @@ class TestModuleAccessors:
 
     def test_missing_module_raises(self) -> None:
         config = _make_edge_config([_make_ds_module()])
-        with pytest.raises(ValueError, match="Module 'QOS' not found"):
+        with pytest.raises(ValueError, match="Module 'business_policy' not found"):
+            _ = config.qos
+
+    def test_a_module_of_the_wrong_class_is_named_by_its_python_name(self) -> None:
+        config = _make_edge_config([_make_firewall_module()])
+        assert isinstance(config.modules, list)
+        # A module renamed after the parse, past the model's checks.
+        object.__setattr__(config.modules[0], "name", ConfigurationModuleName.QOS)
+        with pytest.raises(
+            TypeError,
+            match=(
+                r"^the business_policy module is a "
+                r"FirewallConfigurationModule\[Edge\], not a QosConfigurationModule$"
+            ),
+        ):
             _ = config.qos
 
     def test_missing_modules_raises(self) -> None:

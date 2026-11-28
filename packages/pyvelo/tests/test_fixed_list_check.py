@@ -4,20 +4,23 @@ It is refused whatever made the change.
 """
 
 import copy
+import uuid
 from typing import Any, overload
 
 import pytest
+from profile_state import profile_state
 from pydantic import MISSING
 from pyvelo.client.exceptions import FixedListError, LossyFieldError
 from pyvelo.client.models.configuration.qos.root import QosData
 from pyvelo.client.models.configuration.qos.rule import QosRule
 from pyvelo.client.module_write import plan_module
 from pyvelo.client.schemas.configuration import QosConfigurationModule
+from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.core import ConfigContext, Edge, Profile
 from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.rebase import Path
 from pyvelo.testing import make_module_json
-from segment_helpers import GLOBAL, GUEST, qos_entry
+from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
 
 DEFAULTS = 'segments["Guest"].defaults'
 FIRST = f'{DEFAULTS}["Default-Internet-UDP"]'
@@ -160,7 +163,7 @@ def test_plan_module_raises_fixed_list_error_for_an_assigned_match_edit() -> Non
     module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue]
     with pytest.raises(FixedListError) as caught:
         plan_module(module, level=ConfigContext.PROFILE)
-    assert caught.value.module_name == "QOS"
+    assert caught.value.module_name == "business_policy"
     assert caught.value.paths == (Path.parse(FIRST),)
     assert f"{Path.parse(FIRST)}: match" in str(caught.value)
 
@@ -268,3 +271,54 @@ def test_an_edge_segment_holds_no_defaults_and_a_write_keeps_the_raw_ones() -> N
     assert isinstance(held, list)
     assert len(held) == len(raw_defaults)
     assert "defaults" in profile.data.segments[0].model_dump(by_alias=True, mode="json")
+
+
+def test_the_refusal_names_the_module_and_the_field_that_differs_by_python_names() -> (
+    None
+):
+    module = qos_module(qos_entry(GUEST), layer=Profile)
+    module.data.segments[0].defaults[0].rule_logical_id = uuid.uuid4()  # pyright: ignore[reportIndexIssue]
+    with pytest.raises(FixedListError) as caught:
+        plan_module(module, level=ConfigContext.PROFILE)
+    error = caught.value
+    assert error.module_name == "business_policy"
+    assert error.paths == ("segments[Guest].defaults[Default-Internet-UDP]",)
+    assert str(error).startswith(
+        "business_policy: the edit changes a fixed part of a list whose entries "
+        "are fixed: segments[Guest].defaults[Default-Internet-UDP]: "
+        "rule_logical_id differs."
+    )
+
+
+async def test_the_shape_the_refusal_gives_is_accepted_by_the_module_it_names() -> None:
+    module = qos_module(qos_entry(GUEST), layer=Profile)
+    module.data.segments[0].defaults[0].match.proto = 99  # pyright: ignore[reportIndexIssue]
+    with pytest.raises(FixedListError) as caught:
+        plan_module(module, level=ConfigContext.PROFILE)
+    text = str(caught.value)
+    assert (
+        '{"segments": {"<segment>": {"defaults": {"<rule>": {"action": {...}}}}}}'
+        in text
+    )
+    # The same shape, for the rule and the segment the refusal names.
+    patch = {
+        "segments": {
+            "Guest": {
+                "defaults": {
+                    "Default-Internet-UDP": {"action": {"route_type": "edge2Any"}}
+                }
+            }
+        }
+    }
+    state = await profile_state(
+        [ds_entry(GLOBAL), ds_entry(GUEST)],
+        [qos_entry(GLOBAL), qos_entry(GUEST)],
+        [firewall_entry(GLOBAL), firewall_entry(GUEST)],
+    )
+
+    _ = await ConfigPipeline(client=None).apply(
+        state, module=caught.value.module_name, patch=patch
+    )
+
+    rule = state.profile.qos.segments[1].defaults[0]  # pyright: ignore[reportIndexIssue]
+    assert (rule.name, rule.action.route_type) == ("Default-Internet-UDP", "edge2Any")  # pyright: ignore[reportAttributeAccessIssue]

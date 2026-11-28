@@ -144,5 +144,5 @@ def test_new_edge_module() -> None:
     )
     assert mod.data.segments == []
     assert new_edge_module(ConfigurationModuleName.QOS, 10).raw_data == {"segments": []}
-    with pytest.raises(ValueError, match="deviceSettings"):
+    with pytest.raises(ValueError, match="device_settings"):
         new_edge_module(ConfigurationModuleName.DEVICE_SETTINGS, 10)

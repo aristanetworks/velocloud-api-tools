@@ -192,7 +192,7 @@ def test_kinds_of_refusals_that_need_another_model_or_call() -> None:
         ),
         (lambda: nest_patch(Root, 1, path="nope"), "address"),
         (lambda: nest_patch(Root, 1, path="sub..v"), "address"),
-        (lambda: nest_patch(Root, 1, path="rules.x"), "address"),
+        (lambda: nest_patch(Root, 1, path="count.x"), "address"),
         (lambda: nest_patch(Root, 1, segment="S"), "address"),
         (lambda: nest_patch(Root, {1, 2}, path="names"), "not_json"),
     ]

@@ -257,7 +257,7 @@ async def test_qos_rule_add_change_delete_move() -> None:
     async def apply(patch: dict[str, object]) -> ConfigState:
         state = make_state({"QOS": raw}, {"QOS": qos()})
         return await ConfigPipeline(None).apply(
-            state, module="qos", segment=SEGMENT, path="rules", patch=patch
+            state, module="business_policy", segment=SEGMENT, path="rules", patch=patch
         )
 
     state = await apply(patch)
@@ -300,7 +300,7 @@ async def test_rename_a_qos_rule() -> None:
     state = make_state({"QOS": raw}, {"QOS": qos()})
     _ = await ConfigPipeline(None).apply(
         state,
-        module="qos",
+        module="business_policy",
         segment=SEGMENT,
         path="rules",
         patch={"old": {"name": "new"}},
@@ -708,7 +708,7 @@ LAN_DS: dict[str, Any] = {
         (
             "lan.networks",
             {"10": {"ospf": {"passive_interface": ""}}},
-            'lan.networks["10"].ospf.passive_interface',
+            "lan.networks[Corp].ospf.passive_interface",
         ),
         (
             "lan.networks",
@@ -777,7 +777,7 @@ async def test_true_is_not_a_vlan_id() -> None:
             path="lan.networks",
             patch={"20": {"vlan_id": True}},
         )
-    assert str(exc.value.path) == 'lan.networks["20"].vlan_id'
+    assert str(exc.value.path) == "lan.networks[Voice].vlan_id"
     assert [n.vlan_id for n in state.edge.device_settings.lan.networks] == [10, 20]
 
 
@@ -930,7 +930,8 @@ async def test_field_changes_are_the_plans_changes_in_python_names() -> None:
     assert changes[2].moves == (ItemMove(Key("b"), ItemPlace()),)
     (module,) = state.plan().changed
     assert [(c.before, c.after) for c in changes] == [
-        (c.before, c.after) for c in module.changes
+        (shown.before, shown.after)
+        for shown in map(module.shown_change, module.changes)
     ]
 
 
@@ -945,7 +946,7 @@ async def test_field_changes_show_a_rename_as_one_change() -> None:
         patch={"lb": {"name": "c"}},
     )
     assert [(str(c.path), c.before, c.after) for c in state.get_field_changes()] == [
-        ('segments["Global Segment"].outbound[b].name', "b", "c")
+        ('segments["Global Segment"].outbound[c].name', "b", "c")
     ]
 
 
@@ -1011,7 +1012,7 @@ async def test_validation_messages_on_the_real_models_use_python_names() -> None
     with pytest.raises(PatchError) as exc:
         _ = await ConfigPipeline(None).apply(
             state,
-            module="qos",
+            module="business_policy",
             segment=SEGMENT,
             path="rules",
             patch={"x": add({"match": {}, "action": {"qos": {"type_": "fast"}}})},

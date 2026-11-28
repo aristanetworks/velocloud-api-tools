@@ -126,7 +126,9 @@ async def test_a_plan_for_another_module_is_refused_before_a_request(
     ).model_copy(update={"name": "QOS"})
     store = a_store_holding(module)
     client = await mock_vco_client(store)
-    with pytest.raises(ValueError, match="the plan is for deviceSettings, not QOS"):
+    with pytest.raises(
+        ValueError, match="the plan is for device_settings, not business_policy"
+    ):
         _ = await client.check_module_version(other, plan)
     assert store.requests == []
 

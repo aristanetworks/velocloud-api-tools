@@ -492,9 +492,9 @@ def test_a_hub_with_no_service_in_that_segment_raises() -> None:
     assert "has no service for this profile in the segment 'Guest'" in message
     assert "save the hub first and the rule after" in message
     assert (
-        '{"segments": {"Guest": {"vpn": {"enabled": true, "edgeToEdgeHub": '
-        '{"enabled": true, "vpnHubs": {"+": {"_op": "add", "name": "Hub-A"}}}, '
-        '"backHaulEdges": {"+": {"_op": "add", "name": "Hub-A"}}}}}}'
+        '{"segments": {"Guest": {"vpn": {"enabled": true, "hub_edges": '
+        '{"enabled": true, "vpn_hubs": {"+": {"_op": "add", "name": "Hub-A"}}}, '
+        '"backhaul_edges": {"+": {"_op": "add", "name": "Hub-A"}}}}}}'
     ) in message
 
 
@@ -508,7 +508,7 @@ def test_no_profile_device_settings_raises() -> None:
     message = str(caught.value)
     assert "profile_device_settings=" in message
     assert "save the hub first and the rule after" in message
-    assert '"vpnHubs"' in message
+    assert '"vpn_hubs"' in message
 
 
 def test_an_entry_without_its_service_raises() -> None:
@@ -529,7 +529,7 @@ def test_an_entry_without_its_service_raises() -> None:
     assert (error.hub, error.segment) == ("Hub-A", "Global Segment")
     message = str(error)
     assert "names the hub 'Hub-A' and no service for it" in message
-    assert "logicalId" in message
+    assert "Give the entry's logical_id" in message
     assert "apply" in message
     assert '"logical_id": "<' in message
 

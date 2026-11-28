@@ -461,7 +461,7 @@ def test_an_edge_patch_of_a_profile_only_field_is_refused() -> None:
     for patch in ({"profile_note": "x"}, {"profileNote": "x"}, {"profile_note": None}):
         edge = Mod[Edge].model_validate(mod_json())
         with pytest.raises(
-            PatchError, match="'profileNote' belongs to the profile"
+            PatchError, match="'profile_note' belongs to the profile"
         ) as raised:
             _ = edge.merge_patch(patch)
         assert str(raised.value.path) == "profile_note"

@@ -108,7 +108,7 @@ def test_add_with_each_place(op: dict[str, object], expected: str) -> None:
     ("patch", "path"),
     [
         ({"b": add()}, "rules[b]"),
-        ({at(0): add()}, "rules[#0]"),
+        ({at(0): add()}, "rules[a]"),
         ({"z": add({"name": "y"})}, "rules[z]"),
     ],
 )
@@ -649,10 +649,10 @@ def test_map_change_add_delete() -> None:
 @pytest.mark.parametrize(
     ("value", "path"),
     [
-        ({"x": move(first=True)}, "by_name[x]"),
-        ({"x": {"v": 1, "_position": "first"}}, "by_name[x]"),
+        ({"x": move(first=True)}, "by_name.x"),
+        ({"x": {"v": 1, "_position": "first"}}, "by_name.x"),
         ({at(0): {"v": 1}}, 'by_name["#0"]'),
-        ({"x": add()}, "by_name[x]"),
+        ({"x": add()}, "by_name.x"),
         ({"zz": {"v": 1}}, "by_name[zz]"),
         ([{"v": 1}], "by_name"),
         (3, "by_name"),

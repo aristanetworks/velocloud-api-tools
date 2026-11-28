@@ -140,7 +140,7 @@ async def test_revert_deletes_a_new_module_whose_insert_was_stored() -> None:
     pipeline = await lost_insert(client, state)
     (stored_id,) = edge_qos_rows(client)
 
-    _ = await pipeline.revert(state, module="qos")
+    _ = await pipeline.revert(state, module="business_policy")
 
     assert methods(client.store) == ["getConfiguration", "deleteConfigurationModule"]
     assert client.store.requests[-1][1]["id"] == stored_id
@@ -167,7 +167,7 @@ async def test_revert_of_a_new_module_whose_insert_was_not_stored_deletes_nothin
     assert state.unconfirmed_inserts == {"QOS"}
     client.store.requests.clear()
 
-    _ = await pipeline.revert(state, module="qos")
+    _ = await pipeline.revert(state, module="business_policy")
 
     assert methods(client.store) == ["getConfiguration"]
     assert state.find_module("QOS") is None
@@ -188,16 +188,16 @@ async def test_revert_does_not_delete_a_module_of_the_name_not_this_states() -> 
     (stored_id,) = edge_qos_rows(client)
     client.store.other_writer(stored_id, drop_the_rules)
     held = copy.deepcopy(client.store.rows)
-    module = state.module("qos")
+    module = state.module("business_policy")
 
     with pytest.raises(ValueError, match="was not deleted") as refused:
-        _ = await pipeline.revert(state, module="qos")
+        _ = await pipeline.revert(state, module="business_policy")
 
     assert "load" in str(refused.value)
     assert "save again" in str(refused.value)
     assert methods(client.store) == ["getConfiguration"]
     assert client.store.rows == held
-    assert state.module("qos") is module
+    assert state.module("business_policy") is module
     assert module.is_new
     assert state.unconfirmed_inserts == {"QOS"}
 
@@ -208,18 +208,18 @@ async def test_a_revert_whose_delete_fails_changes_nothing_and_can_be_redone() -
     pipeline = await lost_insert(client, state)
     (stored_id,) = edge_qos_rows(client)
     client.store.fail_calls = {"configuration/deleteConfigurationModule"}
-    module = state.module("qos")
+    module = state.module("business_policy")
 
     with pytest.raises(VcoOperationError, match="simulated failure"):
-        _ = await pipeline.revert(state, module="qos")
+        _ = await pipeline.revert(state, module="business_policy")
 
     assert methods(client.store) == ["getConfiguration", "deleteConfigurationModule"]
     assert client.store.requests[-1][1]["id"] == stored_id  # the delete was sent
     assert edge_qos_rows(client) == [stored_id]
-    assert state.module("qos") is module
+    assert state.module("business_policy") is module
     assert state.unconfirmed_inserts == {"QOS"}
 
-    _ = await pipeline.revert(state, module="qos")
+    _ = await pipeline.revert(state, module="business_policy")
 
     assert edge_qos_rows(client) == []
     assert state.find_module("QOS") is None
@@ -255,14 +255,14 @@ async def test_a_revert_whose_delete_is_answered_as_failed_changes_nothing(
     client.answer = answer
     pipeline = await lost_insert(client, state)
     (stored_id,) = edge_qos_rows(client)
-    module = state.module("qos")
+    module = state.module("business_policy")
 
     with pytest.raises(VcoOperationError, match=message):
-        _ = await pipeline.revert(state, module="qos")
+        _ = await pipeline.revert(state, module="business_policy")
 
     assert [name for name, _ in client.calls][-1] == "delete_configuration_module"
     assert edge_qos_rows(client) == [stored_id]
-    assert state.module("qos") is module
+    assert state.module("business_policy") is module
     assert state.unconfirmed_inserts == {"QOS"}
 
 
@@ -274,7 +274,7 @@ async def test_a_revert_whose_delete_is_answered_with_no_count_is_taken_as_done(
     client.answer = RowsModifiedConfirmation()
     pipeline = await lost_insert(client, state)
 
-    _ = await pipeline.revert(state, module="qos")
+    _ = await pipeline.revert(state, module="business_policy")
 
     assert [name for name, _ in client.calls][-1] == "delete_configuration_module"
     assert state.find_module("QOS") is None
@@ -308,12 +308,12 @@ async def test_revert_does_not_delete_another_writers_module_when_this_plans_not
     (other_id,) = edge_qos_rows(client)
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment="Global Segment",
         path="rules",
         patch=without_the_voice_rule(),
     )
-    module = state.module("qos")
+    module = state.module("business_policy")
     assert state.plan_module(module).operation == "none"
     held = copy.deepcopy(client.store.rows)
     client.store.requests.clear()
@@ -321,7 +321,7 @@ async def test_revert_does_not_delete_another_writers_module_when_this_plans_not
     with pytest.raises(
         ValueError, match="holds nothing a save would insert"
     ) as refused:
-        _ = await pipeline.revert(state, module="qos")
+        _ = await pipeline.revert(state, module="business_policy")
 
     text = str(refused.value)
     assert f"module {other_id}" in text
@@ -331,7 +331,7 @@ async def test_revert_does_not_delete_another_writers_module_when_this_plans_not
     assert "apply" not in text
     assert methods(client.store) == ["getConfiguration"]
     assert client.store.rows == held
-    assert state.module("qos") is module
+    assert state.module("business_policy") is module
     assert state.unconfirmed_inserts == {"QOS"}
 
 
@@ -345,24 +345,24 @@ async def test_revert_does_not_delete_a_stored_insert_another_writer_changed_whe
     client.store.other_writer(stored_id, drop_the_rules)
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment="Global Segment",
         path="rules",
         patch=without_the_voice_rule(),
     )
-    module = state.module("qos")
+    module = state.module("business_policy")
     held = copy.deepcopy(client.store.rows)
     client.store.requests.clear()
 
     with pytest.raises(
         ValueError, match="holds nothing a save would insert"
     ) as refused:
-        _ = await pipeline.revert(state, module="qos")
+        _ = await pipeline.revert(state, module="business_policy")
 
     assert "save again" not in str(refused.value)
     assert methods(client.store) == ["getConfiguration"]
     assert client.store.rows == held
-    assert state.module("qos") is module
+    assert state.module("business_policy") is module
     assert state.unconfirmed_inserts == {"QOS"}
 
 
@@ -376,6 +376,20 @@ async def test_check_found_insert_refuses_a_plan_that_inserts_nothing() -> None:
         _ = check_found_insert(module, plan, module)
 
 
+async def test_check_found_insert_names_the_module_by_its_python_name() -> None:
+    state = make_state()
+    module = state.module("QOS", create=True)
+    plan = state.plan_module(module)
+    assert (plan.name, plan.operation) == ("QOS", "none")
+
+    with pytest.raises(ValueError, match="not an insert") as refused:
+        _ = check_found_insert(module, plan, module)
+
+    assert str(refused.value).startswith(
+        "the plan of business_policy is 'none', not an insert"
+    )
+
+
 async def test_revert_of_a_new_module_that_plans_nothing_and_was_not_stored() -> None:
     state = make_state()
     client = MockVcoClient.for_state(state)
@@ -385,14 +399,14 @@ async def test_revert_of_a_new_module_that_plans_nothing_and_was_not_stored() ->
         _ = await pipeline.save(state)
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment="Global Segment",
         path="rules",
         patch=without_the_voice_rule(),
     )
     client.store.requests.clear()
 
-    _ = await pipeline.revert(state, module="qos")
+    _ = await pipeline.revert(state, module="business_policy")
 
     assert methods(client.store) == ["getConfiguration"]
     assert state.find_module("QOS") is None
@@ -584,7 +598,7 @@ async def test_revert_of_other_modules_sends_nothing() -> None:
     client.store.requests.clear()
 
     _ = await pipeline.revert(state, module="firewall")
-    _ = await pipeline.revert(state, module="qos")
+    _ = await pipeline.revert(state, module="business_policy")
 
     assert client.store.requests == []
     assert state.find_module("QOS") is None
@@ -597,11 +611,14 @@ async def test_revert_of_one_module_of_an_assigned_segment_leaves_the_others() -
     )
     _ = await PIPELINE.assign_segment(state, "Guest")
 
-    _ = await PIPELINE.revert(state, module="qos")
+    _ = await PIPELINE.revert(state, module="business_policy")
 
     with pytest.raises(SegmentSetError) as error:
         _ = state.plan()
-    assert (error.value.segments, error.value.modules) == (("Guest",), ("QOS",))
+    assert (error.value.segments, error.value.modules) == (
+        ("Guest",),
+        ("business_policy",),
+    )
     _ = await PIPELINE.revert(state, module="deviceSettings")
     _ = await PIPELINE.revert(state, module="firewall")
     assert state.plan().changed == ()
@@ -610,7 +627,7 @@ async def test_revert_of_one_module_of_an_assigned_segment_leaves_the_others() -
 async def test_revert_of_a_module_the_target_lacks_changes_nothing() -> None:
     state = make_state()  # the edge has no QoS module
 
-    _ = await PIPELINE.revert(state, module="qos")
+    _ = await PIPELINE.revert(state, module="business_policy")
 
     assert state.find_module("QOS") is None
     assert state.plan().changed == ()
@@ -657,12 +674,12 @@ async def test_revert_of_one_of_two_edited_modules_keeps_the_other() -> None:
     _ = await PIPELINE.apply(state, module="firewall", patch=segment)
     _ = await PIPELINE.apply(
         state,
-        module="qos",
+        module="business_policy",
         patch={"segments": {"Global Segment": {"cos_mapping": COS}}},
     )
     assert [m.name for m in state.plan().changed] == ["QOS", "firewall"]
 
-    _ = await PIPELINE.revert(state, module="qos")
+    _ = await PIPELINE.revert(state, module="business_policy")
 
     assert [m.name for m in state.plan().changed] == ["firewall"]
 
@@ -724,3 +741,66 @@ async def test_revert_keeps_an_edge_module_bound_to_its_profile() -> None:
     guest = state.edge.firewall.segment("Guest")  # copied from the profile
     assert guest.segment.name == "Guest"
     assert guest.model_dump() == expected.model_dump()
+
+
+# --- a refusal names the module by its python name, and a place as a plan shows it ---
+
+
+async def test_a_refusal_without_a_client_names_the_module_by_its_python_name() -> None:
+    state = make_state()
+    client = MockVcoClient.for_state(state)
+    _ = await lost_insert(client, state)
+
+    with pytest.raises(ValueError, match="no client") as refused:
+        _ = await PIPELINE.revert(state, module="business_policy")
+    with pytest.raises(ValueError, match="sends nothing") as here:
+        state.revert_module("QOS")
+
+    start = "business_policy: an insert of this module may have reached the VCO"
+    assert str(refused.value).startswith(start)
+    assert str(here.value).startswith(start)
+    assert '`await pipeline.revert(state, module="business_policy")`' in str(here.value)
+
+
+async def test_the_refusal_of_another_writers_module_names_where_it_differs() -> None:
+    state = make_state()
+    client = MockVcoClient.for_state(state)
+    pipeline = await lost_insert(client, state)
+    (stored_id,) = edge_qos_rows(client)
+    client.store.other_writer(stored_id, drop_the_rules)
+
+    with pytest.raises(ValueError, match="was not deleted") as refused:
+        _ = await pipeline.revert(state, module="business_policy")
+
+    assert str(refused.value).startswith(
+        f"business_policy: the VCO holds a module of this name (module {stored_id}) "
+        "that is not the one this state holds (it differs at "
+        'segments["Global Segment"]'
+    )
+    assert "load the state again" in str(refused.value)
+
+
+async def test_the_refusal_of_a_module_this_state_plans_nothing_for_names_it() -> None:
+    state = make_state()
+    client = MockVcoClient.for_state(state)
+    client.store.fail_writes = {1}
+    pipeline = await with_a_new_qos_rule(client, state)
+    with pytest.raises(VcoOperationError):
+        _ = await pipeline.save(state)
+    other = failed_insert(client)
+    _ = client.store.handle("configuration/insertConfigurationModule", other)
+    _ = await pipeline.apply(
+        state,
+        module="business_policy",
+        segment="Global Segment",
+        path="rules",
+        patch=without_the_voice_rule(),
+    )
+
+    with pytest.raises(ValueError, match="was not deleted") as refused:
+        _ = await pipeline.revert(state, module="business_policy")
+
+    assert str(refused.value).startswith(
+        "business_policy: the VCO holds a module of this name (module "
+    )
+    assert "load the state again" in str(refused.value)

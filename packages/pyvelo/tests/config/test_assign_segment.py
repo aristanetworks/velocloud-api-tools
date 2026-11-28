@@ -235,7 +235,7 @@ async def test_qos_rules_empty_gives_no_rules() -> None:
             rule("Other", "11111111-1111-4111-8111-111111111111"),
         ],
     ],
-    ids=["one name", "one ruleLogicalId"],
+    ids=["one name", "one rule_logical_id"],
 )
 async def test_qos_rules_with_a_repeated_name_or_id_raise(
     rules: list[dict[str, Any]],
@@ -244,10 +244,12 @@ async def test_qos_rules_with_a_repeated_name_or_id_raise(
     pipeline, _ = module_store_pipeline(state)
     before = state.plan().render()
 
-    with pytest.raises(ValueError, match="more than one rule with the"):
+    with pytest.raises(ValueError, match="more than one rule with the") as raised:
         _ = await pipeline.assign_segment(state, "Guest", qos_rules=rules)
 
     assert state.plan().render() == before
+    assert "has a name and a rule_logical_id of its own" in str(raised.value)
+    assert "ruleLogicalId" not in str(raised.value)
 
 
 async def test_an_edit_before_the_save_is_a_change_from_the_template() -> None:
@@ -292,7 +294,7 @@ async def test_a_profile_without_qos_raises() -> None:
     modules.remove(cast("QosConfigurationModule[Profile]", qos))  # the profile layer
     pipeline, _ = module_store_pipeline(state)
 
-    with pytest.raises(ValueError, match="QOS"):
+    with pytest.raises(ValueError, match="business_policy"):
         _ = await pipeline.assign_segment(state, "Guest")
 
 
@@ -452,8 +454,24 @@ async def test_a_module_not_at_the_profile_level_raises_naming_the_fix() -> None
     ds = state.module(DS)
     ds._config_context = None  # pyright: ignore[reportPrivateUsage]
 
-    with pytest.raises(ValueError, match=r"load_profile.*for_profile"):
+    with pytest.raises(ValueError, match=r"load_profile.*for_profile") as exc:
         _ = segment_modules(state)
+
+    assert str(exc.value).startswith(
+        "The device_settings module is not at the profile level"
+    )
+
+
+async def test_a_profile_that_lacks_a_module_names_it_by_its_python_name() -> None:
+    state = await global_only()
+    modules = state.profile_config.modules
+    assert isinstance(modules, list)
+    modules[:] = [m for m in modules if m.name != QOS]
+
+    with pytest.raises(ValueError, match="Inserting a module") as exc:
+        _ = segment_modules(state)
+
+    assert str(exc.value).startswith("The profile has no business_policy module")
 
 
 async def test_the_trial_changes_nothing_and_raises_what_the_edit_raises() -> None:

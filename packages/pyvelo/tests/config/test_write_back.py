@@ -562,7 +562,7 @@ async def saved_insert() -> tuple[ConfigState, MockVcoClient, ConfigPipeline, in
     pipeline = ConfigPipeline(client)
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment="Global Segment",
         path="rules",
         patch={"voice": add({"match": {"dport_low": 5060}, "action": QOS_ACTION})},
@@ -572,14 +572,14 @@ async def saved_insert() -> tuple[ConfigState, MockVcoClient, ConfigPipeline, in
     params = client.store.requests[0][1]
     assert params["returnData"] is True
     assert params["configurationId"] == state.target_config.id_ == 10
-    assert state.module("qos").is_new is False
+    assert state.module("business_policy").is_new is False
     assert result.modules_inserted == [QOS]
     (inserted,) = [
         i
         for i, row in client.store.rows.items()
         if row["name"] == "QOS" and row["configurationId"] == 10
     ]
-    assert state.module("qos").id_ == inserted
+    assert state.module("business_policy").id_ == inserted
     return state, client, pipeline, inserted
 
 

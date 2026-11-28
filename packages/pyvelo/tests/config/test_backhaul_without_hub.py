@@ -28,6 +28,7 @@ from pyvelo.config import (
 from pyvelo.core import add, delete, move
 from refs_helpers import segment_row
 from segment_helpers import GLOBAL, ds_entry, qos_entry
+from shown_paths import round_trips
 
 DS = "deviceSettings"
 QOS = "QOS"
@@ -44,6 +45,17 @@ def to_rule(rule: str, action: dict[str, Any], route_action: str = CLOUD) -> Any
     """The QoS patch that sends *action* to *route_action* of Guest's rule *rule*."""
     return {
         "segments": {"Guest": {"rules": {rule: {"action": {route_action: action}}}}}
+    }
+
+
+def to_web(body: dict[str, Any]) -> dict[str, Any]:
+    """*body* at the cloud route action of Guest's rule ``Web``, in attribute names."""
+    return {
+        "segments": {
+            "Guest": {
+                "rules": {"Web": {"action": {"edge_to_cloud_route_action": body}}}
+            }
+        }
     }
 
 
@@ -83,7 +95,7 @@ async def test_deleting_the_only_hub_is_accepted_by_apply_and_refused_by_plan() 
 
     (place,) = error.places
     assert (place.module, str(place.path), place.segment_name, place.rule_name) == (
-        QOS,
+        "business_policy",
         WEB_PATH,
         "Guest",
         "Web",
@@ -92,16 +104,13 @@ async def test_deleting_the_only_hub_is_accepted_by_apply_and_refused_by_plan() 
     assert WEB_PATH in text
     assert "sends its traffic by backhaul and names no hub" in text
     assert "a rule that backhauls nowhere" in text
-    assert "to QOS" in text
+    assert "to business_policy" in text
     assert "`revert`" in text
     assert shapes(error) == {
-        "give the rule a hub": to_rule(
-            "Web",
-            {"routeCfg": {"backhaulEdges": {"+": add({"name": "<hub name>"})}}},
+        "give the rule a hub": to_web(
+            {"route_cfg": {"backhaul_edges": {"+": add({"edge_name": "<hub name>"})}}}
         ),
-        "route it another way": to_rule(
-            "Web", {"routePolicy": "<auto, direct or gateway>"}
-        ),
+        "route it another way": to_web({"route_policy": "<auto, direct or gateway>"}),
         "delete the rule": {"segments": {"Guest": {"rules": {"Web": delete()}}}},
     }
 
@@ -198,7 +207,12 @@ async def test_a_rule_with_no_hub_as_read_is_kept_with_a_warning() -> None:
     (warning,) = state.plan().warnings
 
     assert warning.code == "backhaul_without_hub_kept"
-    assert warning.path == f"{QOS}: {WEB_PATH}"
+    assert (warning.module, warning.path, warning.segment) == (
+        "business_policy",
+        WEB_PATH,
+        "Guest",
+    )
+    assert warning.message.startswith(f"business_policy {WEB_PATH}: rule 'Web' ")
     assert "it was so as read" in warning.message
 
 
@@ -211,8 +225,8 @@ async def test_an_edit_elsewhere_keeps_the_rule_as_read_with_a_warning() -> None
     plan = state.plan()
 
     assert [m.name for m in plan.changed] == [QOS]
-    assert [(w.code, w.path) for w in plan.warnings] == [
-        ("backhaul_without_hub_kept", f"{QOS}: {WEB_PATH}")
+    assert [(w.code, w.module, w.path) for w in plan.warnings] == [
+        ("backhaul_without_hub_kept", "business_policy", WEB_PATH)
     ]
 
 
@@ -255,7 +269,7 @@ async def test_an_edge_rule_that_backhauls_to_no_hub_is_refused() -> None:
 
     (place,) = error.places
     assert (place.module, place.segment_name, place.rule_name) == (
-        QOS,
+        "business_policy",
         "Global Segment",
         "Web",
     )
@@ -425,9 +439,10 @@ async def test_backhaul_edges_unset_as_read_warns() -> None:
 
     (warning,) = state.plan().warnings
 
-    assert (warning.code, warning.path) == (
+    assert (warning.code, warning.module, warning.path) == (
         "backhaul_without_hub_kept",
-        f"{QOS}: {WEB_PATH}",
+        "business_policy",
+        WEB_PATH,
     )
 
 
@@ -443,7 +458,12 @@ async def test_a_rule_with_no_hub_in_an_assigned_segment_is_refused() -> None:
     assert (place.segment_name, place.rule_name) == ("Voice", "Calls")
 
 
-async def test_on_an_edge_no_patch_takes_the_only_hub_out_of_a_rule() -> None:
+async def edge_rule_names_a_hub_that_is_no_backhaul_hub() -> ConfigState:
+    """An Edge whose new rule ``Web`` backhauls to Hub-B alone.
+
+    Its profile has Hub-A and Hub-B as hubs of the Global Segment, and Hub-A alone
+    as a backhaul hub.
+    """
     inheriting = qos_entry(GLOBAL)
     del inheriting["cosMapping"]  # the template's is stored with its flag off
     state = await hub_edge_state(
@@ -469,6 +489,11 @@ async def test_on_an_edge_no_patch_takes_the_only_hub_out_of_a_rule() -> None:
     await edit(
         state, QOS, {"segments": {"Global Segment": {"rules": {"+": add(rule)}}}}
     )
+    return state
+
+
+async def test_on_an_edge_no_patch_takes_the_only_hub_out_of_a_rule() -> None:
+    state = await edge_rule_names_a_hub_that_is_no_backhaul_hub()
 
     with pytest.raises(DanglingReferenceError) as error:
         _ = state.plan()
@@ -476,6 +501,73 @@ async def test_on_an_edge_no_patch_takes_the_only_hub_out_of_a_rule() -> None:
     assert [m.kind for m in error.value.mending] == ["add_member"]
     assert error.value.only_hubs == error.value.references
     assert error.value.on_edge
+
+
+async def test_a_hubless_backhaul_and_its_patches_are_in_names() -> None:
+    state = await guest_backhaul_state(hub_backhaul_rule("Web", HUB_A))
+    await edit(state, QOS, out_of_rule("Web", HUB_A))
+    error = refused(state)
+    (place,) = error.places
+    assert (place.module, str(place.path)) == ("business_policy", WEB_PATH)
+    round_trips(place.path)
+    assert place.keys == (
+        "segments",
+        "Guest",
+        "rules",
+        "Web",
+        "action",
+        "edge_to_cloud_route_action",
+    )
+    text = str(error)
+    assert text.splitlines()[1] == (
+        f"  business_policy {WEB_PATH}: rule 'Web' of segment 'Guest'"
+    )
+    assert "send one of these patches to business_policy" in text
+    assert '`route_policy` is "backhaul"' in text
+    assert "`route_cfg.backhaul_edges` is empty" in text
+    assert "`vpn.backhaul_edges`" in text
+    for wire in ("routePolicy", "routeCfg", "aulEdges", "edge2Cloud", "QOS"):
+        assert wire not in text
+    hub = {"+": {"_op": "add", "edge_name": "<hub name>"}}
+    assert shapes(error) == {
+        "give the rule a hub": to_web({"route_cfg": {"backhaul_edges": hub}}),
+        "route it another way": to_web({"route_policy": "<auto, direct or gateway>"}),
+        "delete the rule": {"segments": {"Guest": {"rules": {"Web": delete()}}}},
+    }
+
+
+async def test_a_reference_with_no_patch_is_told_in_names() -> None:
+    state = await edge_rule_names_a_hub_that_is_no_backhaul_hub()
+
+    with pytest.raises(DanglingReferenceError) as raised:
+        _ = state.plan()
+
+    error = raised.value
+    assert error.only_hubs == error.references
+    (reference,) = error.references
+    assert error.only_hubs[0] is reference
+    assert reference.module == "business_policy"
+    round_trips(reference.path)
+    text = str(error)
+    assert text.splitlines()[1] == (
+        '  business_policy segments["Global Segment"].rules[Web].action'
+        ".edge_to_cloud_route_action.route_cfg.backhaul_edges[Hub-B].edge_logical_id: "
+        f"{HUB_B.logical_id} is not a backhaul_hub of segment Global Segment"
+    )
+    assert "or change its `route_policy`, and the next" in text
+    for wire in ("routePolicy", "backHaulEdges", "QOS", "deviceSettings"):
+        assert wire not in text
+    (member,) = error.mending
+    hub = {"+": {"_op": "add", "name": "Hub-B"}}
+    assert (member.kind, member.module, member.patch) == (
+        "add_member",
+        "device_settings",
+        {
+            "segments": {
+                "Global Segment": {"vpn": {"enabled": True, "backhaul_edges": hub}}
+            }
+        },
+    )
 
 
 async def test_a_default_rule_with_two_hubless_route_actions_is_named_once() -> None:

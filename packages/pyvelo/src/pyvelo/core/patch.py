@@ -99,6 +99,19 @@ class PatchError(ValueError):
     def __str__(self) -> str:
         return f"{self.path}: {self.message}" if self.path.parts else self.message
 
+    def at(self, path: Path) -> "PatchError":
+        """This error at *path*: the same message and kind, with the same cause.
+
+        For showing the place another way: an error at ``rules[#0].bogus`` is
+        the same error at ``rules[Web].bogus``. This error is not changed.
+        """
+        moved = PatchError(self.message, path, self.kind)
+        suppress = self.__suppress_context__
+        moved.__cause__ = self.__cause__
+        # Setting a cause, also None, hides the context: put that back as it was.
+        moved.__suppress_context__ = suppress
+        return moved
+
 
 type Selector = str | int | UUID | tuple[object, ...]
 """A key or value, ``at(n)``, or the tuple of the parts of a composite key.
@@ -158,6 +171,20 @@ def selector_of(part: ItemPart) -> str:
     if not isinstance(part, Key):
         return at(part)
     return key_selector(part.value)
+
+
+def patch_key(part: PathPart) -> str:
+    """The key a patch has for the path part *part*.
+
+    A name is its own key: a field, an entry of a map, or a selector written
+    as text after a list. An item part is the selector of its item
+    (``selector_of``). So the parts of a path, each as its patch key, are the
+    keys a patch is nested under to reach the place the path names.
+
+    Like ``selector_of``, this is the text only: in a list where an item has
+    the key ``#n`` as text, the key of the position ``n`` names that item.
+    """
+    return part if isinstance(part, str) else selector_of(part)
 
 
 def _anchor(selector: Selector) -> str | int | float | list[str | int | float]:

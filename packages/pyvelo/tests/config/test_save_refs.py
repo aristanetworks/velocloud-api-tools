@@ -53,6 +53,10 @@ from refs_helpers import (
     DS_ID,
     PRIMARY,
     QOS_ID,
+    SEG0,
+    SEG0_OBJECT,
+    SEG1,
+    SEG1_OBJECT,
     SEGMENT,
     dns,
     segment_entry,
@@ -60,6 +64,7 @@ from refs_helpers import (
     service_row,
     table_registry,
 )
+from shown_paths import reached
 
 ZERO = str(uuid.UUID(int=0))
 GLOBAL_OBJECT = 1
@@ -316,7 +321,7 @@ async def test_a_dry_run_loads_the_services_too() -> None:
     assert result.plan is not None
     (change,) = result.plan.changed[0].ref_changes
     assert (change.added, change.name) == (True, PRIMARY)
-    assert f"+ refs {PRIMARY}" in result.plan.render()
+    assert f"+ refs {OWNER}: {DNS_A}" in result.plan.render()
 
 
 async def test_load_costs_no_service_read() -> None:
@@ -416,9 +421,19 @@ async def test_plan_warnings_reach_the_plan_and_the_save_result() -> None:
     (module_plan,) = plan.modules
     (warning,) = module_plan.warnings
     assert warning.code == "ref_without_owner"
-    assert [(w.code, w.path, w.message) for w in plan.warnings] == [
-        (warning.code, f"deviceSettings: {warning.path}", warning.message)
+    assert [
+        (w.code, w.module, w.path, w.segment, w.message) for w in plan.warnings
+    ] == [
+        (
+            warning.code,
+            "device_settings",
+            warning.path,
+            "Global Segment",
+            warning.message,
+        )
     ]
+    assert isinstance(plan.warnings[0].path, Path)
+    assert warning.path.parts == ("refs", CSS_PROVIDER)
     assert plan.render().count(warning.message) == 1  # the module's block prints it
 
     # A save that writes nothing, a dry run and a save that write something.
@@ -429,6 +444,21 @@ async def test_plan_warnings_reach_the_plan_and_the_save_result() -> None:
     assert dry.warnings == list(plan.warnings)
     saved = await pipeline.save(state)
     assert saved.warnings == list(plan.warnings)
+
+
+async def test_a_row_nothing_names_reaches_the_plan_with_its_module_and_segment() -> (
+    None
+):
+    _, _, state = await loaded_profile(css=True)
+    (warning,) = state.plan().warnings
+    assert isinstance(warning.path, Path)
+    assert (warning.code, warning.module, warning.path.parts, warning.segment) == (
+        "ref_without_owner",
+        "device_settings",
+        ("refs", CSS_PROVIDER),
+        "Global Segment",
+    )
+    assert str(warning.path) == 'refs."deviceSettings:css:provider"'
 
 
 async def test_a_data_edit_of_device_settings_keeps_every_row_through_a_processor() -> (
@@ -453,7 +483,7 @@ async def test_field_changes_list_a_provider_change_at_its_path() -> None:
     primary_provider(state).service = uuid.UUID(DNS_B)
     (swap,) = state.get_field_changes()
     assert (swap.module, swap.path, swap.before, swap.after) == (
-        "deviceSettings",
+        "device_settings",
         OWNER,
         DNS_A,
         DNS_B,
@@ -465,6 +495,151 @@ async def test_field_changes_list_a_provider_change_at_its_path() -> None:
 
     primary_provider(state).service = uuid.UUID(DNS_A)
     assert state.get_field_changes() == []
+
+
+async def test_a_providers_ref_line_and_its_field_change_show_one_path() -> None:
+    _, _, state = await loaded_profile()
+    state.resolvers = await table_registry(DNS_A_SERVICE)
+    primary_provider(state).service = uuid.UUID(DNS_A)
+    provider = state.get_field_changes()[-1]
+    assert (provider.path, provider.before, provider.after) == (OWNER, None, DNS_A)
+    (module_plan,) = state.plan().changed
+    assert module_plan.ref_lines() == [f"  + refs {provider.path}: {DNS_A}"]
+
+    _, _, state = await loaded_profile(DNS_A)
+    state.resolvers = await table_registry(DNS_A_SERVICE, DNS_B_SERVICE)
+
+    primary_provider(state).service = uuid.UUID(DNS_B)
+    (swap,) = state.get_field_changes()
+    (module_plan,) = state.plan().changed
+    assert module_plan.ref_lines() == [
+        f"  - refs {swap.path}: {DNS_A}",
+        f"  + refs {swap.path}: {DNS_B}",
+    ]
+
+    primary_provider(state).service = None
+    (cleared,) = state.get_field_changes()
+    (module_plan,) = state.plan().changed
+    assert module_plan.ref_lines() == [f"  - refs {cleared.path}: {DNS_A}"]
+    assert cleared.path == OWNER
+
+
+async def two_segment_state() -> ConfigState:
+    """A profile whose Guest segment has ``dns-a`` as primary provider.
+
+    Its Global Segment, the first of the two, has a provider stub and no row.
+    """
+    data = {
+        "lan": {"networks": [], "interfaces": []},
+        "segments": [
+            segment_entry(0, "Global Segment", SEG0, dns=dns(primary=True)),
+            segment_entry(1, "Guest", SEG1, dns=dns(primary=True)),
+        ],
+    }
+    refs = {
+        SEGMENT: [
+            segment_row(0, SEG0_OBJECT, SEG0),
+            segment_row(1, SEG1_OBJECT, SEG1),
+        ],
+        PRIMARY: [service_row(PRIMARY, DNS_A, 701, SEG1_OBJECT, SEG1)],
+    }
+    state = ConfigState(
+        edge_config=None,
+        profile_config=EnterpriseConfigurationProfile.model_validate(
+            {
+                "name": "P",
+                "id": CONFIG,
+                "modules": [
+                    make_module_json(
+                        "deviceSettings",
+                        data,
+                        module_id=DS_ID,
+                        configuration_id=CONFIG,
+                        refs=refs,
+                    )
+                ],
+            }
+        ),
+        target_type="profile",
+        resolver_context=ResolverContext(),
+    )
+    state.take_snapshot()
+    state.resolvers = await table_registry(DNS_A_SERVICE, DNS_B_SERVICE)
+    return state
+
+
+def provider_at(state: ConfigState, position: int) -> DnsPrimaryProvider:
+    section = device_settings(state).segments[position].dns
+    assert isinstance(section, SegmentDns)
+    provider = section.primary_provider
+    assert isinstance(provider, DnsPrimaryProvider)
+    return provider
+
+
+def ref_line_path(line: str, sign: str, value: str) -> Path:
+    """The path a provider's ref line of *sign* and *value* shows."""
+    return Path.parse(line.removeprefix(f"  {sign} refs ").removesuffix(f": {value}"))
+
+
+async def test_a_ref_line_names_the_providers_field_where_two_segments_trade_names() -> (  # noqa: E501 (a test's name)
+    None
+):
+    state = await two_segment_state()
+    provider_at(state, 1).service = uuid.UUID(DNS_B)
+    device_settings(state).segments[0].segment.name = "Guest"
+    device_settings(state).segments[1].segment.name = "Global Segment"
+
+    (module_plan,) = state.plan().changed
+    removed, added = module_plan.ref_lines()
+    # The field is the one of the second segment, which is now the Global Segment.
+    field = provider_at(state, 1)
+    added_path = ref_line_path(added, "+", DNS_B)
+    assert reached(device_settings(state), added_path) == uuid.UUID(DNS_B)
+    assert reached(device_settings(state), Path(added_path.parts[:-1])) is field
+    # The row that goes is that field's too: the place is named as it is now.
+    removed_path = ref_line_path(removed, "-", DNS_A)
+    assert removed_path.parts == added_path.parts
+    assert provider_at(await two_segment_state(), 1).service == uuid.UUID(DNS_A)
+
+    providers = [c for c in state.get_field_changes() if c.path.parts[-1] == "service"]
+    assert [(c.path.parts, c.before, c.after) for c in providers] == [
+        (added_path.parts, DNS_A, DNS_B)
+    ]
+
+
+async def test_a_cleared_providers_ref_line_reads_back_in_the_data_as_read() -> None:
+    state = await two_segment_state()
+    provider_at(state, 1).service = None
+
+    (module_plan,) = state.plan().changed
+    (removed,) = module_plan.ref_lines()
+    removed_path = ref_line_path(removed, "-", DNS_A)
+    assert str(removed_path) == "segments[Guest].dns.primary_provider.service"
+    as_read = await two_segment_state()
+    assert reached(device_settings(as_read), removed_path) == uuid.UUID(DNS_A)
+    (cleared,) = state.get_field_changes()
+    assert (cleared.path.parts, cleared.before, cleared.after) == (
+        removed_path.parts,
+        DNS_A,
+        None,
+    )
+
+
+async def test_a_provider_swapped_in_a_renamed_segment_is_one_field_change() -> None:
+    state = await two_segment_state()
+    device_settings(state).segments[1].segment.name = "Lab"
+    provider_at(state, 1).service = uuid.UUID(DNS_B)
+
+    providers = [c for c in state.get_field_changes() if c.path.parts[-1] == "service"]
+    assert [(str(c.path), c.before, c.after) for c in providers] == [
+        ("segments[Lab].dns.primary_provider.service", DNS_A, DNS_B)
+    ]
+    assert reached(device_settings(state), providers[0].path) == uuid.UUID(DNS_B)
+    (module_plan,) = state.plan().changed
+    assert module_plan.ref_lines() == [
+        f"  - refs segments[Lab].dns.primary_provider.service: {DNS_A}",
+        f"  + refs segments[Lab].dns.primary_provider.service: {DNS_B}",
+    ]
 
 
 async def test_a_new_provider_on_a_stub_with_no_ref_lists_the_ref_it_writes() -> None:
@@ -686,7 +861,7 @@ async def test_a_provider_edit_on_the_profile_layer_of_an_edge_state_is_not_save
         _ = await ConfigPipeline(client).save(state)
 
     assert error.value.layer == "profile"
-    assert str(OWNER) in error.value.fields["deviceSettings"]
+    assert str(OWNER) in error.value.fields["device_settings"]
     assert client.store.requests == []
     assert state.plan().changed == ()  # reported once
 
@@ -893,7 +1068,7 @@ async def test_a_later_qos_save_is_rebased_onto_what_the_device_settings_write_l
     assert [str(n) for n in first.modules_updated] == ["deviceSettings"]
     assert "QOS" in state.rebase_on_write
     assert "deviceSettings" not in state.rebase_on_write
-    _ = await pipeline.revert(state, module="qos")
+    _ = await pipeline.revert(state, module="business_policy")
     assert "QOS" in state.rebase_on_write
     client.store.requests.clear()
     rate_limit(state.profile.qos).value = 5

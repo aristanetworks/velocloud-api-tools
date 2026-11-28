@@ -22,11 +22,21 @@ from hub_helpers import (
     hub_row,
 )
 from hub_state import (
+    DS,
+    FROM_BOTH_LISTS,
+    GONE,
+    OUT_OF_THE_RULE,
+    QOS,
+    SERVICE,
+    SERVICE_ID,
+    edit,
     guest_backhaul_state,
     hub_backhaul_rule,
     hub_pipeline,
     hub_profile_state,
     profile_hub_rows,
+    removal_and_its_rule,
+    rule_uses_hub,
 )
 from pyvelo.client.exceptions import VcoError, WriteNotAppliedError
 from pyvelo.client.hub_services import BACKHAUL_REF
@@ -42,76 +52,16 @@ from pyvelo.core import add, backhaul_hub_mending, delete
 from pyvelo.testing import ModuleStore
 from refs_helpers import CONFIG, DS_ID, QOS_ID, segment_row
 from segment_helpers import GLOBAL, GUEST, ds_entry, firewall_entry, qos_entry
+from shown_paths import round_trips
 
-DS = "deviceSettings"
-QOS = "QOS"
 UPDATE = "configuration/updateConfigurationModule"
 DISABLE_HUB = "edge/disableEdgeForEdgeHub"
 ENABLE_BACKHAUL = "edge/enableEdgeForBackhaul"
 SERVICE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 SERVICE_B_ID = 602
-SERVICE = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-SERVICE_ID = 601
-GONE = {HUB_A.name: delete()}
 FROM_BACKHAUL: dict[str, Any] = {
     "segments": {"Guest": {"vpn": {"backHaulEdges": GONE}}}
 }
-FROM_BOTH_LISTS: dict[str, Any] = {
-    "segments": {
-        "Guest": {
-            "vpn": {
-                "backHaulEdges": GONE,
-                "edgeToEdgeHub": {"enabled": False, "vpnHubs": GONE},
-            }
-        }
-    }
-}
-RULE_ENTRY = {"Hub-A": {"_op": "delete"}}
-OUT_OF_THE_RULE = {
-    "segments": {
-        "Guest": {
-            "rules": {
-                "Web": {
-                    "action": {
-                        "edge2EdgeRouteAction": {
-                            "routeCfg": {"backhaulEdges": RULE_ENTRY}
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-
-async def rule_uses_hub() -> ConfigState:
-    """Guest has Hub-A as hub and backhaul hub, and its rule ``Web`` backhauls to it."""
-    refs = profile_hub_rows(
-        segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
-        segment_row(GUEST[0], GUEST[3], GUEST[2]),
-        hub_row(
-            HUB_A,
-            service_id=SERVICE_ID,
-            service_logical_id=SERVICE,
-            segment=GUEST,
-            roles=("hub", "backhaul"),
-        ),
-    )
-    backhaul = backhaul_row(
-        HUB_A,
-        service_id=SERVICE_ID,
-        service_logical_id=SERVICE,
-        segment=GUEST,
-        module_id=QOS_ID,
-    )
-    rule = backhaul_rule("Web", backhaul_entry(HUB_A, SERVICE))
-    return await hub_profile_state(
-        [ds_entry(GLOBAL), ds_with_vpn(GUEST, hubs=(HUB_A,), backhaul=(HUB_A,))],
-        [qos_entry(GLOBAL), qos_entry(GUEST, rules=[rule])],
-        [firewall_entry(GLOBAL), firewall_entry(GUEST)],
-        ds_refs=refs,
-        qos_refs={BACKHAUL_REF: backhaul},
-    )
 
 
 async def rules_use_hub_two_ways() -> ConfigState:
@@ -152,10 +102,6 @@ async def rules_use_hub_two_ways() -> ConfigState:
     )
 
 
-async def edit(state: ConfigState, module: str, patch: dict[str, Any]) -> None:
-    _ = await ConfigPipeline(client=None).apply(state, module=module, patch=patch)
-
-
 def refused(state: ConfigState) -> DanglingReferenceError:
     with pytest.raises(DanglingReferenceError) as error:
         _ = state.plan()
@@ -173,6 +119,44 @@ async def send(state: ConfigState, mending: MendingPatch) -> None:
     )
 
 
+LINE = (
+    "  business_policy segments[Guest].rules[Web].action.edge_to_edge_route_action"
+    ".route_cfg.backhaul_edges[Hub-A].edge_logical_id: "
+    "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1 is not a backhaul_hub of segment Guest"
+)
+TAKE_OUT = {
+    "segments": {
+        "Guest": {
+            "rules": {
+                "Web": {
+                    "action": {
+                        "edge_to_edge_route_action": {
+                            "route_cfg": {
+                                "backhaul_edges": {"Hub-A": {"_op": "delete"}}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+PUT_BACK = {
+    "segments": {
+        "Guest": {
+            "vpn": {
+                "enabled": True,
+                "hub_edges": {
+                    "enabled": True,
+                    "vpn_hubs": {"+": {"_op": "add", "name": "Hub-A"}},
+                },
+                "backhaul_edges": {"+": {"_op": "add", "name": "Hub-A"}},
+            }
+        }
+    }
+}
+
+
 async def test_apply_accepts_the_removal_and_plan_refuses_with_both_patches() -> None:
     state = await rule_uses_hub()
     await edit(state, DS, FROM_BOTH_LISTS)  # accepted: plan() is the judge
@@ -183,15 +167,31 @@ async def test_apply_accepts_the_removal_and_plan_refuses_with_both_patches() ->
     assert (remove.kind, remove.target_type, remove.module) == (
         "remove_reference",
         "profile",
-        QOS,
+        "business_policy",
     )
-    assert remove.patch == OUT_OF_THE_RULE
+    assert remove.patch == TAKE_OUT
     assert add == backhaul_hub_mending("Guest", "Hub-A")
     for mending in error.mending:
         as_json = dataclasses.asdict(mending)
         assert json.loads(json.dumps(as_json)) == as_json
         assert f"send {json.dumps(mending.patch)} to {mending.module}" in str(error)
     assert "`revert`" in str(error)
+
+
+async def test_the_refusal_and_its_patches_are_in_names() -> None:
+    state = await rule_uses_hub()
+    await edit(state, "device_settings", FROM_BOTH_LISTS)
+    error = refused(state)
+    assert str(error).splitlines()[1] == LINE
+    assert "`vpn.backhaul_edges`" in str(error)
+    assert "backHaulEdges" not in str(error)
+    (reference,) = error.references
+    assert (reference.module, reference.segment_name) == ("business_policy", "Guest")
+    round_trips(reference.path)
+    remove, add = error.mending
+    assert (remove.module, remove.patch) == ("business_policy", TAKE_OUT)
+    assert (add.module, add.patch) == ("device_settings", PUT_BACK)
+    assert f"send {json.dumps(TAKE_OUT)} to business_policy" in str(error)
 
 
 @pytest.mark.parametrize("kind", ["remove_reference", "add_member"])
@@ -260,14 +260,6 @@ def sent(store: ModuleStore) -> list[tuple[str, int]]:
     ]
 
 
-async def removal_and_its_rule() -> tuple[ConfigPipeline, ModuleStore, ConfigState]:
-    state = await rule_uses_hub()
-    await edit(state, DS, FROM_BOTH_LISTS)
-    await edit(state, QOS, OUT_OF_THE_RULE)
-    pipeline, store = hub_pipeline(state, vpn_check=True)
-    return pipeline, store, state
-
-
 async def test_the_plan_lists_the_device_settings_last() -> None:
     _, _, state = await removal_and_its_rule()
 
@@ -278,7 +270,7 @@ async def test_the_plan_lists_the_device_settings_last() -> None:
     assert lines.index("steps:") > lines.index("firewall: none")
     assert lines[lines.index("steps:") + 1 :][:2] == [
         "  disable hub for Hub-A on segment Guest",
-        "deviceSettings: update",
+        "device_settings: update",
     ]
 
 
@@ -333,7 +325,11 @@ async def test_a_second_save_finishes_after_a_failed_last_write() -> None:
         _ = await pipeline.save(state)
 
     error = failed.value
-    assert (error.module_name, error.step, error.written) == (DS, None, (QOS,))
+    assert (error.module_name, error.step, error.written) == (
+        "device_settings",
+        None,
+        (QOS,),
+    )
     assert [s.render() for s in error.steps_done] == [
         "disable hub for Hub-A on segment Guest"
     ]
@@ -482,7 +478,10 @@ async def test_a_segment_assigned_in_a_removal_save_is_stored_in_qos_first(
     with pytest.raises(SaveStepError) as failed:
         _ = await pipeline.save(state)
 
-    assert (failed.value.module_name, failed.value.written) == (DS, (QOS, "firewall"))
+    assert (failed.value.module_name, failed.value.written) == (
+        "device_settings",
+        (QOS, "firewall"),
+    )
     stored = segments_stored(store)
     assert "Voice" not in stored[DS]
     assert "Voice" in stored[QOS]
@@ -536,7 +535,9 @@ async def test_no_patch_takes_the_only_hub_out_of_a_rule() -> None:
     assert error.only_hubs == error.references
     text = str(error)
     assert ONLY_HUB in text
-    assert "give the rule another hub or change its `routePolicy`, and the next" in text
+    assert (
+        "give the rule another hub or change its `route_policy`, and the next" in text
+    )
     (member,) = error.mending
     await send(state, member)
     _ = state.plan()  # the hub is a backhaul hub again

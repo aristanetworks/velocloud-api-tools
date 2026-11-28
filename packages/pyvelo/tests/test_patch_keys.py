@@ -145,7 +145,7 @@ def test_add_under_another_items_alt_key_raises() -> None:
     root = Root(rules=[Rule(name="a", rule_id="i1")])
     with pytest.raises(PatchError) as exc:
         _ = root.merge_patch({"rules": {"i1": add()}})
-    assert exc.value.path == Path.parse("rules[i1]")
+    assert exc.value.path == Path.parse("rules[a]")
     assert names(root) == ["a"]
 
 

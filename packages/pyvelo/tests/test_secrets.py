@@ -45,7 +45,8 @@ from pyvelo.core.merge import (
     _list_spec,  # pyright: ignore[reportPrivateUsage]
     _validate_field,  # pyright: ignore[reportPrivateUsage]
 )
-from pyvelo.core.response_check import PlannedChange
+from pyvelo.core.names import named_value
+from pyvelo.core.response_check import PlannedChange, ServerChange
 from pyvelo.core.show import shown, shown_together
 from pyvelo.testing import ModuleStore, as_stored, make_module_json, store_of
 
@@ -555,7 +556,7 @@ def test_a_plan_shows_no_secret_and_keeps_it_on_the_change() -> None:
     text = plan.render()
     assert OLD not in text
     assert NEW not in text
-    assert f'{NEIGHBOR}.md5Password: "***" -> "***"' in text
+    assert f'{NEIGHBOR}.md5_password: "***" -> "***"' in text
     assert plan.model is DeviceSettingsData
 
 
@@ -566,7 +567,7 @@ def test_a_plan_made_from_a_dict_hides_secrets_too() -> None:
     text = plan.render()
     assert OLD not in text
     assert NEW not in text
-    assert 'snmp.snmpv2c.community: "***" -> "***"' in text
+    assert 'snmp.v2c.community: "***" -> "***"' in text
 
 
 def test_the_repr_of_a_plan_and_of_a_write_hold_no_data() -> None:
@@ -592,8 +593,62 @@ def test_a_write_error_shows_no_secret_and_keeps_it_on_the_change() -> None:
     assert (lost.as_read, lost.intended, lost.stored) == (OLD, NEW, OTHER)
     text = "".join(traceback.format_exception(exc.value))
     assert not any(secret in text for secret in (OLD, NEW, OTHER))
-    assert f"{NEIGHBOR}.md5Password" in text
+    assert f"{NEIGHBOR}.md5_password" in text
     assert text.count("***") == 3
+
+
+def test_a_write_error_hides_a_secret_under_a_key_it_shows_by_attribute() -> None:
+    """A lost added neighbour, and one only the VCO has: objects with a password.
+
+    The line writes the object's keys by attribute name (``md5_password``),
+    and the secret is found under that name too.
+    """
+    module = ds(settings(neighbor(OLD)))
+    bgp = require_present(module.data.segments[0].bgp)
+    added = {**neighbor(NEW), "neighborIp": "192.0.2.2"}
+    bgp.neighbors.append(type(bgp.neighbors[0]).model_validate(added))
+    bgp.asn = "65010"
+    stored = settings(neighbor(OLD), {**neighbor(OTHER), "neighborIp": "192.0.2.9"})
+    stored["segments"][0]["bgp"]["ASN"] = "65010"
+    with pytest.raises(ModuleWriteError) as exc:
+        _ = check_module_write(module, plan_module(module), as_stored(module, stored))
+    error = exc.value
+    (lost,) = error.lost_edits
+    assert isinstance(lost.intended, dict)
+    assert lost.intended["md5Password"] == NEW
+    text = error.render(limit=None)
+    assert not any(secret in text for secret in (OLD, NEW, OTHER))
+    assert "md5Password" not in text
+    named = named_value(lost.intended, DeviceSettingsData, lost.path)
+    assert isinstance(named, dict)
+    assert named["md5_password"] == NEW
+    hidden = hide_secrets(DeviceSettingsData, lost.path, named)
+    assert isinstance(hidden, dict)
+    assert hidden["md5_password"] == "***"
+
+
+def test_a_write_error_hides_a_secret_in_an_object_its_line_shows_whole() -> None:
+    """An object of one key, the password: short enough that the line is not cut.
+
+    The lines of the test above are cut before the password, so their text
+    alone would read the same with nothing hidden.
+    """
+    change = ServerChange(NEIGHBOR, {"md5Password": OLD}, {"md5Password": OTHER})
+    error = ModuleWriteError(
+        10,
+        "v1",
+        module_name="deviceSettings",
+        plan=plan_module(rotated()),
+        server_changes=[change],
+    )
+    assert error.render().splitlines()[-1] == (
+        '  segments["Global Segment"].bgp.neighbors["192.0.2.1"]: '
+        'read {"md5_password": "***"}, stored {"md5_password": "***"}'
+    )
+    assert (change.as_read, change.stored) == (
+        {"md5Password": OLD},
+        {"md5Password": OTHER},
+    )
 
 
 def test_a_write_error_hides_what_another_writer_stored() -> None:
@@ -639,7 +694,7 @@ def test_an_unknown_outcome_shows_no_secret_of_what_it_sent() -> None:
     text = str(error)
     assert OLD not in text
     assert NEW not in text
-    assert 'md5Password: read "***", meant "***"' in text
+    assert 'md5_password: read "***", meant "***"' in text
 
 
 def rule(n: int) -> dict[str, Any]:
@@ -688,13 +743,13 @@ def test_the_message_of_a_write_error_is_bounded() -> None:
     assert (len(error.lost_edits), len(error.server_changes)) == (500, 500)
     text = str(error)
     assert len(text) < 10_000
-    assert entries(text, ".loggingEnabled:") == 20
-    assert entries(text, ".match.dport_high:") == 20
+    assert entries(text, ".logging_enabled:") == 20
+    assert entries(text, ".match.destination_port_high:") == 20
     assert "  and 480 more: error.lost_edits has them all" in text.splitlines()
     assert "  and 480 more: error.server_changes has them all" in text.splitlines()
-    assert entries(error.render(limit=None), ".loggingEnabled:") == 500
+    assert entries(error.render(limit=None), ".logging_enabled:") == 500
     assert " more: " not in error.render(limit=None)
-    assert entries(error.render(limit=1), ".loggingEnabled:") == 1
+    assert entries(error.render(limit=1), ".logging_enabled:") == 1
 
 
 def test_the_message_of_an_unknown_outcome_is_bounded() -> None:
@@ -707,9 +762,9 @@ def test_the_message_of_an_unknown_outcome_is_bounded() -> None:
         plan=plan_module(logging_on_500_rules()),
     )
     text = str(error)
-    assert entries(text, ".loggingEnabled:") == 20
+    assert entries(text, ".logging_enabled:") == 20
     assert "  and 480 more: error.plan.changes has them all" in text.splitlines()
-    assert entries(error.render(limit=None), ".loggingEnabled:") == 500
+    assert entries(error.render(limit=None), ".logging_enabled:") == 500
 
 
 def test_hide_secrets_walks_a_tuple_as_it_walks_a_list() -> None:
@@ -746,6 +801,6 @@ def test_a_wan_network_s_isp_key_is_hidden_in_a_plan() -> None:
     text = plan.render()
     assert OLD not in text
     assert NEW not in text
-    assert f'networks[{NETWORK_ID},IPv4].ispKey: "***" -> "***"' in text
+    assert 'networks[LTE].isp_key: "***" -> "***"' in text
     path = Path(("networks", Key(f"{NETWORK_ID},IPv4"), "ispKey"))
     assert hide_secrets(WanData, path, OLD) == "***"

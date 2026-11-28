@@ -8,6 +8,7 @@ Each state is built by ``profile_state``; the additions are made through
 
 import copy
 import json
+import re
 from typing import Any
 
 import pytest
@@ -17,13 +18,16 @@ from profile_state import (
 )
 from pydantic import MISSING
 from pyvelo.client.exceptions import SegmentSetError
+from pyvelo.client.models.configuration.firewall.root import FirewallData
 from pyvelo.client.models.configuration.profile_segments import (
     default_rules,
     new_segment_entry,
 )
 from pyvelo.client.schemas.configuration import AnyConfigurationModule
+from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.state import ConfigPlan, ConfigState
 from pyvelo.core.layers import Profile
+from pyvelo.core.names import named_value
 from pyvelo.core.rebase import Path
 from pyvelo.testing import make_module_json
 from refs_helpers import QOS_ID
@@ -155,7 +159,7 @@ async def test_removing_a_segment_from_device_settings_raises_even_when_qos_lack
         _ = state.plan()
 
     assert caught.value.segments == ("Guest",)
-    assert caught.value.modules == (DS,)
+    assert caught.value.modules == ("device_settings",)
 
 
 async def test_an_addition_in_two_of_three_raises_naming_the_module_that_lacks_it() -> (
@@ -171,11 +175,88 @@ async def test_an_addition_in_two_of_three_raises_naming_the_module_that_lacks_i
     assert (error.segments, error.modules) == (("Guest",), (FIREWALL,))
     message = str(error)
     assert (
-        "adds the segment 'Guest' to deviceSettings and QOS but not to firewall"
-        in message
+        "adds the segment 'Guest' to device_settings and business_policy but not to "
+        "firewall" in message
     )
     assert ADD_GUEST in message
     assert ASSIGN_GUEST in message
+
+
+def named_modules(text: str) -> list[str]:
+    """The modules a hint says to send its patch to."""
+    found = re.search(r"Send the patch \{.*?\}\}\} to (.+?), or assign", text)
+    assert found is not None
+    return found.group(1).split(" and ")
+
+
+async def test_an_incomplete_addition_names_the_modules_by_their_python_names() -> None:
+    state = await state_of(["Global"], ["Global"], ["Global"])
+    add_guest(state, FIREWALL)
+
+    with pytest.raises(SegmentSetError) as caught:
+        _ = state.plan()
+
+    error = caught.value
+    assert error.module_name is None
+    assert error.modules == ("device_settings", "business_policy")
+    message = str(error)
+    assert (
+        "adds the segment 'Guest' to firewall but not to device_settings and "
+        "business_policy"
+    ) in message
+    assert named_modules(message) == ["device_settings", "business_policy"]
+
+
+async def test_the_patch_of_an_incomplete_addition_is_accepted_by_the_modules_it_names() -> (  # noqa: E501 (a test's name)
+    None
+):
+    state = await state_of(["Global"], ["Global"], ["Global"])
+    add_guest(state, FIREWALL)
+    with pytest.raises(SegmentSetError) as caught:
+        _ = state.plan()
+    message = str(caught.value)
+    assert ADD_GUEST in message
+
+    for module in named_modules(message):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module=module, patch=json.loads(ADD_GUEST)
+        )
+
+    plan = state.plan()
+    assert all(m.added_segments == ("Guest",) for m in plan.changed)
+    assert sorted(m.name for m in plan.changed) == sorted([DS, QOS, FIREWALL])
+
+
+async def test_a_disagreement_as_read_names_its_segment_and_the_modules_by_name() -> (
+    None
+):
+    state = await state_of(["Global", "Guest"], ["Global"], ["Global", "Guest"])
+
+    (warning,) = state.plan().segment_warnings
+
+    assert (warning.module, warning.path, warning.segment) == (
+        None,
+        "segments[Guest]",
+        "Guest",
+    )
+    assert (
+        "in device_settings and firewall but not in business_policy" in warning.message
+    )
+    assert named_modules(warning.message) == ["business_policy"]
+
+
+async def test_the_patch_of_a_disagreement_is_accepted_by_the_module_it_names() -> None:
+    state = await state_of(["Global", "Guest"], ["Global"], ["Global", "Guest"])
+    (warning,) = state.plan().segment_warnings
+
+    for module in named_modules(warning.message):
+        _ = await ConfigPipeline(client=None).apply(
+            state, module=module, patch=json.loads(ADD_GUEST)
+        )
+
+    plan = state.plan()
+    assert plan.segment_warnings == ()
+    assert [m.name for m in plan.changed] == [QOS]
 
 
 async def test_an_addition_in_all_three_plans_three_updates_device_settings_first() -> (
@@ -206,10 +287,12 @@ async def test_a_disagreement_as_read_is_a_warning() -> None:
     (warning,) = plan.segment_warnings
     assert (warning.code, warning.path, warning.severity) == (
         "segments_disagree",
-        'segments["Guest"]',
+        "segments[Guest]",
         "warning",
     )
-    assert "in deviceSettings and firewall but not in QOS" in warning.message
+    assert (
+        "in device_settings and firewall but not in business_policy" in warning.message
+    )
     assert ADD_GUEST in warning.message
     assert ASSIGN_GUEST in warning.message
     assert plan.warnings[-1] is warning
@@ -337,15 +420,17 @@ async def test_get_field_changes_lists_an_added_segment() -> None:
     changes = state.get_field_changes()
 
     assert [(c.module, str(c.path)) for c in changes] == [
-        (DS, "segments[Guest]"),
-        (QOS, "segments[Guest]"),
-        (FIREWALL, "segments[Guest]"),
+        ("device_settings", "segments[Guest]"),
+        ("business_policy", "segments[Guest]"),
+        ("firewall", "segments[Guest]"),
     ]
     guest = state.get_field_changes(FIREWALL)[0]
     assert guest.path == Path.parse('segments["Guest"]')
     assert guest.before is MISSING
     (addition,) = state.module(FIREWALL).additions
-    assert guest.after == addition.entry  # pyright: ignore[reportAttributeAccessIssue]
+    # The entry as written, with its keys by attribute name.
+    entry = addition.entry  # pyright: ignore[reportAttributeAccessIssue]
+    assert guest.after == named_value(entry, FirewallData, guest.path)
 
 
 async def test_plan_warnings_reach_the_save_result() -> None:
@@ -364,4 +449,5 @@ async def test_plan_warnings_reach_the_save_result() -> None:
     codes = [w.code for w in result.warnings]
     assert "defaults_repaired" in codes
     assert codes[-1] == "segments_disagree"
-    assert json.dumps("Guest") in result.warnings[-1].path
+    assert result.warnings[-1].path == "segments[Guest]"
+    assert result.warnings[-1].segment == "Guest"

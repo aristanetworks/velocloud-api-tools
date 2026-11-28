@@ -18,8 +18,11 @@ from pyvelo.config import PatchError
 from pyvelo.config.pipeline import ConfigPipeline
 from pyvelo.config.resolver import ResolverContext
 from pyvelo.config.state import ConfigState
+from pyvelo.config.validation_warning import ValidationWarning
 from pyvelo.core import Effective, Origin, effective_dump
+from pyvelo.core.rebase import Key, Path
 from pyvelo.testing import MockVcoClient, make_module_json
+from shown_paths import reached, round_trips
 from test_state_plan import desc  # pyright: ignore[reportImplicitRelativeImport]
 
 if TYPE_CHECKING:
@@ -226,9 +229,28 @@ async def test_a_patch_naming_the_cos_mapping_flag_is_refused() -> None:
     message = str(caught.value)
     assert "set_local()" in message
     assert "inherit()" in message
-    assert 'send {"segments": {"Global Segment": {"cosMapping": null}}}' in message
+    assert 'send {"segments": {"Global Segment": {"cos_mapping": null}}}' in message
     assert state.plan().changed == ()
     assert state.plan().render() == before
+
+
+async def test_the_patch_the_flag_refusal_shows_inherits_the_cos_mapping() -> None:
+    local = cos_mapping(realtime_high=50)
+    state = state_of(
+        {"segments": [{"segment": desc(3, "Voice"), "rules": [], "cosMapping": local}]}
+    )
+    assert state.edge.qos.segments[0].cos_mapping.is_local is True
+    with pytest.raises(PatchError, match="'override' is the flag") as caught:
+        await apply(
+            state, {"segments": {"Voice": {"cos_mapping": {"override": False}}}}
+        )
+    (inherit,) = shown_patches(str(caught.value))
+    assert inherit == {"segments": {"Voice": {"cos_mapping": None}}}
+    await apply(state, inherit)
+    assert state.edge.qos.segments[0].cos_mapping.is_local is False
+    assert "cosMapping" not in qos_plan(state).data["segments"][0]
+    voice = state.effective.qos.get_segment(name="Voice")
+    assert voice.cos_mapping.origin is Origin.PROFILE
 
 
 async def test_an_edge_patch_of_defaults_is_refused() -> None:
@@ -303,11 +325,66 @@ async def test_the_keep_patch_of_the_flag_off_warning_leaves_the_values_as_read_
     edge = flag_off_edge()
     state = state_of(edge)
     (warning,) = [w for w in state.plan().warnings if w.code == "flag_off_in_use"]
-    patch = {"segments": {"Voice": {"cosMapping": {}}}}
+    patch = {"segments": {"Voice": {"cos_mapping": {}}}}
     assert json.dumps(patch) in warning.message
     await apply(state, patch)
     expected = copy.deepcopy(edge["segments"][0]["cosMapping"])
     expected["override"] = True
     assert qos_plan(state).data["segments"][0]["cosMapping"] == expected
     assert changed_paths(state) == ["segments[Voice].cosMapping.override"]
+    assert not [w for w in state.plan().warnings if w.code == "flag_off_in_use"]
+
+
+def shown_patches(message: str) -> list[dict[str, Any]]:
+    """Each patch *message* shows after the word ``send``, as it is parsed."""
+    decoder = json.JSONDecoder()
+    found: list[dict[str, Any]] = []
+    at = message.find("send {")
+    while at != -1:
+        patch, end = decoder.raw_decode(message, at + len("send "))
+        found.append(patch)
+        at = message.find("send {", end)
+    return found
+
+
+def flag_off_warning(state: ConfigState) -> ValidationWarning:
+    (warning,) = [w for w in state.plan().warnings if w.code == "flag_off_in_use"]
+    return warning
+
+
+def test_the_flag_off_warning_is_at_the_object_in_attribute_names() -> None:
+    state = state_of(flag_off_edge())
+    warning = flag_off_warning(state)
+    assert isinstance(warning.path, Path)
+    assert warning.path.parts == ("segments", Key("Voice"), "cos_mapping")
+    assert (warning.module, str(warning.path), warning.segment) == (
+        "business_policy",
+        "segments[Voice].cos_mapping",
+        None,
+    )
+    round_trips(warning.path)
+    owned = state.edge.qos.segments[0].cos_mapping
+    assert owned.is_local is False
+    assert reached(state.edge.qos, warning.path) is owned.stored
+    assert (
+        "The edge stores cos_mapping of segment 'Voice' with override false or absent."
+        in warning.message
+    )
+    assert shown_patches(warning.message) == [
+        {"segments": {"Voice": {"cos_mapping": None}}},
+        {"segments": {"Voice": {"cos_mapping": {}}}},
+    ]
+
+
+async def test_the_inherit_patch_of_the_flag_off_warning_removes_the_object() -> None:
+    state = state_of(flag_off_edge())
+    message = flag_off_warning(state).message
+    inherit, _ = shown_patches(message)
+    assert inherit == {"segments": {"Voice": {"cos_mapping": None}}}
+    assert f"To inherit the profile's, send {json.dumps(inherit)}" in message
+    await apply(state, inherit)
+    assert "cosMapping" not in qos_plan(state).data["segments"][0]
+    assert changed_paths(state) == ["segments[Voice].cosMapping"]
+    voice = state.effective.qos.get_segment(name="Voice")
+    assert voice.cos_mapping.origin is Origin.PROFILE
     assert not [w for w in state.plan().warnings if w.code == "flag_off_in_use"]

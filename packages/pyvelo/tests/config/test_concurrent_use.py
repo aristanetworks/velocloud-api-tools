@@ -120,7 +120,7 @@ async def test_two_saves_at_once_insert_a_new_module_once() -> None:
     pipeline = ConfigPipeline(client)
     _ = await pipeline.apply(
         state,
-        module="qos",
+        module="business_policy",
         segment="Global Segment",
         path="rules",
         patch={"voice": add({"match": {"dport_low": 5060}, "action": QOS_ACTION})},
@@ -218,8 +218,11 @@ async def test_an_edit_of_a_later_module_during_a_save_is_reported_too() -> None
     with pytest.raises(DetachedObjectError) as exc:
         _ = await saving
 
-    link = Key(("00000000-0000-0000-0000-000000000001", "IPv4"))
-    assert exc.value.paths == [Path(("data", "links", link, "description"))]
+    assert exc.value.paths == [Path(("data", "links", Key("Internet"), "description"))]
+    assert str(exc.value).startswith(
+        "wan: the module was edited while this save was writing it, at: "
+        "data.links[Internet].description."
+    )
     assert methods(client.store) == ["updateConfigurationModule"] * 2
     assert data_of(client.store, 5)["links"][0]["description"] == "first"
     assert state.plan().changed == ()
@@ -241,8 +244,8 @@ async def test_the_error_names_the_modules_written_and_those_left() -> None:
         _ = await saving
 
     (note,) = exc.value.__notes__
-    assert "firewall (update), QOS (update)" in note
-    assert "not written: WAN" in note
+    assert "firewall (update), business_policy (update)" in note
+    assert "not written: wan" in note
     assert methods(client.store) == [
         "updateConfigurationModule",
         "getConfigurationModules",  # QoS has a segment: its version is read first

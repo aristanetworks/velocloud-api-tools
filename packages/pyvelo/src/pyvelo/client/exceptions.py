@@ -14,13 +14,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, override
 
 from pydantic import MISSING
 
+from pyvelo.client.enums.configuration import python_module_name
 from pyvelo.core.base import VcoModel, field_models, is_list, wire_name
 from pyvelo.core.changes import patch_of
+from pyvelo.core.names import named_path, named_value
 from pyvelo.core.patch import selector_of
 from pyvelo.core.rebase import (
     ItemMove,
@@ -31,6 +33,7 @@ from pyvelo.core.rebase import (
     Path,
     RawChange,
     item_parts,
+    item_text,
     node_child,
 )
 from pyvelo.core.references import Reference, reference_text
@@ -259,10 +262,13 @@ class LossyFieldError(VcoError):
     its default), so assigning that default changes nothing in what is written;
     and this library writes some sections at one configuration level only, so
     an edit to one at the other level is not written either.
-    ``paths`` locates each such edit; ``fields`` is the same, as text.
-    ``override_flags`` are those paths that are override flags: an edit to a
-    sibling sets the flag, but the document as read has no key for it and it
-    already reads as on, so there is nothing to write.
+    ``module`` is the module's python name. ``paths`` locates each such edit,
+    as its raiser gives it (a plan gives each as pyvelo shows a path: fields
+    by attribute name, items by what names them in the data as edited);
+    ``fields`` is the same, as text. ``override_flags`` are those paths that
+    are override flags: an edit to a sibling sets the flag, but the document
+    as read has no key for it and it already reads as on, so there is nothing
+    to write.
     """
 
     def __init__(
@@ -273,14 +279,16 @@ class LossyFieldError(VcoError):
     ) -> None:
         """The error for the edits to *module* at *paths*, *override_flags* among them.
 
-        The message says why a save writes none of them and what to do instead.
+        *module* is the module's name, the VCO's or the python one. The
+        message says why a save writes none of them and what to do instead.
         """
-        self.module: str = module
+        self.module: str = python_module_name(module)
         self.paths: list[Path] = list(paths)
         self.fields: list[str] = [str(path) for path in self.paths]
         self.override_flags: list[Path] = list(override_flags)
         message = (
-            f"{module}: a save cannot write these edits: {', '.join(self.fields)}. "
+            f"{self.module}: a save cannot write these edits: "
+            f"{', '.join(self.fields)}. "
             "A save sends what differs from the module as read, and at these "
             "fields nothing would. Either this library does not write the field "
             "at this configuration level (some sections are written for a "
@@ -307,9 +315,10 @@ class FixedListError(VcoError):
     The ``defaults`` rules of a segment have fixed entries, keys and order, and
     only their ``action`` can change. A plan compares the payload with the
     module as read, so the edit is refused however it was made (an attribute
-    assignment, a plain-dict data, a patch). ``module_name`` is the module;
-    ``paths`` are the places that changed, raw, each at the rule or at the
-    list (the reason of each is in the message).
+    assignment, a plain-dict data, a patch). ``module_name`` is the module's
+    python name; ``paths`` are the places that changed, as the raiser gives
+    them (a plan gives each as pyvelo shows a path), each at the rule or at
+    the list (the reason of each is in the message).
     """
 
     module_name: str
@@ -318,12 +327,15 @@ class FixedListError(VcoError):
     def __init__(
         self, module_name: str, violations: Sequence[tuple[Path, str]]
     ) -> None:
-        """The error for *module_name*: *violations* are each changed place and why."""
-        self.module_name = module_name
+        """The error for *module_name*: *violations* are each changed place and why.
+
+        *module_name* is the module's name, the VCO's or the python one.
+        """
+        self.module_name = python_module_name(module_name)
         self.paths = tuple(path for path, _ in violations)
         found = "; ".join(f"{path}: {reason}" for path, reason in violations)
         super().__init__(
-            f"{module_name}: the edit changes a fixed part of a list whose "
+            f"{self.module_name}: the edit changes a fixed part of a list whose "
             f"entries are fixed: {found}. Only the actions of the `defaults` "
             "rules can change: send "
             '{"segments": {"<segment>": {"defaults": {"<rule>": {"action": {...}}}}}} '
@@ -341,7 +353,8 @@ class SegmentSetError(VcoError):
     changes the three together. ``module_name`` is the module planned, or
     None when the error is about several; ``segments`` are the names of the
     segments added or removed; ``modules`` are the modules the rule found
-    wanting. The message says what happened and how to do it instead.
+    wanting. A module is named by its python name, here and in the message,
+    which says what happened and how to do it instead.
     """
 
     module_name: str | None
@@ -356,10 +369,15 @@ class SegmentSetError(VcoError):
         segments: Sequence[str] = (),
         modules: Sequence[str] = (),
     ) -> None:
-        """The error with *message* and the module, segments and modules it is about."""
-        self.module_name = module_name
+        """The error with *message* and the module, segments and modules it is about.
+
+        A module is given by its name, the VCO's or the python one.
+        """
+        self.module_name = (
+            None if module_name is None else python_module_name(module_name)
+        )
         self.segments = tuple(segments)
-        self.modules = tuple(modules)
+        self.modules = tuple(python_module_name(module) for module in modules)
         super().__init__(message)
 
 
@@ -373,9 +391,10 @@ class HubListError(VcoError):
     service, and a hub taken out needs it cleared. The pipeline does that as a
     step of the save; one module write cannot, so the VCO would list a hub no
     edge can use, or lose one's roles. ``segment`` is the segment's name (None
-    when the error is about several), ``lists`` the wire paths of the lists
-    whose members differ from the module as read (``vpn.backHaulEdges``),
-    ``hubs`` the names of the hubs added or removed, and ``edges`` the
+    when the error is about several), ``lists`` the paths of the lists whose
+    members differ from the module as read, from the segment, in attribute
+    names (``vpn.backhaul_edges``), as a patch names them, ``hubs`` the
+    names of the hubs added or removed, and ``edges`` the
     Edges (their IDs and names) that the change would leave with a hub they
     cannot use. The message says what happened and how to do it instead.
     """
@@ -443,7 +462,7 @@ def _only_hubs_text(
     again = (
         "with the patch above"
         if any(m.kind == "add_member" for m in mending)
-        else "(one of the segment's `vpn.backHaulEdges`)"
+        else "(one of the segment's `vpn.backhaul_edges`)"
     )
     return (
         " No patch takes a hub out of the rule that names it: for "
@@ -451,7 +470,7 @@ def _only_hubs_text(
         "is the only hub of a rule that backhauls through hubs, or one of all "
         "the hubs it names, and the rule would backhaul nowhere. Make the hub a "
         f"backhaul hub again {again}; or first give the rule another hub or "
-        "change its `routePolicy`, and the next `plan()` offers the patch that "
+        "change its `route_policy`, and the next `plan()` offers the patch that "
         "takes the hub out of the rule; or delete the rule."
     )
 
@@ -464,27 +483,31 @@ class DanglingReferenceError(VcoError):
     the set it refers to has. The VCO would store it without complaint, and
     what it stands for would not work: an interface in a segment that does
     not exist, a rule that backhauls nowhere. ``references`` are the
-    references found, each with its module, path and value. A reference the
-    configuration already held as it was read is not one of them.
+    references found, each with its module (by its python name), its path (as
+    pyvelo shows it: fields by attribute name, items by what names them), its
+    value and the name of its segment. A reference the configuration already
+    held as it was read is not one of them.
     ``on_edge`` is whether the target is an Edge: the hub lists are its
     profile's, and the message says so.
 
     ``mending`` holds the patches that mend the references to a backhaul hub,
     as data: for each, a ``remove_reference`` patch (the rule stops using the
     hub) and an ``add_member`` patch (the hub becomes a backhaul hub of the
-    segment, in the profile's device settings). All ``remove_reference``
-    patches come first, then the ``add_member`` ones. The patches of one kind
-    together mend every hub reference of the error; a kind that cannot be
-    built for every one is left out whole. A reference to a segment gets no
-    patch.
+    segment, in the profile's device settings). Each names its module by its
+    python name and each field of its patch by its attribute, and applies as
+    it is given. All ``remove_reference`` patches come first, then the
+    ``add_member`` ones. The patches of one kind together mend every hub
+    reference of the error; a kind that cannot be built for every one is left
+    out whole. A reference to a segment gets no patch.
 
     ``only_hubs`` are the hub references whose rule, one that backhauls through
-    hubs (``routePolicy`` ``"backhaul"``, ``routeCfg.type`` ``"edge"``), would
+    hubs (``route_policy`` ``"backhaul"``, ``route_cfg.type_`` ``"edge"``), would
     be left with no hub if each were taken out of it: each is the only hub its
-    rule names, or one of all the hubs it names. No ``remove_reference`` patch
+    rule names, or one of all the hubs it names. They are among ``references``,
+    the same objects. No ``remove_reference`` patch
     is offered then (for any reference), and the message says to make the hub
     a backhaul hub again; or first to give the rule another hub or change its
-    ``routePolicy``, after which the next ``plan()`` offers the removal patch;
+    ``route_policy``, after which the next ``plan()`` offers the removal patch;
     or to delete the rule.
     """
 
@@ -520,7 +543,7 @@ class DanglingReferenceError(VcoError):
             )
         if "backhaul_hub" in names:
             sources.append(
-                "a backhaul hub is one of the segment's `vpn.backHaulEdges` in the "
+                "a backhaul hub is one of the segment's `vpn.backhaul_edges` in the "
                 "profile's device settings"
             )
         nowhere = (
@@ -550,11 +573,17 @@ class HublessBackhaul:
     """
 
     module: str
-    """The module name on the wire: ``QOS``."""
+    """The module the rule is in.
+
+    A place an error carries has the module's python name
+    (``business_policy``).
+    """
     path: Path
-    """The route action's path in python names, as ``Reference.path`` gives one.
+    """The route action's path, each field by its attribute name.
 
     For example, ``segments[Guest].rules[Web].action.edge_to_cloud_route_action``.
+    A place an error carries names the segment and the rule as pyvelo shows
+    them (``named_path``).
     """
     segment_name: str | None
     """The name of the segment the rule is in, when the segment has one."""
@@ -562,8 +591,8 @@ class HublessBackhaul:
     keys: tuple[str, ...] | None = field(default=None, compare=False)
     """The keys a patch to the module gives to reach the route action.
 
-    Each step by its wire name and each item by the selector that names it
-    alone. ``None`` when an item on the way has no such selector.
+    Each field by its attribute name and each item by the selector that names
+    it alone. ``None`` when an item on the way has no such selector.
     """
     deletable: bool = field(default=True, compare=False)
     """Whether a patch can delete the rule.
@@ -583,26 +612,26 @@ def _nested(keys: Sequence[str], leaf: object) -> dict[str, object]:
 def _backhaul_ways(places: Sequence[HublessBackhaul]) -> str:
     """The sentences of a ``BackhaulWithoutHubError`` that say how to mend a rule.
 
-    The patches are those of the first place that has keys; the others are
-    mended the same way.
+    The patches are those of the first place that has keys, each field by its
+    attribute name; the others are mended the same way.
     """
     first = next((p for p in places if p.keys is not None), None)
     if first is None or first.keys is None:
         text = (
             " To mend a rule, give it a hub (a backhaul hub of its segment), set "
-            'the route action\'s `routePolicy` to "auto", "direct" or "gateway", '
+            'the route action\'s `route_policy` to "auto", "direct" or "gateway", '
             "or delete the rule (a rule that is not one of the segment's default "
             "rules)."
         )
     else:
         keys = first.keys
-        added = {"_op": "add", "name": "<hub name>"}
-        hub = _nested(keys, {"routeCfg": {"backhaulEdges": {"+": added}}})
-        policy = _nested(keys, {"routePolicy": "<auto, direct or gateway>"})
+        added = {"_op": "add", "edge_name": "<hub name>"}
+        hub = _nested(keys, {"route_cfg": {"backhaul_edges": {"+": added}}})
+        policy = _nested(keys, {"route_policy": "<auto, direct or gateway>"})
         text = (
             f" To mend the rule, send one of these patches to {first.module}: to "
             "give the rule a hub (a backhaul hub of its segment: one of the "
-            "segment's `vpn.backHaulEdges` in the profile's device settings), "
+            "segment's `vpn.backhaul_edges` in the profile's device settings), "
             f"{json.dumps(hub)}; to route it another way, {json.dumps(policy)}"
         )
         if first.deletable:
@@ -662,11 +691,12 @@ class BackhaulWithoutHubError(VcoError):
     """Raised when a save would leave a QoS rule that backhauls to hubs and names none.
 
     A route action of a rule (its Edge to Edge, Edge to data center or Edge to
-    cloud action) whose ``routePolicy`` is ``"backhaul"`` and whose
-    ``routeCfg.type`` is ``"edge"`` sends its traffic to the hubs of its
-    ``routeCfg.backhaulEdges``. With none, the VCO would store a rule that
+    cloud action) whose ``route_policy`` is ``"backhaul"`` and whose
+    ``route_cfg.type_`` is ``"edge"`` sends its traffic to the hubs of its
+    ``route_cfg.backhaul_edges``. With none, the VCO would store a rule that
     backhauls nowhere. ``places`` are the route actions found, each with its
-    module, path, segment and rule. A route action that was so as the module
+    module (by its python name), its path (as pyvelo shows it), its segment
+    and its rule. A route action that was so as the module
     was read is not one of them (``ConfigState.plan()`` warns of it instead).
     """
 
@@ -675,8 +705,8 @@ class BackhaulWithoutHubError(VcoError):
     def __init__(self, places: Sequence[HublessBackhaul]) -> None:
         """The error for *places*, with a message that lists each and what to do.
 
-        The message gives the patches that mend the first, with the module
-        they go to.
+        The message gives the patches that mend the first, in attribute
+        names, with the module they go to.
         """
         self.places = tuple(places)
         lines = "\n".join(
@@ -685,8 +715,8 @@ class BackhaulWithoutHubError(VcoError):
         message = (
             f"{len(self.places)} backhaul rule(s) name no hub:\n{lines}\n"
             "Each sends its traffic by backhaul and names no hub to send it to: "
-            'its `routePolicy` is "backhaul", its `routeCfg.type` is "edge" and '
-            "its `routeCfg.backhaulEdges` is empty. The save is refused because "
+            'its `route_policy` is "backhaul", its `route_cfg.type_` is "edge" and '
+            "its `route_cfg.backhaul_edges` is empty. The save is refused because "
             "the VCO would store a rule that backhauls nowhere."
         )
         super().__init__(message + _backhaul_ways(self.places))
@@ -699,8 +729,9 @@ class RefsNotLoadedError(VcoError):
     answer) carries no refs. An edit to an owner of a ref row then cannot be
     written, because the row that goes with it is not known, and a write of
     a device settings or QoS module with segments would let the VCO replace its
-    refs. ``module_name`` is the module; ``paths`` are the owners the edit
-    changed (empty when the write alone is refused).
+    refs. ``module_name`` is the module's python name; ``paths`` are the
+    owners the edit changed (empty when the write alone is refused), as the
+    raiser gives them (a plan gives each as pyvelo shows a path).
     """
 
     module_name: str
@@ -709,12 +740,13 @@ class RefsNotLoadedError(VcoError):
     def __init__(self, module_name: str, paths: Sequence[Path] = ()) -> None:
         """The error for *module_name*, with the owners at *paths* the edit changed.
 
-        The message says how to read the module with its refs.
+        *module_name* is the module's name, the VCO's or the python one. The
+        message says how to read the module with its refs.
         """
-        self.module_name = module_name
+        self.module_name = python_module_name(module_name)
         self.paths = tuple(paths)
         read = (
-            f"{module_name} was read without its refs (it came from "
+            f"{self.module_name} was read without its refs (it came from "
             "configuration/getConfigurationModules)"
         )
         how = (
@@ -743,7 +775,7 @@ class VersionRequiredError(VcoError):
     """Raised for an update of a module that has no version.
 
     It is raised when nothing asked for an unchecked write (``unconditional``).
-    ``module_name`` is the module.
+    ``module_name`` is the module's python name.
     """
 
     module_name: str
@@ -751,12 +783,14 @@ class VersionRequiredError(VcoError):
     def __init__(self, module_name: str) -> None:
         """The error for *module_name*.
 
-        The message says how to read the module with a version, and how to ask
+        *module_name* is the module's name, the VCO's or the python one. The
+        message says how to read the module with a version, and how to ask
         for the unchecked write.
         """
-        self.module_name = module_name
+        self.module_name = python_module_name(module_name)
         super().__init__(
-            f"{module_name}: this module has no version, so the VCO cannot check "
+            f"{self.module_name}: this module has no version, so the VCO cannot "
+            "check "
             "that it still holds what was read: an update would overwrite whatever "
             "another writer stored since, and that change would be lost without a "
             "word. Nothing was sent. Every module the VCO stores has a version, so "
@@ -809,13 +843,50 @@ def _and_more(total: int, limit: int | None, attribute: str) -> list[str]:
 
 
 def _where(change: PlannedChange | ServerChange) -> str:
-    """The path of *change*, with ``refs`` before it for a refs entry."""
+    """The path of *change*, with ``refs`` before it for a refs entry.
+
+    The keys of a refs entry are data: its path is written as the entry has
+    it. *change* is as a write error shows it (``ModuleWriteError._shown``), so
+    the path of a change of the data is in the names of the plan's text.
+    """
     return f"refs {change.path}" if change.part == "refs" else str(change.path)
 
 
 def _what(change: PlannedChange) -> str:
     """The path of *change*, then its place or its order."""
     return _where(change) + _place_or_order(change.place, change.moves)
+
+
+def _written_whole(applied: Sequence[PlannedChange]) -> frozenset[Path]:
+    """The paths of *applied* at which the write stored a value whole.
+
+    Below such a path the check compares what is stored with what was sent
+    key by key, and item by item at one position in both, so a server change
+    there names an item by its position in the data as planned.
+    """
+    return frozenset(
+        change.path
+        for change in applied
+        if change.part == "data"
+        and change.moves is None
+        and change.intended is not MISSING
+    )
+
+
+def _dropped(server_changes: Sequence[ServerChange]) -> frozenset[tuple[Path, str]]:
+    """The items that were sent and the stored module lacks, of *server_changes*.
+
+    Each as the path of its list and the item's name there, as text
+    (``item_text``): the name an order entry of that list has for the item.
+    """
+    return frozenset(
+        (Path(change.path.parts[:-1]), item_text(change.path.parts[-1]))
+        for change in server_changes
+        if change.part == "data"
+        and change.stored is MISSING
+        and change.path.parts
+        and not isinstance(change.path.parts[-1], str)
+    )
 
 
 class ModuleWriteError(VcoError):
@@ -833,10 +904,20 @@ class ModuleWriteError(VcoError):
     ``WriteOutcomeUnknownError`` is a write whose module as stored could not be
     read: it has no ``module`` and no lists. ``str(error)`` lists them by path
     (``render``), all but ``left_out``.
+
+    The lists hold each change as the check made it: its path names a field
+    by the key the VCO uses and an item by its key, and its values are as
+    stored. The text shows each as the plan's text does (``ModulePlan.render``):
+    the module by its python name, a field by its attribute, an item by what
+    names it, and an object with its keys by attribute name.
     """
 
     module_id: int
     module_name: str
+    """The module's python name (``business_policy`` for the module the VCO calls
+    ``QOS``), whichever of the two names the error was made with; ``""`` for
+    none. ``apply`` and ``revert`` take it as ``module``. The VCO's name is
+    ``plan.name``, on an error that has its plan."""
     version: str
     """The version the write carried; ``""`` for none."""
     plan: ModulePlan | None
@@ -857,7 +938,7 @@ class ModuleWriteError(VcoError):
     """For each item of every keyed list the check walks that the module as stored holds
     too, by its path, the part that names it there (``ResponseCheck.stored_parts``)."""
 
-    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
+    def __init__(  # noqa: PLR0913 (an error's constructor: each argument is a field the error reports)
         self,
         module_id: int,
         version: str,
@@ -876,7 +957,7 @@ class ModuleWriteError(VcoError):
         ``completed`` starts empty; the save sets it.
         """
         self.module_id = module_id
-        self.module_name = module_name
+        self.module_name = python_module_name(module_name)
         self.version = version
         self.plan = plan
         self.module = module
@@ -916,6 +997,11 @@ class ModuleWriteError(VcoError):
     ) -> tuple[str, ...]:
         """*values* of *change* as text, with a secret as ``"***"``.
 
+        *change* is as the check made it, with its path in the VCO's keys:
+        the secrets are found by it. *values* are as a line shows them
+        (``_shown``, ``_shown_server``): an object has its keys by attribute
+        name, and a secret is found under either name.
+
         A ref row is shown as ``"***"`` whatever it holds: rows are compared by
         identity only, and a row can hold a service's credentials.
         """
@@ -925,6 +1011,137 @@ class ModuleWriteError(VcoError):
             )
         return shown_together(*values, model=self._document(), path=change.path)
 
+    def _shown(self, change: PlannedChange) -> PlannedChange:
+        """*change*, one of this error's planned changes, as its line shows it.
+
+        The path, the item a place is after, the items of the moves and the
+        item names an order entry holds are shown as the plan's text shows
+        them (``ModulePlan.shown_change``): a field by its attribute, an item
+        by what names it in the data as planned, and an item the plan removes
+        in the data as read. So a lost edit has the path of the plan's line
+        for that change, and the path is one ``apply`` takes. An object among
+        the values has its keys by attribute name.
+
+        A refs entry is returned as it is: its keys are data. So is every
+        change of an error that has no plan, which has nothing to name an
+        item by.
+        """
+        plan = self.plan
+        if plan is None or change.part == "refs":
+            return change
+        seen = plan.shown_change(
+            RawChange(
+                change.path,
+                change.as_read,
+                change.intended,
+                place=change.place,
+                moves=change.moves,
+            )
+        )
+        stored = (
+            plan.shown_names(change.path, change.stored)
+            if change.moves is not None
+            else named_value(change.stored, plan.model, change.path)
+        )
+        return replace(
+            change,
+            path=seen.path,
+            as_read=seen.before,
+            intended=seen.after,
+            stored=stored,
+            place=seen.place,
+            moves=seen.moves,
+        )
+
+    def _shown_server(
+        self,
+        change: ServerChange,
+        whole: frozenset[Path],
+        dropped: frozenset[tuple[Path, str]],
+    ) -> ServerChange:
+        """*change*, one of ``server_changes``, as its line shows it.
+
+        *whole* is ``_written_whole`` of the changes this error has as applied,
+        and *dropped* is ``_dropped`` of its server changes.
+
+        Its path names an item in the document that holds it:
+
+        - An item the plan's data has is shown as the plan's text shows it
+          (``ModulePlan.named``): the check names it as the plan's changes
+          do.
+        - Below a value the write stored whole (an added item, a list that
+          was replaced), an item is at one position in the data as planned
+          and as stored, and the check names it by that position. It is kept,
+          also where the item has a name: the position counts in the payload,
+          which is not always the list the plan's data holds (a save adds a
+          segment's missing defaults to it), so the item is not looked up
+          there. The fields are named by their classes.
+        - An item only the stored module has is named by its key there, or
+          by its position there, and is kept as written: the plan's data
+          has no such item, and its position is another item's in it.
+
+        An order (a keyed list the VCO stores in another order than sent)
+        holds the items' names as sent and as stored. Those sent are shown as
+        the plan's text shows them, and a stored name is shown as the sent
+        item of that name is. A stored name no sent item has is an item only
+        the stored module has, and is kept as written, as its own line keeps
+        it; so is one whose sent item the stored module lacks (*dropped*): a
+        position there may be written as that item's was. A text that is no
+        item's name is kept too. An object among the values has its keys by
+        attribute name.
+
+        A refs entry is returned as it is, and so is every change of an
+        error that has no plan.
+        """
+        plan = self.plan
+        if plan is None or change.part == "refs":
+            return change
+        path = self._server_path(plan, change, whole)
+        values = [change.as_read, change.stored]
+        # An order's two values are the items' names, as text; no other
+        # change of a keyed list has two lists of texts.
+        if all(
+            is_list(value) and all(isinstance(name, str) for name in value)
+            for value in values
+        ):
+            sent = cast("list[str]", change.as_read)
+            shown_sent = plan.shown_names(change.path, sent)
+            if is_list(shown_sent) and len(shown_sent) == len(sent):
+                names = dict(zip(sent, shown_sent, strict=True))
+                values = [
+                    shown_sent,
+                    [
+                        name
+                        if (change.path, name) in dropped
+                        else names.get(name, name)
+                        for name in cast("list[str]", change.stored)
+                    ],
+                ]
+        as_read, stored = (
+            named_value(value, plan.model, change.path) for value in values
+        )
+        return replace(change, path=path, as_read=as_read, stored=stored)
+
+    @staticmethod
+    def _server_path(
+        plan: ModulePlan, change: ServerChange, whole: frozenset[Path]
+    ) -> Path:
+        """The path of *change*, a server change of the data, as it is shown.
+
+        The three cases of ``_shown_server``: below a path of *whole*, then
+        an item only the stored module has (the check gives it nothing as
+        read, and its path ends at the item), then any other path.
+        """
+        parts = change.path.parts
+        for length in range(1, len(parts)):
+            if Path(parts[:length]) in whole:
+                by_class = named_path(change.path, plan.model)
+                head = plan.named(Path(parts[:length]))
+                return Path((*head.parts, *by_class.parts[length:]))
+        if parts and change.as_read is MISSING and not isinstance(parts[-1], str):
+            return plan.named(Path(parts[:-1])).child(parts[-1])
+        return plan.named(change.path)
+
     def render(self, limit: int | None = 20) -> str:
         """The message: the headline, any notes, then each list by path.
 
@@ -932,6 +1149,18 @@ class ModuleWriteError(VcoError):
 
         Each list shows its first *limit* entries (all for None), and a line
         after it counts the rest. A secret is shown as ``"***"``.
+
+        The module is named by its python name. A path is in the names of
+        the plan's text: a lost edit and a stored one have the path of the
+        plan's line for that change, which ``apply`` takes as ``path``, and
+        an object is written with its keys by attribute name. In ``stored
+        otherwise than sent`` an item only the stored module has keeps the
+        key, or the position, it has there, in its own line and in the order
+        of its list; an item below a value the write added or replaced whole
+        is shown by its position in that value; and a key the model does not
+        declare is kept as stored. A refs entry is ``refs <path>``, its keys
+        as stored. An error that has no plan keeps every path as the check
+        wrote it.
         """
         lines = [self._headline(), *self._notes(limit)]
         if self.lost_edits:
@@ -940,11 +1169,12 @@ class ModuleWriteError(VcoError):
                 "`error.not_redone()` lists the rest):"
             )
             for change in _first(self.lost_edits, limit):
+                seen = self._shown(change)
                 as_read, intended, stored = self._values(
-                    change, change.as_read, change.intended, change.stored
+                    change, seen.as_read, seen.intended, seen.stored
                 )
                 line = (
-                    f"  {_what(change)}: read {as_read}, "
+                    f"  {_what(seen)}: read {as_read}, "
                     f"meant {intended}, stored {stored}"
                 )
                 if change.clash:
@@ -953,23 +1183,30 @@ class ModuleWriteError(VcoError):
             lines.extend(_and_more(len(self.lost_edits), limit, "lost_edits"))
         if self.applied:
             lines.append("already stored:")
-            lines.extend(f"  {_what(change)}" for change in _first(self.applied, limit))
+            lines.extend(
+                f"  {_what(self._shown(change))}"
+                for change in _first(self.applied, limit)
+            )
             lines.extend(_and_more(len(self.applied), limit, "applied"))
         if self.server_changes:
             lines.append("stored otherwise than sent:")
+            whole = _written_whole(self.applied)
+            dropped = _dropped(self.server_changes)
             for server_change in _first(self.server_changes, limit):
+                seen_change = self._shown_server(server_change, whole, dropped)
                 as_read, stored = self._values(
-                    server_change, server_change.as_read, server_change.stored
+                    server_change, seen_change.as_read, seen_change.stored
                 )
                 lines.append(
-                    f"  {_where(server_change)}: read {as_read}, stored {stored}"
+                    f"  {_where(seen_change)}: read {as_read}, stored {stored}"
                 )
             lines.extend(_and_more(len(self.server_changes), limit, "server_changes"))
         if self.completed:
             lines.append(
                 "written before this one: "
                 + ", ".join(
-                    f"{write.name} ({write.operation})" for write in self.completed
+                    f"{python_module_name(write.name)} ({write.operation})"
+                    for write in self.completed
                 )
             )
         return "\n".join(lines)
@@ -1417,7 +1654,7 @@ class ConfigConflictError(ModuleWriteError):
     stated: bool
     sent: bool
 
-    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
+    def __init__(  # noqa: PLR0913 (an error's constructor: each argument is a field the error reports)
         self,
         module_id: int,
         version: str,
@@ -1494,7 +1731,7 @@ class WriteNotAppliedError(ModuleWriteError):
     with the value sent and the value stored.
     """
 
-    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
+    def __init__(  # noqa: PLR0913 (an error's constructor: each argument is a field the error reports)
         self,
         module_id: int,
         version: str,
@@ -1566,7 +1803,7 @@ class RefsDroppedError(WriteNotAppliedError):
 
     refs_as_read: object
 
-    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
+    def __init__(  # noqa: PLR0913 (an error's constructor: each argument is a field the error reports)
         self,
         module_id: int,
         version: str,
@@ -1670,6 +1907,9 @@ class RefsDroppedError(WriteNotAppliedError):
             )
         for edit in _first(owners, limit):
             owner = cast("Path", edit.owner)
+            if self.plan is not None:
+                # As the plan's ref line names the field; the patch is that path.
+                owner = self.plan.named_owner(owner, added=edit.intended is not MISSING)
             if edit.intended is MISSING:
                 lines.append(
                     f"  to clear {owner} again, send the patch "
@@ -1711,7 +1951,7 @@ class WriteOutcomeUnknownError(ModuleWriteError):
     detail: str
     answer: WriteAnswer
 
-    def __init__(  # noqa: PLR0913 (existing: split it when it next changes)
+    def __init__(  # noqa: PLR0913 (an error's constructor: each argument is a field the error reports)
         self,
         module_id: int,
         version: str,
@@ -1750,13 +1990,15 @@ class WriteOutcomeUnknownError(ModuleWriteError):
         lines = [said, "planned, not checked:"]
         if self.plan is not None:
             for change in _first(self.plan.changes, limit):
+                # As the plan's own line for the change shows it.
+                seen = self.plan.shown_change(change)
                 before, after = shown_together(
-                    change.before,
-                    change.after,
+                    seen.before,
+                    seen.after,
                     model=self.plan.model,
                     path=change.path,
                 )
-                where = f"{change.path}{_place_or_order(change.place, change.moves)}"
+                where = f"{seen.path}{_place_or_order(seen.place, seen.moves)}"
                 lines.append(f"  {where}: read {before}, meant {after}")
             lines.extend(_and_more(len(self.plan.changes), limit, "plan.changes"))
             lines.extend(self.plan.ref_lines())
@@ -1839,15 +2081,15 @@ class ComposedModuleError(VcoError):
     left out of the answer. Either way there is nothing to check the effective
     view against, so the comparison of that module stops with this error
     instead of reporting every key as missing. ``module`` is the module's
-    wire name. Open the edge in the VCO to see why its modules do not compose,
-    or compare the other modules.
+    python name. Open the edge in the VCO to see why its modules do not
+    compose, or compare the other modules.
     """
 
     module: str
 
     def __init__(self, message: str, *, module: str) -> None:
-        """The error with *message* and the wire name of the *module*."""
-        self.module = module
+        """The error with *message* for *module*, given by either of its names."""
+        self.module = python_module_name(module)
         super().__init__(message)
 
 
@@ -1863,7 +2105,10 @@ class DetachedObjectError(VcoError):
     that was there before, which a write or a revert replaced. Take the object
     again from the module the state holds now. ``paths`` are where in the
     module such edits were found, when they were found by comparison; they may
-    come from several modules, which the message names, a line each. An
+    come from several modules, which the message names by their python names,
+    a line each. A path names a field by its attribute; an item is named by
+    what names it where the raiser holds the data, else by the key or the
+    position the comparison found it at. An
     assignment or ``merge_patch`` through a replaced object names the object
     and leaves them empty, and so does the refusal of ``update_module`` to
     write a module an earlier ``update_module`` replaced. A ``merge_patch``,
