@@ -2354,42 +2354,54 @@ Known limits:
   the place (`path`).
 - What is in the VCO's form holds complete configuration values, including
   addresses and configuration secrets: the save and the redo read it. That is
-  `ConfigState` and the module objects, a model's `model_dump()`, a module's
-  `raw_data` and `raw_refs`, a plan's `ModulePlan.data`, `.changes` and
-  `.refs`, the change lists of a `SaveResult` and of its writes, and of a
-  write error (`lost_edits`, `applied`, `left_out`, `server_changes`: their
-  `before`, `after`, `as_read`, `intended` and `stored`), and a patch from
-  `redo_patch()`. Redact them before logging, sharing, or committing exports.
-  This library does not persist configuration automatically.
-- Everything pyvelo shows hides the value of each field the models mark as a
-  secret (`Secret`, in `pyvelo.core`: passwords, pre-shared keys, SNMP
-  communities, a WAN network's ISP key, the `data` of a device settings ref
-  row), with `"***"` in its place, at any depth of a value. That is the text
-  of a plan (`render()`) and the message of a write error (`str(error)`,
-  `render()`), in both of which a ref row is `"***"` whole; the field changes
-  (`get_field_changes`) and `ModulePlan.shown_change`; the entries of a write
-  error's `not_redone()`, in which each value of a ref row is `"***"`, as in
-  the message; the two values of each entry of `compare_effective` (see "The
+  `ConfigState` and the module objects, whose `repr()` and `str()` print
+  every value as well; a model's `model_dump()`; a module's `raw_data` and
+  `raw_refs`; a plan's `ModulePlan.data`, `.changes` (each change's `before`
+  and `after`), `.refs` and `.ref_changes` (each `RefChange.row` is the whole
+  row); the change lists of a `SaveResult` and of its writes, and of a write
+  error (`lost_edits`, `applied`, `left_out`, `server_changes`: their
+  `as_read`, `intended` and `stored`); the rows of a `RefsDroppedError`'s
+  `refs_as_read`; and a patch from `redo_patch()`. Redact them before
+  logging, sharing, or committing exports. This library does not persist
+  configuration automatically.
+- What pyvelo shows hides the value of each field the models mark as a secret
+  (`Secret`, in `pyvelo.core`: passwords, pre-shared keys, SNMP communities, a
+  WAN network's ISP key, the `data` of a device settings ref row), with
+  `"***"` in its place, at any depth of a value. That is the text of a plan
+  (`render()`), whose line for a ref row it adds or removes gives the row's
+  name and identity and nothing of its data (`+ refs deviceSettings:segment:
+  2`); the message of a write error (`str(error)`, `render()`), in which each
+  value of a ref row is `"***"` whole; the field changes (`get_field_changes`)
+  and `ModulePlan.shown_change`; the entries of a write error's
+  `not_redone()`, in which each value of a ref row is `"***"`, as in the
+  message; the two values of each entry of `compare_effective` (see "The
   effective view"); and a model's `named_dump()`, a configuration's too, each
-  row by its own class (see "Dumps"). Nothing else pyvelo prints holds the
-  value of such a field. `repr()` of a plan or of a write holds no values, and
-  `repr()` of a `SaveResult` neither module data nor the changes it reports,
-  only their number per module (it still holds the validators' messages). A
-  `PatchError` and its cause quote no value of the patch, and the other
-  refusals (`LossyFieldError`, `LayerNotSavedError`, `DetachedObjectError`,
-  `FixedListError`, the hub and segment errors) give paths and names. A
-  plan's warnings, a save's warnings and the validators' messages hold names,
-  keys, IDs and addresses (a network that overlaps another is named with its
+  row by its own class (see "Dumps"). A write error built by hand without its
+  plan (pyvelo builds none that has lost edits) has no model to find a secret
+  by: its message and `not_redone()` show the values of its data entries as
+  they are, and those of a ref row as `"***"`. Outside what is in the VCO's
+  form and the three places at the end of this point, nothing else pyvelo
+  prints holds the value of such a field. `repr()` of a plan or of a write
+  holds no values, `repr()` of a write error its first line only, and `repr()`
+  of a `SaveResult` neither module data nor the changes it reports, only their
+  number per module (it still holds the validators' messages). A `PatchError`
+  and its cause quote no value of the patch, and the other refusals
+  (`LossyFieldError`, `LayerNotSavedError`, `DetachedObjectError`,
+  `FixedListError`, the hub and segment errors) give paths and names. A plan's
+  warnings, a save's warnings and the validators' messages hold names, keys,
+  IDs and addresses (a network that overlaps another is named with its
   address), and no field marked a secret is the key, the alt key or the label
   of a list. A response that fails to parse raises pydantic's
   `ValidationError` without the input in its text; `error.errors()` still has
   it. A secret is printed as it is in three places: under a key the models do
   not know, which includes everything inside a field typed `dict[str, Any]`
-  (`EdgeZscaler.deployment`, a WAN link's `private_network`); in the data
-  of a module whose data is not a model (a generic module: `analyticsSettings`,
+  (`EdgeZscaler.deployment`, a WAN link's `private_network`); in the data of a
+  module whose data is not a model (a generic module: `analyticsSettings`,
   `atpMetadata`); and in one shape of an answer of the VCO that is not what
   the models declare (the next point). `VcoApiError` and `VcoOperationError`
-  print the VCO's own error data as the VCO sent it: pyvelo does not change it.
+  print the VCO's own error data as the VCO sent it, and `VcoHttpError` the
+  first 500 characters of the VCO's answer (`body`; `text` holds all of it):
+  pyvelo does not change them.
 - A value of another shape than the models declare, which the VCO's own
   answer can hold and the effective comparison then shows, is read both as an
   object of the model declared there and as the field its key names, and a

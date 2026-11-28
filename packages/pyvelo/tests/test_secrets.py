@@ -803,6 +803,24 @@ def test_a_lost_ref_row_the_redo_leaves_out_is_shown_as_its_line_shows_it() -> N
     )
 
 
+def test_an_error_built_without_its_plan_shows_its_data_entries_as_they_are() -> None:
+    # pyvelo builds each write error that has lost edits with its plan. One
+    # built by hand without it has no model to find a secret by: a data entry
+    # is shown, in the message and in ``not_redone()``, as it is.
+    lost = PlannedChange(Path.parse("segments[#0].bgp.md5Password"), OLD, NEW, OTHER)
+    row = {"id": 101, "enterpriseObjectId": 5, "data": {"sharedSecret": OLD}}
+    lost_row = PlannedChange(Path.parse("auth[5]"), MISSING, row, MISSING, part="refs")
+    error = ModuleWriteError(
+        1, "v1", module_name="deviceSettings", lost_edits=[lost, lost_row]
+    )
+    text = str(error)
+    assert f'md5Password: read "{OLD}", meant "{NEW}", stored "{OTHER}"' in text
+    assert error.not_redone()[0] == lost
+    # A ref row is still "***" whole: no model is needed to know a row.
+    assert 'refs auth[5]: read (nothing), meant "***", stored (nothing)' in text
+    assert error.not_redone()[1].intended == "***"
+
+
 def test_an_unknown_outcome_shows_no_secret_of_what_it_sent() -> None:
     error = WriteOutcomeUnknownError(
         1,
