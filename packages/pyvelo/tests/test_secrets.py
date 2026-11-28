@@ -917,6 +917,22 @@ def test_hide_secrets_walks_a_tuple_as_it_walks_a_list() -> None:
     ) == {"communityList": "***"}
 
 
+def test_hide_secrets_does_not_walk_an_object_that_can_hold_no_secret() -> None:
+    # A firewall of thousands of rules costs nothing to show.
+    module = FirewallConfigurationModule[Edge].model_validate(
+        make_module_json("firewall", firewall(2), configuration_id=10)
+    )
+    model = type(module.data)
+    assert not declares_secret(model)
+    raw = firewall(2)
+    assert hide_secrets(model, Path(()), raw) is raw
+    # A tuple is still read as the list it is.
+    segments = tuple(raw["segments"])
+    hidden = hide_secrets(model, Path(("segments",)), segments)
+    assert hidden == raw["segments"]
+    assert cast("list[object]", hidden)[0] is segments[0]
+
+
 NETWORK_ID = "00000000-0000-0000-0000-0000000000b1"
 
 

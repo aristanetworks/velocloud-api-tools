@@ -137,13 +137,14 @@ def _hide(value: object, classes: _Classes, holds: _Holds) -> object:
     """*value*, found where *classes* are held as *holds* says, with no secret.
 
     An object is one model only at ``_Holds.MODEL``: its keys are fields, and
-    a key no class declares is kept with all below it.
+    a key no class declares is kept with all below it. An object of classes
+    with no secret at any depth is not walked: it is returned as it is.
     """
     if not classes:
         return value
     if is_list(value) or _is_tuple(value):
         return [_hide(item, classes, _ITEM[holds]) for item in value]
-    if not is_dict(value):
+    if not is_dict(value) or not any(declares_secret(cls) for cls in classes):
         return value
     if holds is not _Holds.MODEL:
         return {
