@@ -18,6 +18,7 @@ from pyvelo.config.errors import (
 )
 from pyvelo.config.hub_steps import HubRef, HubStep
 from pyvelo.config.validation import ValidationError
+from pyvelo.core.rebase import Path
 
 
 def a_step(action: str = "enable", name: str = "Hub-A") -> HubStep:
@@ -43,7 +44,9 @@ def test_every_error_of_the_module_round_trips() -> None:
         IntentError("plain"),
         ConfigInputError("bad input"),
         UnknownRegistryEntryError("no such module"),
-        SaveValidationError([ValidationError("a.b", "too long", "too_long")]),
+        SaveValidationError(
+            [ValidationError(Path(("a", "b")), "too long", "too_long")]
+        ),
         LayerNotSavedError(
             "profile", "edge", {"firewall": ["segments[a].name"]}, profile_id=20
         ),
@@ -71,12 +74,19 @@ def test_every_error_of_the_module_round_trips() -> None:
 
 
 def test_the_attributes_of_the_save_errors_are_kept() -> None:
-    invalid = SaveValidationError([ValidationError("a.b", "too long", "too_long")])
+    invalid = SaveValidationError(
+        [
+            ValidationError(
+                Path(("a", "b")), "too long", "too_long", module="device_settings"
+            )
+        ]
+    )
     layer = LayerNotSavedError("edge", "profile", {"qos": ["rate", "burst"]})
     for copied in copies(invalid):
-        assert [(e.path, e.message, e.code) for e in copied.errors] == [
-            ("a.b", "too long", "too_long")
+        assert [(e.module, e.path, e.message, e.code) for e in copied.errors] == [
+            ("device_settings", "a.b", "too long", "too_long")
         ]
+        assert [e.path.parts for e in copied.errors] == [("a", "b")]
     for copied in copies(layer):
         assert (copied.layer, copied.fields) == ("edge", {"qos": ["rate", "burst"]})
 

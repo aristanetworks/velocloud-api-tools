@@ -18,12 +18,15 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Final,
     Generic,
     Literal,
     Self,
+    TypeAliasType,
     TypeIs,
     cast,
     get_args,
+    get_origin,
     overload,
     override,
 )
@@ -74,16 +77,18 @@ from pyvelo.client.models.configuration.ref_owners import fill_ref_only
 from pyvelo.core import (
     Alias,
     ConfigContext,
+    NamedDocumentError,
     NoneIsMissing,
     RowsModifiedConfirmation,
     Tinyint,
     VcoModel,
     VcoTimestamp,
 )
-from pyvelo.core.base import field_models
+from pyvelo.core.base import JsonObject, field_models, is_dict, is_list
 from pyvelo.core.fields import Resolvable
 from pyvelo.core.identity import EdgeIdentity, ProfileIdentity
 from pyvelo.core.layers import Composed, Edge, Effective, L, Profile
+from pyvelo.core.rebase import Path
 
 
 def _is_mapping(value: object) -> TypeIs[Mapping[object, object]]:
@@ -482,6 +487,181 @@ def _wrong_module(module: object, expected: type) -> TypeError:
     )
 
 
+NO_STORED_ROW: Final = "`stored` has no module row named `{name}`: the row is new"
+NO_ROW_OF_ID: Final = "no `{name}` row of `stored` has the `id_` {id}: the row is new"
+NO_ROW_ID: Final = (
+    "several module rows are named `{name}`, and this one gives no `id_`, a whole "
+    "number, to say which stored row it is"
+)
+SEVERAL_OF_ID: Final = (
+    "{count} `{name}` rows of {where} have the `id_` {id}, so the `id_` does not "
+    "tell them apart"
+)
+"""Why a row of a named configuration has no stored row, for one of four reasons."""
+
+MASK_IN_ROW: Final = (
+    'holds the mask "***", and `stored` has no module row to keep its value from '
+    "({why}). The mask would be written to the VCO as the secret. A row keeps the "
+    "secrets of the stored row of its `name`, and where several rows have that "
+    "name, of the one with its `id_`. Leave the `name` and the `id_` of a row as "
+    "they were dumped, or write every secret of the row in full (in a device "
+    "settings row, the `data` of each ref row is one)."
+)
+"""What refuses a mask in a row that has no stored row, where *stored* was given."""
+
+
+def _named_row(
+    row: object, classes: Mapping[str, type[ConfigurationModuleBase]]
+) -> tuple[str, dict[object, object]] | None:
+    """The ``name`` of *row*, a row of a document, and the row as an object.
+
+    None for a row that is no object, and for one whose ``name`` no class of
+    *classes* has.
+    """
+    if not is_dict(row):
+        return None
+    name = row.get("name")
+    return (name, row) if isinstance(name, str) and name in classes else None
+
+
+def _row_id(row: Mapping[object, object]) -> int | None:
+    """The ``id_`` a document's *row* gives; None where it gives no whole number.
+
+    ``true`` is no ID, though python counts it equal to 1.
+    """
+    given = row.get("id_")
+    return given if isinstance(given, int) and not isinstance(given, bool) else None
+
+
+def _stored_row(
+    name: str,
+    row: Mapping[object, object],
+    named: Sequence[Mapping[object, object]],
+    kept: Sequence[ConfigurationModuleBase],
+) -> ConfigurationModuleBase | str:
+    """The stored row that is *row*'s own, or why it has none.
+
+    *row* is a row of the document named *name*, *named* are the document's
+    rows of that name (*row* among them) and *kept* the stored rows of it.
+    Where one row of each has the name, the name says it. Where several have
+    it, the row's ``id_`` does: its stored row is the one of that ID, where no
+    other row of *named* gives the ID and no other of *kept* has it. So a
+    stored row is the row of one document row at most, and position never
+    pairs two.
+    """
+    if not kept:
+        return NO_STORED_ROW.format(name=name)
+    if len(named) == 1 and len(kept) == 1:
+        return kept[0]
+    row_id = _row_id(row)
+    if row_id is None:
+        return NO_ROW_ID.format(name=name)
+    given = sum(_row_id(other) == row_id for other in named)
+    if given > 1:
+        return SEVERAL_OF_ID.format(
+            count=given, name=name, where="the document", id=row_id
+        )
+    its_own = [stored_row for stored_row in kept if stored_row.id_ == row_id]
+    if len(its_own) > 1:
+        return SEVERAL_OF_ID.format(
+            count=len(its_own), name=name, where="`stored`", id=row_id
+        )
+    return its_own[0] if its_own else NO_ROW_OF_ID.format(name=name, id=row_id)
+
+
+def _row_document(
+    row_class: type[ConfigurationModuleBase],
+    row: Mapping[str, object],
+    position: int,
+    stored: ConfigurationModuleBase | str | None,
+) -> JsonObject:
+    """``row_class.vco_document`` of *row*, the row at *position* of ``modules``.
+
+    *stored* is the stored row; or why the stored configuration has none for
+    this row; or None where no stored configuration was given. A refusal is
+    raised for the document: its path is from the document down. A mask
+    refused for want of a stored row says why the row has none and what to do
+    then (``MASK_IN_ROW``): the row's own refusal advises to give a stored
+    model, which the caller did.
+    """
+    kept = stored if isinstance(stored, ConfigurationModuleBase) else None
+    try:
+        return row_class.vco_document(row, stored=kept)
+    except NamedDocumentError as exc:
+        refused = exc
+    message = refused.message
+    if isinstance(stored, str) and refused.kind == "masked_secret":
+        # The row was read with no stored row, so its refusal is that of a
+        # document read without ``stored``, whatever mask it is.
+        message = MASK_IN_ROW.format(why=stored)
+    path = Path(("modules", position, *refused.path.parts))
+    # Raised outside the ``except`` block: one refusal, with nothing chained.
+    raise NamedDocumentError(message, path, refused.kind)
+
+
+def _row_documents(
+    rows: list[object],
+    classes: Mapping[str, type[ConfigurationModuleBase]],
+    stored: ConfigurationBase[Any] | None,
+) -> list[object]:
+    """The rows of a document's ``modules``, each as ``vco_document`` of its class.
+
+    *rows* is plain JSON. A row is read by the class its ``name`` has in
+    *classes*, with the row of *stored* that is its own (``_stored_row``); one
+    that is no object, or whose ``name`` no class has, is kept as it is.
+    """
+    kept: dict[str, list[ConfigurationModuleBase]] = {}
+    if stored is not None and stored.modules is not MISSING:
+        for stored_row in stored.modules:
+            kept.setdefault(stored_row.name, []).append(stored_row)
+    read = [_named_row(row, classes) for row in rows]
+    named: dict[str, list[dict[object, object]]] = {}
+    for name, row in filter(None, read):
+        named.setdefault(name, []).append(row)
+    documents: list[object] = []
+    for position, (given, found) in enumerate(zip(rows, read, strict=True)):
+        if found is None:
+            documents.append(given)
+            continue
+        name, row = found
+        its_row = None
+        if stored is not None:
+            its_row = _stored_row(name, row, named[name], kept.get(name, ()))
+        keyed = cast("Mapping[str, object]", row)
+        documents.append(_row_document(classes[name], keyed, position, its_row))
+    return documents
+
+
+def row_classes(
+    config: type[ConfigurationBase[Any]],
+) -> dict[str, type[ConfigurationModuleBase]]:
+    """Each module name with the class of the row *config* holds under it.
+
+    The class is that of the configuration's layer:
+    ``QosConfigurationModule[Edge]`` for ``EdgeConfiguration``. It is read from
+    the annotation of ``modules``, a list of ``AnyConfigurationModule`` of
+    that layer: each member of the alias, with the layer in place of the
+    alias's variable where the member depends on it, under each ``name`` it
+    takes.
+    """
+    held = cast("object", config.model_fields["modules"].annotation)
+    rows = cast("object", get_args(held)[0])
+    alias = cast("object", get_args(rows)[0])
+    layer = cast("tuple[object, ...]", get_args(alias))
+    value = cast("object", cast("TypeAliasType", get_origin(alias)).__value__)
+    union = cast("object", get_args(value)[0])
+    members = cast("tuple[type[ConfigurationModuleBase], ...]", get_args(union))
+    classes: dict[str, type[ConfigurationModuleBase]] = {}
+    for member in members:
+        row = member
+        if member.__pydantic_generic_metadata__["parameters"]:
+            row = member[layer]
+        names = get_args(cast("object", row.model_fields["name"].annotation))
+        for name in cast("tuple[str, ...]", names):
+            classes[name] = row
+    return classes
+
+
 # The configurations come after ``AnyConfigurationModule`` on purpose: a
 # parametrized base such as ``ConfigurationBase[Edge]`` takes its module list
 # from the alias when it is made, and one made before the alias exists would
@@ -502,6 +682,85 @@ class ConfigurationBase(VcoModel, Generic[L]):  # noqa: UP046 (one shared constr
     version: str | None | MISSING = MISSING
     is_staging: Tinyint | None | MISSING = MISSING
     modules: list[AnyConfigurationModule[L]] | MISSING = MISSING
+
+    @override
+    def named_dump(self) -> JsonObject:
+        """What a caller sees of the configuration, each row of ``modules`` included.
+
+        ``VcoModel.named_dump`` of the configuration's own fields, and under
+        ``modules`` each row as its own ``named_dump()``: by attribute names,
+        every secret masked. The rows are dumped one by one because the class
+        of a row, which says what its keys are and where its secrets are, is
+        known from its ``name`` alone.
+        """
+        named = super().named_dump()
+        if self.modules is not MISSING:
+            named["modules"] = [row.named_dump() for row in self.modules]
+        return named
+
+    @classmethod
+    @override
+    def vco_document(  # pyright: ignore[reportIncompatibleMethodOverride]  # the base's signature: the checker reads ``Self`` in a classmethod's parameter as each class
+        cls, data: Mapping[str, object], *, stored: Self | None = None
+    ) -> JsonObject:
+        """*data*, a configuration in attribute names, in the VCO's keys.
+
+        ``VcoModel.vco_document`` of the configuration's own fields. Each row
+        of ``modules`` is the ``vco_document`` of its own class, the one its
+        ``name`` has (``row_classes``), and its masks take their values from
+        the stored row that is its own, wherever either row is in its list.
+        That is the row of its ``name`` in *stored*; and where several rows
+        have the name, in the document or in *stored* (a repeated insert
+        leaves such rows), the one of them with its ``id_``. Among rows of one
+        name the ID is the row's identity: a named dump shows it, and a row
+        given the ``id_`` of another stored row of its name keeps that row's
+        secrets. A row that is no object, or whose ``name`` no class has, is
+        kept as given, and so is a ``modules`` that is no list: validation
+        refuses them.
+
+        A mask needs one stored row to take its value from, and a secret given
+        in full needs none. So a row is read with no stored row, and a mask in
+        it is refused (``NamedDocumentError`` of kind ``masked_secret``), where
+        *stored* has no row of its name; and among several rows of one name,
+        where the row gives no ``id_``, where no stored row has that ID, and
+        where two rows of the document give it or two of *stored* have it.
+        Position never says which stored row a row is. A row with no stored
+        row is a new one: with every secret in full it is taken as given.
+
+        A refusal in a row has its path from the document down
+        (``modules[#0].data. ...``, the row by its position in the document).
+        What JSON does not have raises ``TypeError`` wherever it is.
+        """
+        document = super().vco_document(data, stored=stored)
+        rows = document.get("modules")
+        if is_list(rows):
+            document["modules"] = _row_documents(rows, row_classes(cls), stored)
+        return document
+
+    @classmethod
+    @override
+    def named_place(cls, loc: Sequence[int | str]) -> Path:
+        """Where a named configuration has what validation places at *loc*.
+
+        ``VcoModel.named_place``, but for a place in a row of ``modules``.
+        Validation places that one below the row's ``name``, which says which
+        class the row is (``modules``, 0, ``deviceSettings``, ``data``, ...);
+        a named document has the row itself there, in the names of its own
+        class. So what is below the name is named by that class
+        (``row_classes``), and the name is left out:
+        ``modules[#0].data.segments[#0].bgp.neighbors[#0].neighbor_as``. A row
+        that is no object, or whose ``name`` no class has, is refused as a
+        whole, and its place is the row: ``modules[#3]``.
+        """
+        match tuple(loc):
+            case ("modules", position, str(name), *below):
+                row_class = row_classes(cls).get(name)
+                if row_class is not None:
+                    in_row = row_class.named_place(below)
+                    return Path(("modules", position, *in_row.parts))
+            case _:
+                pass
+        return super().named_place(loc)
 
     def _get_module(
         self, module_name: ConfigurationModuleName
@@ -932,4 +1191,5 @@ __all__ = [
     "UpdateConfigurationModuleResult",
     "WanConfigurationModule",
     "new_edge_module",
+    "row_classes",
 ]

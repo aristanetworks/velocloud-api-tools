@@ -98,6 +98,17 @@ segment resolver, and load it.
 Validators are registered explicitly: pass a `ValidatorRegistry` as
 `validator_registry=` to `ConfigPipeline` or `build_default_pipeline`, or
 register on `pipeline.validators`.
+A finding (`ValidationError`) names its module by its Python name in `module`,
+and its place in that module's data in `path`, a `Path` as a plan shows one:
+the built-in validators report a duplicate QoS rule name with `module`
+`business_policy` and a `path` such as `segments[Guest].rules[#1]`. A validator
+of your own passes the same: `module=` the Python name, or nothing for a
+finding in no module, and `path=Path(("lan", "networks"))` (from
+`pyvelo.core`), or `Path(())` for the whole module. `SaveValidationError`
+names each one as `business_policy segments[Guest].rules[#1]: <message>`, and
+one about a whole module by the module alone (`firewall: <message>`); a
+warning of a load or a save (`state.load_warnings`, `SaveResult.warnings`)
+has the finding's `module` and `path`.
 
 `save(state, unconditional=True)` writes a module that has no `version`. A
 module has none when it was built by hand, or read through a request that left
@@ -191,8 +202,8 @@ is taken as the delete done. `state.revert_module(name)` sends nothing, so it
 refuses such a module and names `pipeline.revert`. Each of these refusals
 starts with the module's python name (`business_policy: the VCO holds a module
 of this name ...`), and a place it names (`it differs at ...`, `it also holds
-...`) is shown as a plan shows a path; a row of refs is `refs <path>`, as a
-write error writes it (see "After a save").
+...`) is shown as a plan shows a path; a row of refs is written as a write
+error writes it (see "After a save").
 `revert` takes back edits, not what a save already did: a role step a save
 sent before it stopped (see "Hubs", "When a step fails") stays on the VCO, and
 a state whose device settings edits are taken back plans nothing that mends
@@ -238,15 +249,28 @@ A patch is strict and all or nothing:
 - A key that names no field raises, at every depth, and so do two keys that
   name one field (`rule_id` and `ruleId`). Keys that start with `_` are
   directives: `_op` and `_position`, on a list item only.
+- The text `"***"` as the whole value of a secret (a field the models mark
+  `Secret`) is the mask pyvelo shows in its place, and in a patch it means:
+  keep the stored secret. The patch plans no change for that field and
+  nothing is sent for it, so an item copied from a plan, an error or a
+  `named_dump()` can be given back as it is. Where no secret is stored to
+  keep, the patch raises `PatchError` of kind `masked_secret`, because the
+  mask would be written to the VCO as the secret: on a field that is unset,
+  and in anything the patch builds (an `add`, an item of a list value, a
+  sub-model that was unset). There, give the secret in full, or leave the
+  field out where it may be left out (the object is then built without it; a
+  secret the model requires, such as a WLAN `passphrase`, must be given). To
+  keep the secret of a stored item, change the item under its selector in
+  place of giving its list as a list value. See "The mask".
 - A hub is added to a `vpn` list (`hub_edges.vpn_hubs`,
   `edge_to_edge_detail.vpn_hubs`, `backhaul_edges`) or to a QoS rule's
-  `backhaulEdges` by its name, `{"+": add({"name": "Hub-A"})}`, or by its
-  logical ID, `{"+": add({"logicalId": "<logical ID>"})}` (in a rule,
-  `edgeLogicalId`): the other fields of the entry come from the Edge or the hub
+  `backhaul_edges` by its name, `{"+": add({"name": "Hub-A"})}`, or by its
+  logical ID, `{"+": add({"logical_id": "<logical ID>"})}` (in a rule,
+  `edge_logical_id`): the other fields of the entry come from the Edge or the hub
   cluster. A hub added to a rule must be saved first: see "Hubs".
 - A patch that cannot be applied raises `PatchError` (a `ValueError`). Its
   `path` is where in the patch it failed, its `message` the reason, and its
-  `kind` one of the thirteen values below, for a caller that reacts to the
+  `kind` one of the fourteen values below, for a caller that reacts to the
   cause. The path is written as pyvelo shows one (see "Paths"): an item the
   data has is named by what names it alone, whatever selector the patch
   used, so `{"segments": {"Guest": {"rules": {"#0": {"bogus": 1}}}}}` fails
@@ -279,6 +303,7 @@ A patch is strict and all or nothing:
 | `exists` | adds, or renames to, a key, alt key or value that is already there |
 | `segment_rule` | breaks a rule of the `segments` lists (below) |
 | `fixed_list` | edits a fixed part of a list whose entries, keys and order are fixed (the QoS `defaults` of a segment): adds, deletes, moves, renames or reorders an entry, or changes a field but `action` |
+| `masked_secret` | has the mask of a secret (`"***"`) where no secret is stored to keep: on a field that is unset, or in an object the patch builds |
 
 Every list has a kind, which says how its items are named:
 
@@ -698,6 +723,212 @@ patch replaces such a list whole. Whether a list has the item a path names is
 found when the patch is merged: a path to an item the list lacks raises
 `PatchError` of kind `no_item` at that item, `segments[Guest].rules[Nope]`.
 
+## Dumps
+
+A model is written as JSON, and read back from it, in one of two forms. Each
+form has its own pair of methods, and a document of one form is read by the
+method of its own pair:
+
+| Pair | Keys | Values | What it is |
+|---|---|---|---|
+| `model_dump()` and `model_validate()` | The VCO's (`md5Password`) | Complete, secrets included | What is stored and sent: a row as the VCO gave it, a payload, a module's `raw_data`. |
+| `named_dump()` and `named_validate()` | Python attribute names (`md5_password`), as a path and a patch have them | Complete but for secrets: the mask `"***"` stands in place of each | What a caller reads and edits: a document to print, to keep in a file, or to hand to a tool and take back. |
+
+The first pair is pydantic's. Every model has the second beside it (the
+methods are `VcoModel`'s, in `pyvelo.core`):
+
+```python
+from pyvelo.core import ConfigContext
+
+data = state.profile.device_settings
+named = data.named_dump()
+neighbor = named["segments"][0]["bgp"]["neighbors"][0]
+# {"neighbor_ip": "192.0.2.1", "neighbor_as": "65001", ...,
+#  "enable_md5": True, "md5_password": "***", ...}
+
+neighbor["neighbor_as"] = "65010"
+again = type(data).named_validate(
+    named, stored=data, context={"config_level": ConfigContext.PROFILE}
+)
+again.segments[0].bgp.neighbors[0].md5_password  # the password `data` holds
+```
+
+`named_dump()` is the model's `model_dump(mode="json")` with each key a model
+declares written as its attribute name, and with `"***"` (`HIDDEN`, in
+`pyvelo.core`) in place of the value of every field the models mark as a
+secret (`Secret`), whatever that value is: a text, an empty text, a list. It
+has the fields `model_dump` writes, so a model at a level (edge or profile)
+leaves out what that level does not have.
+
+`Model.named_validate(document, stored=model)` reads such a document, edited
+or not, and gives a new model. `stored` is the model the document was dumped
+from. It is not checked against the document: a mask takes whatever the model
+given holds at that place. Before anything is validated the document is put in
+the VCO's form: each attribute name becomes the VCO's key, and each mask is
+replaced by the value `stored` holds at the same place
+(`Model.vco_document(document, stored=model)` gives that document, not
+validated). Then it is validated as `model_validate` validates. So what a
+model keeps of its input is in the VCO's form: a module row read this way has
+the `raw_data` and the `raw_refs`, which a save builds its payload from, in
+the VCO's keys and with the secrets themselves, as the row read from the VCO's
+own JSON has. `named_validate` makes a model and changes no state; an edit of
+a loaded state goes through `apply`.
+
+`context` is pydantic's validation context, as `model_validate` takes it. A
+module row takes two things from it and from nowhere else: `{"refs_loaded":
+False}` for a row read without its refs, and `{"config_level": ...}` for the
+level of the models in it. Without a context the row is what `model_validate`
+makes without one: it counts as read with its refs. The example above reads a
+profile's model back, so it passes `{"config_level": ConfigContext.PROFILE}`:
+without it `again` would have no level, and its dumps would hold the fields a
+profile does not have (`routed_interfaces`, `loopback_interfaces`).
+
+`model_dump(by_alias=False)` writes attribute names too, and `model_validate`
+takes a field by either name, but the two are not a round trip. A module row
+keeps the JSON it was validated from, and nothing tells a document in
+attribute names from data the VCO stored: the row would keep the attribute
+names, and a save would send them to the VCO. A named dump given to
+`model_validate` is taken as stored data in the same way, so its attribute
+names and its masks would be saved as they are. `named_validate` is the only
+way to read a document in attribute names. It refuses a field named by the
+VCO's key, in a document of the VCO's form or among attribute names
+(`NamedDocumentError`, kind `vco_key`, at the field): it renames every
+attribute name it finds, and in a document of the VCO's that would rename a
+stored key that happens to be spelled like one. Give a document in the VCO's
+keys to `model_validate`. The one exception is an object that names a field
+twice, by the VCO's key and by its attribute name: the named dump of stored
+data that holds both keys has both, so `named_validate` keeps both as given.
+
+### The mask
+
+A mask in a document means: keep the value the stored model has at the same
+place. A secret written in full is taken as written, so a document changes a
+secret by giving the new one. The same place is:
+
+- of a field, that field;
+- of an entry of a map, the entry with the same key;
+- of an item of a keyed list, the item a save pairs it with: by its alt key
+  where the list has one, then by its key. An item that is moved keeps its
+  secrets, and so does one that is renamed in a list with an alt key (a BGP
+  neighbour, whose alt key is its `id_`);
+- of an item of a list without a key, the one stored item of that list that it
+  equals when the secrets of both are hidden. Position plays no part, so
+  items that are reordered, removed or added leave every other item its own
+  secrets. Stored items that are the same, secrets included, count as one.
+
+A mask with no stored value at its place is refused (`NamedDocumentError`,
+kind `masked_secret`), because it would be written to the VCO as the secret.
+The error's `path` is the secret's, in attribute names, with an item by its
+position in the document (`snmp.v3.users[#0].passphrase`). That is every mask
+of a document read without `stored`, a mask in an item or under a field the
+stored model lacks, and a mask in an item of a list without a key that equals
+no stored item, or several whose secrets differ. So:
+
+- **An edited item of a list without a key restates its secrets.** Once a
+  value of it is changed it equals no stored item, and each secret in it must
+  be written in full; so must those of an item that is new. The lists of the
+  device settings that hold secrets and have no key are the SNMP v3 users, the
+  keys of the NTP server, the subinterfaces of a routed interface and the
+  sites of a segment's cloud security service, and the rows of a ref (under
+  the `refs` of a device settings row, where each ref row's `data` is a
+  secret).
+- **A keyed item that is given what pairs another stored item is that other
+  item.** That is the other's key in a list with no alt key, and the other's
+  alt key in a list with one. A save pairs the two, so a mask in the item
+  takes the other item's secret. Write the secret in full when you give an
+  item a key, or an alt key, that another item had.
+- **A keyed list whose stored keys repeat is matched as a list without a key
+  is, all of it.** Its keys do not tell its items apart, so an edited item of
+  it restates its secrets even when its own key is unique.
+- **A mask written where the dump had none** follows the same rules: under a
+  field the stored model lacks it is refused, and in an item of a list without
+  a key it takes the secret of the stored item that the item then equals.
+- **The text `"***"` cannot be set as a secret through a named document or
+  a patch**: at a secret it is always the mask. Assign it to the model
+  instead. A stored secret that is itself the text `"***"` comes back as that
+  text, like any other stored value.
+- **A mask in a patch follows the same rule, on the loaded state.** As the
+  whole value of a secret it keeps what the item holds: `{"md5_password":
+  "***"}` on a stored BGP neighbour plans no change and sends nothing. The
+  stored value is the one of the item the patch names, so nothing is matched
+  by content. A mask with nothing stored to keep is refused (`PatchError`,
+  kind `masked_secret`, at the secret's path): on a field that is unset, and
+  in an `add`, an item of a list value or any other object the patch builds.
+  Give the secret in full there, or leave the field out where the model does
+  not require it.
+- **A mask in a value of another shape than the model declares is refused**:
+  in a list given where a map is declared, in a map given where a list is, in
+  one object given for a map. Nothing stored is at its place, and the shape
+  itself would be refused when the document is validated.
+- **Only a field the models mark is a secret.** The same text anywhere else is
+  data and is validated as given. A secret under a key the models do not know
+  is not masked by `named_dump` either: inside a field typed `dict[str, Any]`,
+  in the `refs` of a QoS row, in the data of a generic module (see "Scope and
+  data handling").
+
+### What a document holds
+
+- A document of either pair holds only what the models declare. A key of a
+  module's data that the models do not know is in neither dump, and a default
+  the VCO did not send is in both. So a row rebuilt through either pair
+  (`model_validate` of a `model_dump()`, `named_validate` of a `named_dump()`)
+  holds only the keys the models declare: its `raw_data` is the dump's, and a
+  save from it does not send a stored key the models do not know, with no
+  warning. A save from the state as read does send that key.
+  Keep the JSON rows, or `module.raw_data`, where the row as read matters (see
+  "What a save writes").
+- A named document is JSON. `named_validate` and `vco_document` read a mapping
+  as an object and a tuple as a list, and raise `TypeError` for anything else
+  JSON does not have (a set, a `UUID`, a model, `MISSING`, a key that is not
+  text), with the place and the type and no value: an attribute name or a mask
+  inside such a value would not be found, and would reach the VCO as given.
+  Write a `UUID` or a date as its text and a model as its `named_dump()`.
+- A document that does not validate raises `NamedDocumentError` of kind
+  `invalid_value`. Its message lists each place by attribute names with what
+  is wrong there (`segments[#0].bgp.neighbors[#0].neighbor_as: Input should be
+  a valid string`), and no value. No pydantic `ValidationError` is chained to
+  it: that error keeps its input, which by then holds the stored secrets.
+- A named dump keeps the VCO's keys where the models do not say what a key
+  is: for the keys of a map, which are data; under a key no model declares
+  (inside a field typed `dict[str, Any]`, say), with all below it; and below
+  a field whose model is declared behind a type alias, in a tuple of a fixed
+  length, or in a list or a map inside another. No model of a module's data
+  has a field of that last sort; the ones that do are requests and results of
+  the edge, metrics and monitoring calls (their filters, their sort order,
+  their time series, an edge's `ha`), and none of them holds a secret.
+  `named_validate` leaves the same keys as they are, so the two still agree.
+- A class that keeps the keys it does not know can store one field under two
+  keys (a segment's `routes` stored with both `icmpProbes` and `icmp_probes`).
+  Its named dump then holds both keys as stored, and `named_validate` reads
+  them back as they are. The field is the value under the VCO's key
+  (`icmpProbes`); the other is a stored key the models do not know, and an
+  edit of it changes nothing the models read.
+- A shown `deviceSettings:segment` ref row (under `refs.segment` of a device
+  settings row) does not show its `segmentId`, which is inside its `data`.
+- A whole configuration (`EdgeConfiguration`, `EnterpriseConfigurationProfile`)
+  is dumped and read row by row. Its named document holds each module row in
+  the same form: under `modules`, each row as its own `named_dump()`, by
+  attribute names and with every secret masked. `named_validate` reads each
+  row by the class its `name` has, and `stored=` is the configuration the
+  document was dumped from: the masks of a row take their values from the
+  stored row of the same name, wherever either row is in its list. Where
+  several rows have one name, in the document or in `stored` (a repeated
+  insert leaves such rows), a row's stored row is the one of that name with
+  its `id_`. There the ID is the row's identity: leave it as it was dumped,
+  because a row given the `id_` of another stored row of its name keeps that
+  row's secrets. A mask is refused (`masked_secret`) in a row that has no
+  stored row: one whose name the stored configuration lacks; and among
+  several rows of one name, one that gives no `id_`, one whose `id_` no
+  stored row of the name has, and each of two rows that give the same `id_`.
+  Such a row is a new one; write its secrets in full (in a device settings
+  row the `data` of each ref row is one). A refusal in a row has its path
+  from the document down, the row by its position
+  (`modules[#0].data.segments[#0].bgp.neighbors[#0].md5_password`). A value
+  that validation refuses in a row is listed at its place in the document in
+  the same way, by attribute names
+  (`modules[#0].data.segments[#0].bgp.neighbors[#0].neighbor_as: Input should
+  be a valid string`).
+
 ## What a save writes
 
 A save sends each changed module's `data` as it was read, with only your
@@ -855,11 +1086,18 @@ firewall: update
   and from how its changes paired the items of each list
   (`ModulePlan.paired_lists`), so a plan you keep while you edit further
   still names each item as it was then. `ModulePlan.shown_change(change)` is
-  one of those changes as `render()` shows it. `state.get_field_changes()`
+  one of those changes as `render()` shows it, with every secret in its values
+  as `"***"`; the change itself keeps them. `ModulePlan.ref_row_name(change)`
+  names a row of `ModulePlan.ref_changes` as its `refs` line does;
+  `ModulePlan.ref_change_of(entry)` is the row of `ref_changes` that a refs
+  entry of a write error is (None for a row the VCO added or dropped, and for
+  a row sent as read), and `ModulePlan.ref_entry(entry)` is the entry as the
+  error's message names it. `state.get_field_changes()`
   lists the same changes in the same names, through the same naming, so a
   line and its field change never differ: a `ConfigFieldChange` has the
   module's Python name as `module`, the line's path as `path`, `before` and
-  `after` with their keys by attribute name, and the items of a move, a place
+  `after` with their keys by attribute name and every secret as `"***"`, as
+  the line has them, and the items of a move, a place
   and an order entry's `before` and `after` named as the line names them.
 - The plan lists the modules in the order a save writes them. The device
   settings are written first, and the role steps right before them; in a save
@@ -965,8 +1203,8 @@ firewall: update
   that mend the first, each field by its attribute (it calls the fields above
   `route_policy`, `route_cfg.type_` and `route_cfg.backhaul_edges`), with the
   module they go to, and says that the others are mended the same way. `apply` accepts the edit, as for a reference. After
-  `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge2CloudRouteAction":
-  {"routeCfg": {"backhaulEdges": {"Hub-A": {"_op": "delete"}}}}}}}}}}` takes the
+  `{"segments": {"Guest": {"rules": {"Web": {"action": {"edge_to_cloud_route_action":
+  {"route_cfg": {"backhaul_edges": {"Hub-A": {"_op": "delete"}}}}}}}}}}` takes the
   only hub out of the rule `Web`, the error begins:
 
   ```text
@@ -1128,7 +1366,9 @@ firewall: update
   is a removal and an addition at that name (see "The patch format").
 - A cache of loaded modules must keep the JSON rows or `module.raw_data`. A
   `model_validate(module.model_dump())` round trip loses the raw snapshot, and
-  with it the "as read" guarantee above.
+  with it the "as read" guarantee above. So does a row read back from its
+  `named_dump()`: a document of either form holds only what the models declare
+  (see "Dumps").
 
 ## The effective view
 
@@ -1208,13 +1448,22 @@ firewall
 - A key no model declares is kept as the VCO writes it, after the parts that
   are named (`services.icmp`, `etm`, `qosClientConnector`, and the keys the
   composer adds to a rule, below). A key that holds a dot or a bracket is one
-  part, quoted (`services."x.y"`). A path the two documents hold in more than
-  one way, which only such a key can cause, is not named at all: it is the
+  part, quoted (`services."x.y"`). A path the two documents do not hold in
+  exactly one way is not named at all, and only such a key can cause that:
+  one that reads as no path (a key `[0]` of an object), or one that reads two
+  ways (a key `services.ssh` beside `services`). The path is then the
   comparison's own text as one quoted part, and its values are as the VCO
-  writes them.
+  writes them. In a module whose models mark a secret, each of those values is
+  `***` whole instead: nothing says which model reads the value, so nothing
+  says which of its keys is the secret.
 - The two values are JSON. An object has the keys its model declares by
   attribute name (`{"allow_selected_ip": []}`), at every depth; a key no model
-  declares, and a scalar, stay as the VCO writes them.
+  declares, and a scalar, stay as the VCO writes them. A secret is `***`, at
+  any depth: an object or a list that one side has and the other lacks is
+  shown whole, with each secret in it masked. So is a value of another kind
+  than the model declares there: a list where a map is declared, a map where
+  a list is, a list for one object ("Scope and data handling" has the one
+  shape this does not reach).
 
 These paths say where the view and the VCO differ. The view is not a layer, so
 none of them is promised to be a path `apply` takes.
@@ -1256,7 +1505,10 @@ message name the module by its python name), not a finding.
 
 The call does not ask the VCO for encrypted keys (`encryptKeys`), which a VCO
 may refuse. A secret is never compared: a path that holds one is `ignored` with
-that reason, and its value is shown as `***`.
+that reason, and its value is shown as `***`. A secret inside a value of
+another entry is shown as `***` too, by the same marks as `named_dump()`
+(see "Dumps"). The firewall and QoS, the two modules compared today, mark
+none.
 
 When a rule of the view names a security service group
 (`securityServiceGroup`), the composer adds three keys to it that neither layer
@@ -1442,7 +1694,7 @@ edit needs, then writes the module.
                           "enabled": True,
                           "vpn_hubs": {"+": add({"name": "Hub-A"})},
                       },
-                      "backhaul_edges": {"+": add({"logicalId": "<logical ID>"})},
+                      "backhaul_edges": {"+": add({"logical_id": "<logical ID>"})},
                   }
               }
           }
@@ -1601,14 +1853,14 @@ edit needs, then writes the module.
   warning per hub and segment to `SaveResult.warnings`, naming the Edges, and
   goes on; with `on_hub_in_use="refuse"` it raises `HubListError` (`edges` holds
   their IDs and names) before any step is sent. A dry run does the same.
-- **A hub in a QoS rule.** A rule's `edge2EdgeRouteAction.routeCfg.backhaulEdges`
-  names its hubs, by name or `edgeLogicalId`, on a profile and on an edge. `apply`
-  gives the entry its `logicalId`, the hub's service for the profile and the
+- **A hub in a QoS rule.** A rule's `edge_to_edge_route_action.route_cfg.backhaul_edges`
+  names its hubs, by name or `edge_logical_id`, on a profile and on an edge. `apply`
+  gives the entry its `logical_id`, the hub's service for the profile and the
   rule's segment, and the save adds the `deviceSettings:backHaulEdge` row that
   points at it. A hub that is not saved there has no service: it is saved first
   and the rule after, in two saves, and `apply` raises `HubServiceNotFoundError`
   for a hub added to the lists in the same unsaved edit, with the patch that
-  adds it to both lists. An entry built by assignment without its `logicalId` raises the same
+  adds it to both lists. An entry built by assignment without its `logical_id` raises the same
   error at `plan()`. The rule's hub must be in the segment's `backhaul_edges`,
   and a value that names a segment or a hub the configuration does not have is a
   `DanglingReferenceError` (see "What a save writes"). Taking a hub that a rule
@@ -1818,8 +2070,8 @@ is any difference in the rows of the refs the VCO's own processors manage.
 | `stated` | on `ConfigConflictError`: whether the VCO said it refused the version, or the save inferred it |
 | `sent` | on `ConfigConflictError`: False when nothing was sent, because the version read before a write found the module changed (or gone): a write that carries refs, or one after a profile's device settings, where a path you edited was also changed |
 | `completed` | the writes of the same save before this one, which are stored |
-| `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)` |
-| `not_redone(include_clashes=False)` | the lost edits that patch leaves out |
+| `redo_patch(include_clashes=False)` | the patch that redoes the lost edits on `module`, for `apply(state, module=error.module_name, patch=...)`: every field by its attribute name, every stored item by the name the stored list shows it by, the values complete |
+| `not_redone(include_clashes=False)` | the lost edits that patch leaves out, each as the message shows it, a secret and each value of a ref row as `"***"` |
 
 A planned change counts as stored when the VCO holds the value you meant,
 whoever put it there: an edit that another writer made identically is under
@@ -1828,7 +2080,10 @@ whoever put it there: an edit that another writer made identically is under
 The entries are `PlannedChange` and `ServerChange`, which `pyvelo.config`
 exports (they are defined in `pyvelo.core.response_check`). An entry is as the
 check made it: its `path` names a field by the VCO's key and an item by its
-key, and its values are as stored. For a lost or stored edit,
+key, and its values are as stored. The entries of `not_redone()` alone are as
+the message shows them (below), and a secret among their values is `"***"`, as
+in the message, and so is each value of a ref row: `lost_edits` holds the
+secret, and `redo_patch()` writes it in full. For a lost or stored edit,
 `error.plan.named(change.path, removed=change.intended is MISSING)` is the path
 the message shows; `change.python_path(type(data))`, with `data` the module's
 data (`state.module("firewall").data`), renames the fields only, and keeps each
@@ -1864,11 +2119,17 @@ module has keeps the key it has there, or its position there
 in its own line and in the order of its list (`lan.networks: read ["Users",
 "Voice", "Guests"], stored ["#0", "Guests", "Users", "Voice"]`). A key the
 model does not declare is kept as stored
-(`segments[Guest].rules[Web].match.serverAdded`). A row of refs
-is `refs <path>`, the ref's name and the row's identity as stored
-(`refs "deviceSettings:backHaulEdge"[<logical ID>,<segment object ID>]`), and
-its values are shown as `"***"`. `written before this one: business_policy
-(update)` names the earlier writes of the save. An error made without a plan
+(`segments[Guest].rules[Web].match.serverAdded`). A row of refs your plan
+adds or removes is named as the plan's line for it names it, then the row's
+identity as that line has it
+(`refs deviceSettings:backHaulEdge (Guest) <logical ID>`, a provider's row by
+the provider's field: `refs segments[Guest].dns.primary_provider.service
+<logical ID>`). Any other row of refs (one the VCO added or dropped on its own,
+and one sent as read that the VCO did not keep) is `refs <path>`, the ref's
+name and the row's identity as stored, with the segment by its logical ID
+(`refs "deviceSettings:backHaulEdge"[<logical ID>,<segment's logical ID>]`).
+The values of a row of refs are shown as `"***"`. `written before this one:
+business_policy (update)` names the earlier writes of the save. An error made without a plan
 has nothing to name an item by, and keeps each path as the check wrote it.
 
 The message shows at most 20 entries of each list and says how many more there
@@ -1896,7 +2157,24 @@ except (ConfigConflictError, WriteNotAppliedError) as error:
 ```
 
 The patch puts an added item back in its place, as an `add`, and makes a lost
-order again, and it names each item as the stored list names it. An item you
+order again. It is written in the names the message uses: every field is under
+its attribute name, in a path and in the body of an added item or of an object
+set whole, and every stored item is under the name the stored list shows it by
+(its label, else its key, else its alt key, else its position), so a hub is
+`Hub-A`, a network its name, and a firewall rule that shares its name with
+another its logical ID. The names are those of `error.module` as it is when you call
+`redo_patch()`. Two kinds of item are under the plan's key for them instead: an
+item the patch itself adds, which no stored item names (a network added with
+the VLAN ID 40 is `"40"`, though the plan's text shows it by its name), and a
+segment of which nothing is stored, with every item in it (a lost added
+segment named `4` is `"4"` and its rules are under it, also where a stored
+segment has the ID 4). A stored item whose name is the selector of one of
+those in the same list stays under its key or position, so one patch may name
+items both ways: beside that added network, a
+stored network named `40` with the VLAN ID 10 is `"10"`, since under one
+selector the two would be one entry and `apply` would set your edit of the
+stored network on the new one. The values are complete, a
+secret too, since the patch is what you send back. An item you
 added is added again, never set on an item another writer put in its place.
 The exception is an item you deleted and added again under its key, while the
 module as stored still holds the item: `redo_patch()` does not carry that edit
@@ -1908,8 +2186,9 @@ as stored, and save. The
 patch leaves out a clash, because redoing one overwrites what another writer
 stored there; `error.redo_patch(include_clashes=True)` redoes those too.
 A lost DNS or authentication provider (a ref row of a field that stands for
-it) is redone by setting the field again, in the segment as the stored list
-names it: `{"segments": {"Global Segment": {"dns": {"primaryProvider":
+it) is redone by setting the field again, in the segment under the selector
+the patch has for it (its name, or the key kept as above):
+`{"segments": {"Global Segment": {"dns": {"primary_provider":
 {"service": "<logical ID>"}}}}}`, or `null` for a provider you cleared.
 A lost CSS provider is redone the same way, by its logical ID, or by `""` for
 one you cleared; its ref row is still listed in `not_redone()`, although the
@@ -1920,7 +2199,12 @@ whose segment is no longer stored or cannot be told from another by its
 identity (the segment is found by its ID, never by its name), and an edit that
 no patch can make or whose item is no longer stored or cannot be named. An edit
 at a key the VCO does not know, which a write drops, is neither redone nor
-listed. Check it before you save. In a rule list the first match decides, so check the order with
+listed. Each entry is a copy of its lost edit as the message shows it, in the
+order of `lost_edits`: its path is the one of its line, which `apply` takes,
+and an object among its values has its keys by attribute name. For the values
+as stored, and for `clash`, read the entry of `lost_edits`. A ref row keeps
+the path of its entry in `lost_edits`, and each value it has is `"***"` (one
+it lacks stays `MISSING`), as its line shows it. Check the list before you save. In a rule list the first match decides, so check the order with
 `state.plan().render()` too. `apply` can still refuse the patch, changing
 nothing, where the stored data no longer takes it (a rename to a name another
 writer gave an item, for example), and where the lost edit was made by assigning
@@ -2060,9 +2344,9 @@ Known limits:
   (`Module 'business_policy' not found in configuration`). So do the errors
   of a write that is not stored as planned (`Configuration module 11
   (business_policy): 3 of 4 planned changes are not stored as sent`), whose
-  `module_name` holds that name, as `SaveStepError.module_name` does. The
-  low-level `write_module` keeps the VCO's name in its refusal of a plan made
-  for another module (`the plan is for QOS, not firewall`).
+  `module_name` holds that name, as `SaveStepError.module_name` does. So does
+  the low-level `write_module`'s refusal of a plan made for another module
+  (`the plan is for business_policy, not firewall`).
 - A profile's segment is assigned with `assign_segment` or an `add`, but not
   removed: an edit that removes a segment the device settings module has
   raises `SegmentSetError` (a patch: `PatchError`), and only an orphan, a QoS
@@ -2096,27 +2380,69 @@ Known limits:
   reports no violations. Other registered validators cover specific structural
   or domain checks; they do not guarantee that every patch is valid for a live VCO.
   A validator reports on the whole state, so an error in a module the save does
-  not write blocks the save too; the path of the error names the module.
-- `ConfigState`, the module objects, field changes (`get_field_changes`),
-  validation messages, and the change objects of a plan, of a `SaveResult` and
-  of a write error (`before`, `after`, `as_read`, `intended`, `stored`) hold
-  complete configuration values, including addresses and configuration
-  secrets. So does a patch from `redo_patch()`. Redact them before logging,
-  sharing, or committing exports. This library does not persist configuration
-  automatically.
-- Three kinds of text leave secrets out. `render()` of a plan and the message
-  of a write error (`str(error)`) show `"***"` in place of the value of every
-  field the models mark as a secret (`Secret`, in `pyvelo.core`: passwords,
-  pre-shared keys, SNMP communities, a WAN network's ISP key), and in place of a ref row. `repr()` of a
-  plan or of a write holds no values, and `repr()` of a `SaveResult` holds
-  neither module data nor the changes it reports, only their number per module
-  (it still holds the validators' messages). A response that fails to parse
-  raises pydantic's `ValidationError` without the input in its text;
-  `error.errors()` still has it. Nothing else is hidden. A secret is printed
-  as it is in two places: under a key the models do not know, which includes
-  everything inside a field typed `dict[str, Any]` (`EdgeZscaler.deployment`,
-  a WAN link's `private_network`), and in the data of a module whose data is
-  not a model (a generic module: `analyticsSettings`, `atpMetadata`).
+  not write blocks the save too; the error names the module (`module`) and
+  the place (`path`).
+- What is in the VCO's form holds complete configuration values, including
+  addresses and configuration secrets: the save and the redo read it. That is
+  `ConfigState` and the module objects, whose `repr()` and `str()` print
+  every value as well; a model's `model_dump()`; a module's `raw_data` and
+  `raw_refs`; a plan's `ModulePlan.data`, `.changes` (each change's `before`
+  and `after`), `.refs` and `.ref_changes` (each `RefChange.row` is the whole
+  row); the change lists of a `SaveResult` and of its writes, and of a write
+  error (`lost_edits`, `applied`, `left_out`, `server_changes`: their
+  `as_read`, `intended` and `stored`); the rows of a `RefsDroppedError`'s
+  `refs_as_read`; and a patch from `redo_patch()`. Redact them before
+  logging, sharing, or committing exports. This library does not persist
+  configuration automatically.
+- What pyvelo shows hides the value of each field the models mark as a secret
+  (`Secret`, in `pyvelo.core`: passwords, pre-shared keys, SNMP communities, a
+  WAN network's ISP key, the `data` of a device settings ref row), with
+  `"***"` in its place, at any depth of a value. That is the text of a plan
+  (`render()`), whose line for a ref row it adds or removes gives the row's
+  name and identity and nothing else of the row (`+ refs
+  deviceSettings:segment: 2`); the message of a write error (`str(error)`,
+  `render()`), in which each value of a ref row is `"***"` whole; the field
+  changes (`get_field_changes`) and `ModulePlan.shown_change`; the entries
+  of a write error's
+  `not_redone()`, in which each value of a ref row is `"***"`, as in the
+  message; the two values of each entry of `compare_effective` (see "The
+  effective view"); and a model's `named_dump()`, a configuration's too, each
+  row by its own class (see "Dumps"). A write error built by hand without its
+  plan (pyvelo builds none that has lost edits) has no model to find a secret
+  by: its message and `not_redone()` show the values of its data entries as
+  they are, and those of a ref row as `"***"`. Outside what is in the VCO's
+  form and the three places at the end of this point, nothing else pyvelo
+  prints holds the value of such a field. `repr()` of a plan or of a write
+  holds no values, `repr()` of a write error its first line only, and `repr()`
+  of a `SaveResult` neither module data nor the changes it reports, only their
+  number per module (it still holds the validators' messages). A `PatchError`
+  and its cause quote no value of the patch, and the other refusals
+  (`LossyFieldError`, `LayerNotSavedError`, `DetachedObjectError`,
+  `FixedListError`, the hub and segment errors) give paths and names. A plan's
+  warnings, a save's warnings and the validators' messages hold names, keys,
+  IDs and addresses (a network that overlaps another is named with its
+  address), and no field marked a secret is the key, the alt key or the label
+  of a list. A response that fails to parse raises pydantic's
+  `ValidationError` without the input in its text; `error.errors()` still has
+  it. A secret is printed as it is in three places: under a key the models do
+  not know, which includes everything inside a field typed `dict[str, Any]`
+  (`EdgeZscaler.deployment`, a WAN link's `private_network`); in the data of a
+  module whose data is not a model (a generic module: `analyticsSettings`,
+  `atpMetadata`); and in one shape of an answer of the VCO that is not what
+  the models declare (the next point). `VcoApiError` and `VcoOperationError`
+  print the VCO's own error data as the VCO sent it, and `VcoHttpError` the
+  first 500 characters of the VCO's answer (`body`; `text` holds all of it):
+  pyvelo does not change them.
+- A value of another shape than the models declare, which the VCO's own
+  answer can hold and the effective comparison then shows, is read both as an
+  object of the model declared there and as the field its key names, and a
+  secret under either reading is hidden. That covers a list where a map of
+  objects is declared, a map where only a list is, a list where one object
+  is, and one object where a map is, for each key of it that holds a text, a
+  number or a list. One shape is not reached: an object under a key of a map
+  is always an entry of the map, since that is what the models declare, so
+  where the VCO gives one object in place of a map of them, a secret below an
+  object of it is hidden only if the entry's model marks that key as well.
 - Keep API tokens and environment files outside version control. TLS verification
   uses the SDK default. Tests use synthetic fixtures and do not require a live VCO.
 

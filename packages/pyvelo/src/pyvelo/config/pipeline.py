@@ -3103,12 +3103,13 @@ def _versioned(
 
 
 def _validation_error_to_warning(err: ValidatorError) -> ValidationWarning:
-    """Convert a ValidationError to a ValidationWarning for load-time use."""
+    """A validator's finding as a warning of a load or a save, at its place."""
     return ValidationWarning(
         path=err.path,
         message=err.message,
         code=err.code,
         severity=err.severity,
+        module=err.module,
     )
 
 
@@ -3216,9 +3217,10 @@ def _require_the_states(
     if more:
         # Named in the plan's data: a key the model does not declare, and an
         # item only the stored module has, keep the part they are written with.
-        # A refs entry is written as a write error writes it.
+        # A refs entry is written as a write error writes it; a server change is
+        # no row of the plan, so it keeps its path.
         paths = [
-            f"refs {change.path}"
+            plan.ref_entry(change)
             if change.part == "refs"
             else str(plan.named(change.path))
             for change in more
@@ -3259,13 +3261,15 @@ def _how_it_differs(error: ModuleWriteError, plan: ModulePlan) -> str:
 
     The places it differs at are shown as *plan*, which holds the state's
     module, names them: an item the plan removes in the data as read, any
-    other in the data as planned. The path of a refs entry is no path of the
-    data: it is kept, with ``refs`` before it, as a write error writes it.
+    other in the data as planned. A refs entry is written as a write error
+    writes it (``ModulePlan.ref_entry``): a row the plan adds or removes as
+    the plan's line names it, then its identity; any other with ``refs``
+    before its path, which is no path of the data.
     """
     if isinstance(error, WriteOutcomeUnknownError):
         return error.detail
     paths = [
-        f"refs {change.path}"
+        plan.ref_entry(change)
         if change.part == "refs"
         else str(plan.named(change.path, removed=change.intended is MISSING))
         for change in error.lost_edits

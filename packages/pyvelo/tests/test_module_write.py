@@ -2120,7 +2120,9 @@ def test_a_rule_deleted_and_added_again_is_not_rebased_onto_a_changed_module() -
         (AT_A, True)
     ]
     assert error.redo_patch() == {}
-    assert error.not_redone() == error.lost_edits
+    assert [(str(c.path), c.as_read is MISSING) for c in error.not_redone()] == [
+        (AT_A, True)
+    ]
     # The way on: the delete and the add again, on the module as stored.
     _delete_and_add_again(fresh, DENY)
     again = plan_module(fresh, level=EDGE)

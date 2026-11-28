@@ -498,7 +498,9 @@ async def test_redo_patch_leaves_a_clash_out_unless_asked() -> None:
         _ = await pipeline.save(state)
 
     error = exc.value
-    assert paths(error.not_redone()) == [f"{OUTBOUND}[allow-web].match.dport_high"]
+    assert paths(error.not_redone()) == [
+        f"{OUTBOUND}[allow-web].match.destination_port_high"
+    ]
     assert list(outbound_ops(error.redo_patch())) == ["block-ssh"]
     assert error.not_redone(include_clashes=True) == ()
     with_clashes = outbound_ops(error.redo_patch(include_clashes=True))
@@ -514,7 +516,8 @@ async def test_redo_patch_leaves_a_clash_out_unless_asked() -> None:
 
 
 async def test_redo_patch_names_an_item_as_the_stored_list_does() -> None:
-    # Two rules share a name, so each is named by its position.
+    # Two rules share a name, so the edit names one by its position, and the
+    # stored list shows it by its logical ID.
     raw = firewall(
         fw_rule("d", ruleLogicalId="l1"),
         fw_rule("d", ruleLogicalId="l2"),
@@ -541,7 +544,7 @@ async def test_redo_patch_names_an_item_as_the_stored_list_does() -> None:
 
     error = exc.value
     assert paths(error.lost_edits) == [f"{OUTBOUND}[#1].loggingEnabled"]
-    assert outbound_ops(error.redo_patch()) == {"#2": {"logging_enabled": True}}
+    assert outbound_ops(error.redo_patch()) == {"l2": {"logging_enabled": True}}
     _ = await pipeline.apply(state, module=error.module_name, patch=error.redo_patch())
     _ = await pipeline.save(state)
     assert [

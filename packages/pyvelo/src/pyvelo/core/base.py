@@ -4,6 +4,8 @@ Provides:
 - VcoModel base class with compact and context-aware serialization
 - ``VcoModel.merge_patch``: recursive merge of a partial dict into a model
 - ``VcoModel.mark_detached``: a model a write replaced refuses edits
+- ``VcoModel.named_dump`` and ``VcoModel.named_validate``: the document a
+  caller sees (attribute names, secrets masked) and the way back from it
 - ContextView / ContextFieldInfo for field metadata introspection
 - JsonRpc request/response/error models
 - Pagination, API filters, and utility types
@@ -27,6 +29,7 @@ patch
 """
 
 # merge_patch imports merge.py inside the method; merge.py imports this module.
+# So do the methods of the named pair with names.py, secrets.py and documents.py.
 # _raise_detached imports pyvelo.client.exceptions, which imports pyvelo.core.
 # pyright: reportImportCycles=false
 
@@ -36,7 +39,15 @@ import datetime as dt
 import functools
 import sys
 import types
-from collections.abc import Callable, Collection, Hashable, Iterable, Iterator, Mapping
+from collections.abc import (
+    Callable,
+    Collection,
+    Hashable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from typing import (
@@ -44,12 +55,14 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Final,
     Literal,
     Never,
     Protocol,
     Self,
     TypeIs,
     Union,  # pyright: ignore[reportDeprecated]
+    cast,
     get_args,
     get_origin,
     override,
@@ -70,6 +83,7 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     Tag,
     TypeAdapter,
+    ValidationError,
     model_serializer,
 )
 from pydantic.alias_generators import to_camel
@@ -92,6 +106,8 @@ from .owned import Owned, unwrap
 
 if TYPE_CHECKING:
     from pydantic.fields import FieldInfo
+
+    from .rebase import Path
 
 type JsonObject = dict[str, object]
 """A JSON object: a merge patch, a compact dump, a pydantic context, ..."""
@@ -184,6 +200,78 @@ def same_json(a: object, b: object) -> bool:
 
 def _is_mapping(value: object) -> TypeIs[Mapping[object, object]]:
     return isinstance(value, Mapping)
+
+
+_NOT_JSON: Final = (
+    "a named document is JSON (an object, a list, text, a number, true, false or "
+    "null), and this holds a {what} of type {type}. Only JSON is read: an "
+    "attribute name or a mask inside anything else would not be found, and would "
+    "reach the VCO as it is given. Write the value as JSON has it: a UUID or a "
+    "date as its text, a model as its named_dump(), the key of an object as text. "
+    "A document that went through json.loads(json.dumps(...)) is plain JSON."
+)
+"""What refuses a named document that holds what JSON does not have."""
+
+_INVALID_DOCUMENT: Final = (
+    "this document is not a valid {model}: {lines}. No model is made of it: a "
+    "value the model does not take would be kept as given, and a save would send "
+    "it to the VCO. Each place is named by its attribute names, as the document "
+    "has them; correct the value there and read the document again."
+)
+"""What refuses a named document that does not validate."""
+
+
+def _not_json(what: str, value: object, parts: tuple[str | int, ...]) -> TypeError:
+    """The refusal of *value*, a *what* (key or value) at *parts* of a document.
+
+    It names the place and the type, and quotes no value.
+    """
+    from .rebase import Path  # noqa: PLC0415 (rebase imports this module)
+
+    message = _NOT_JSON.format(what=what, type=type(value).__name__)
+    return TypeError(f"{Path(parts)}: {message}" if parts else message)
+
+
+def plain_json(
+    value: object,
+    parts: tuple[str | int, ...] = (),
+    *,
+    loaded: Callable[[object], TypeError] | None = None,
+) -> object:
+    """*value*, a named document or what it holds at *parts*, as plain JSON.
+
+    The one check of what JSON has. A mapping becomes a ``dict`` and a list or
+    a tuple a ``list``, at every depth, so the containers of the result are
+    those ``json.loads`` gives, and none is shared with *value*. ``TypeError``
+    for a key that is no text and for a value JSON does not have (a set, a
+    UUID, a model, ``MISSING``).
+
+    *loaded* is for a value that must be what ``json.loads`` gives already
+    (``restore_secrets`` takes one): nothing is then read as something else.
+    A tuple and a mapping that is no ``dict`` are refused as any other value
+    JSON does not have is, with the error *loaded* makes of the value, and
+    the keys of a ``dict`` are kept as they are.
+    """
+    exact = loaded is not None
+    if is_dict(value) or (not exact and _is_mapping(value)):
+        plain: dict[object, object] = {}
+        for key, item in value.items():
+            if isinstance(key, str):
+                below = (*parts, key)
+            elif exact:
+                below = parts
+            else:
+                raise _not_json("key", key, parts)
+            plain[key] = plain_json(item, below, loaded=loaded)
+        return plain
+    if isinstance(value, list) or (not exact and isinstance(value, tuple)):
+        items = cast("list[object] | tuple[object, ...]", value)
+        return [
+            plain_json(item, (*parts, n), loaded=loaded) for n, item in enumerate(items)
+        ]
+    if value is None or isinstance(value, (str, int, float)):
+        return value
+    raise _not_json("value", value, parts) if loaded is None else loaded(value)
 
 
 def _is_vco_model_type(tp: object) -> TypeIs[type[VcoModel]]:
@@ -869,6 +957,125 @@ class VcoModel(BaseModel):
         del by_alias, compact_value
         return dumped
 
+    def named_dump(self) -> JsonObject:
+        """What a caller sees: each declared key by attribute name, every secret masked.
+
+        ``model_dump`` is the VCO's form: its keys, with complete values. This
+        is the same document as pyvelo shows it (``shown_value``): it has the
+        fields ``model_dump(mode="json")`` writes at the model's level, each
+        key a class declares is the attribute name, and the mask ``"***"``
+        stands in place of the value of every field marked ``Secret``. The
+        keys of a map, a key no class declares and all below a field that
+        ``named_value`` does not read are kept as the VCO has them.
+
+        ``named_validate`` reads the document back, edited or not, with this
+        model as its ``stored``.
+        """
+        from .names import shown_value  # noqa: PLC0415 (names imports this module)
+
+        wire = self.model_dump(mode="json", by_alias=True)
+        return cast("JsonObject", shown_value(wire, type(self)))
+
+    @classmethod
+    def vco_document(
+        cls, data: Mapping[str, object], *, stored: Self | None = None
+    ) -> JsonObject:
+        """*data*, a document in attribute names, in the VCO's keys, its masks restored.
+
+        The document ``named_validate`` validates: what ``model_dump`` of the
+        model would be. Each attribute name is the key the VCO has for it
+        (``vco_keys``, which refuses a key of the VCO's form), and each mask
+        is replaced by the value *stored* holds at the same place
+        (``restore_secrets``, with the wire dump of *stored*; it says what the
+        same place is). A secret given in full is taken as given. A key of
+        the VCO's form and a mask with no stored value at its place raise
+        ``NamedDocumentError``. Nothing is validated.
+
+        *data* is JSON: a mapping is read as an object and a tuple as a list,
+        and anything else JSON does not have raises ``TypeError``, which names
+        the place and quotes no value. The result is made of ``dict`` and
+        ``list`` alone, shares none with *data* or with *stored*, and neither
+        is changed.
+        """
+        from .names import vco_keys  # noqa: PLC0415 (names imports this module)
+        from .secrets import restore_secrets  # noqa: PLC0415 (secrets imports this module)
+
+        kept: object = MISSING
+        if stored is not None:
+            kept = stored.model_dump(mode="json", by_alias=True)
+        document = vco_keys(plain_json(data), cls)
+        return cast("JsonObject", restore_secrets(cls, document, kept))
+
+    @classmethod
+    def named_validate(
+        cls,
+        data: Mapping[str, object],
+        *,
+        stored: Self | None = None,
+        context: Mapping[str, object] | None = None,
+    ) -> Self:
+        """The model of *data*, a document in attribute names (``named_dump``'s form).
+
+        ``model_validate`` of ``vco_document(data, stored=stored)``, with
+        *context* as its validation context. The keys are converted and the
+        masks restored before anything is validated, so what a model keeps of
+        its input (the ``raw_data`` and ``raw_refs`` of a module row, which a
+        save sends) is in the VCO's keys with the complete secrets, as when
+        the row is validated from the VCO's own JSON.
+
+        A row rebuilt this way, as one rebuilt from its ``model_dump``, holds
+        only the keys the models declare: a save from it does not send a
+        stored key the models do not know, which a save from the state as
+        read does send.
+
+        *stored* is the model *data* was dumped from: each mask in *data*
+        keeps the value *stored* has at the same place. Without it a document
+        that holds a mask is refused. Raises ``NamedDocumentError``: of kind
+        ``vco_key`` or ``masked_secret`` as ``vco_document`` does, and of kind
+        ``invalid_value`` for a document that does not validate, each place as
+        *data* has it (``named_place``). No pydantic error is chained to that
+        one: its ``errors()`` hold the input, which after the restore holds
+        the stored secrets.
+        """
+        from .documents import NamedDocumentError  # noqa: PLC0415 (documents imports this module, through rebase)
+        from .merge import placed_lines  # noqa: PLC0415 (merge imports this module)
+        from .rebase import Path  # noqa: PLC0415 (rebase imports this module)
+
+        document = cls.vco_document(data, stored=stored)
+        try:
+            return cls.model_validate(document, context=context)
+        except ValidationError as exc:
+            # Where each error is and what it says; its input is left behind.
+            errors = [
+                (error["loc"], error["msg"]) for error in exc.errors(include_url=False)
+            ]
+        # The places are named and the refusal raised outside the ``except``
+        # block, so the pydantic error is neither the cause nor the context of
+        # this one, nor of anything ``named_place`` raises.
+        lines = placed_lines((cls.named_place(loc), text) for loc, text in errors)
+        message = _INVALID_DOCUMENT.format(model=cls.__name__, lines=lines)
+        raise NamedDocumentError(message, Path(()), "invalid_value")
+
+    @classmethod
+    def named_place(cls, loc: Sequence[int | str]) -> Path:
+        """Where a named document of this class has what validation places at *loc*.
+
+        *loc* is the ``loc`` of one error of the ``ValidationError`` that
+        ``model_validate`` raises for a document of this class: a place in the
+        VCO's form. The result is the same place as ``named_dump`` writes it
+        and ``named_validate`` reads it, which is how ``named_validate`` names
+        each value it refuses: every field by its attribute name, an item by
+        its position (``python_place``).
+
+        A class whose named document is not its ``model_dump`` renamed field
+        by field overrides this beside ``named_dump`` and ``vco_document``, so
+        that the three agree: a configuration does, for the rows of its
+        ``modules``.
+        """
+        from .merge import python_place  # noqa: PLC0415 (merge imports this module)
+
+        return python_place(loc, (cls,))
+
     @classmethod
     def compact_load(cls, data: Mapping[str, object]) -> Self:
         """Hydrate a model from compact form, filling defaults."""
@@ -928,6 +1135,14 @@ class VcoModel(BaseModel):
           except that a field whose type includes both is ``None`` there:
           leaving the key out leaves it unset, and the item's own JSON dump
           writes ``null`` for ``None``;
+        - the mask ``"***"`` (``HIDDEN``), on a field marked ``Secret``: keeps
+          the stored value, as it does in a named document. The field is left
+          as it is and nothing is planned for it. Where nothing is stored to
+          keep (the field is unset, or the patch builds the model: an
+          ``add``, an item of a list value, a sub-model that was unset) it
+          raises ``PatchError`` of kind ``masked_secret``, since the mask
+          would be written to the VCO as the secret: give the secret in
+          full, or leave the key out;
         - anything else: replaces the value.
 
         **Inheritable fields.** On an edge layer (``Data[Edge]``) an

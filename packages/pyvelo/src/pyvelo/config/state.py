@@ -82,7 +82,7 @@ from pyvelo.core.identity import (
     SegmentIdentity,
 )
 from pyvelo.core.layers import Edge, Effective, Profile
-from pyvelo.core.names import ChangeNames, named_path, named_value
+from pyvelo.core.names import ChangeNames, named_path, shown_value
 from pyvelo.core.rebase import (
     ItemMove,
     ItemPlace,
@@ -119,7 +119,9 @@ class ConfigFieldChange:
     segment added to a profile module is at the segment as ``ModulePlan.named``
     shows it, with the entry as written in attribute names; a provider is at
     the owner's field as ``named`` shows it, with logical IDs as its values.
-    Each names the module by its python name.
+    Each names the module by its python name. A secret is ``"***"`` in its
+    values, at any depth, as in the plan's text: the plan's ``changes`` keep
+    the values a save writes.
 
     Attributes:
         module: The module's python name (e.g. ``"firewall"``,
@@ -758,10 +760,10 @@ class ConfigState:
     ) -> AnyStoredModule:
         """The target config's module called *name* (an intent-level name works).
 
-        With ``create=True``, an edge target that has no ``firewall`` or ``QOS``
-        module gets an empty one, which saves as an insert. Nothing is copied
-        from the profile. Raises ``ValueError`` if there is no such module and
-        none can be created.
+        With ``create=True``, an edge target that has no ``firewall`` or
+        ``business_policy`` module gets an empty one, which saves as an insert.
+        Nothing is copied from the profile. Raises ``ValueError`` if there is
+        no such module and none can be created.
         """
         config = self.target_config
         unset = config.modules is MISSING
@@ -1514,17 +1516,17 @@ class ConfigState:
         rename is one change. Each is in the names of the plan's text
         (``ModulePlan.shown_change``): the module by its python name, the path
         as its line names it and one ``apply`` takes, and the values JSON with
-        their keys by attribute name; the order of a keyed list is one entry
-        whose ``moves`` say which items change place. A provider set,
-        replaced or cleared is one entry at the provider's field, with the
-        logical ID of the service before and after, or None; a provider
-        replaced is one entry, not a removal and an addition. When the
-        provider's stub had no ``ref``, setting a provider also writes the
-        stub's ``ref``, and that is an entry of its own, before the
-        provider's. A segment added to a profile module is one entry, at
-        ``segments[<name>]``, with ``before`` ``MISSING`` and ``after`` the
-        entry as written; it comes before the changes to the module's other
-        values.
+        their keys by attribute name and every secret as ``"***"``; the order
+        of a keyed list is one entry whose ``moves`` say which items change
+        place. A provider set, replaced or cleared is one entry at the
+        provider's field, with the logical ID of the service before and
+        after, or None; a provider replaced is one entry, not a removal and an
+        addition. When the provider's stub had no ``ref``, setting a provider
+        also writes the stub's ``ref``, and that is an entry of its own,
+        before the provider's. A segment added to a profile module is one
+        entry, at ``segments[<name>]``, with ``before`` ``MISSING`` and
+        ``after`` the entry as written; it comes before the changes to the
+        module's other values.
         """
         wanted = None if module_name is None else resolve_module_name(module_name)
         changes: list[ConfigFieldChange] = []
@@ -1573,7 +1575,8 @@ def _added_segment_changes(
     """One change for each segment added to *held*, a profile module.
 
     Each change has the entry as the plan writes it, with its keys by
-    attribute name, at the segment as the plan shows it.
+    attribute name and every secret in it as ``"***"``, at the segment as the
+    plan shows it.
     """
     if held is None:
         return []
@@ -1587,7 +1590,7 @@ def _added_segment_changes(
                     module=python_module_name(module.name),
                     path=module.named(path),
                     before=MISSING,
-                    after=named_value(written[addition.segment_id], module.model, path),
+                    after=shown_value(written[addition.segment_id], module.model, path),
                 )
             )
     return changes
@@ -1892,8 +1895,7 @@ class SaveResult:
 
     Each holds in ``path`` a ``Path`` with no module before it, and the
     python name of the module it is about in ``module``; a write-time
-    validator's warning is the exception, and keeps the path the validator
-    wrote, as text.
+    validator's warning too.
     """
     validation_errors: list[ValidationError] = field(default_factory=list)
     # Optional count for downstream integrations managing enterprise objects.

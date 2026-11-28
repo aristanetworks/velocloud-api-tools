@@ -414,8 +414,8 @@ OUT_OF_THE_RULE = {
 }
 
 
-async def rule_uses_hub() -> ConfigState:
-    """Guest has Hub-A as hub and backhaul hub, and its rule ``Web`` backhauls to it."""
+async def _hub_a_in_guest(global_entry: dict[str, Any]) -> ConfigState:
+    """``rule_uses_hub``, with *global_entry* as the device settings of Global."""
     refs = profile_hub_rows(
         segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
         segment_row(GUEST[0], GUEST[3], GUEST[2]),
@@ -436,11 +436,92 @@ async def rule_uses_hub() -> ConfigState:
     )
     rule = backhaul_rule("Web", backhaul_entry(HUB_A, SERVICE))
     return await hub_profile_state(
-        [ds_entry(GLOBAL), ds_with_vpn(GUEST, hubs=(HUB_A,), backhaul=(HUB_A,))],
+        [global_entry, ds_with_vpn(GUEST, hubs=(HUB_A,), backhaul=(HUB_A,))],
         [qos_entry(GLOBAL), qos_entry(GUEST, rules=[rule])],
         [firewall_entry(GLOBAL), firewall_entry(GUEST)],
         ds_refs=refs,
         qos_refs={BACKHAUL_REF: backhaul},
+    )
+
+
+async def rule_uses_hub() -> ConfigState:
+    """Guest has Hub-A as hub and backhaul hub, and its rule ``Web`` backhauls to it."""
+    return await _hub_a_in_guest(ds_entry(GLOBAL))
+
+
+# --- A BGP neighbour with a password, in the Global Segment of that state ----
+
+OLD_PASSWORD, NEW_PASSWORD = "OLD-md5-made-up", "NEW-md5-made-up"
+"""Two made-up MD5 passwords: the values of ``OLD`` and ``NEW`` in ``test_secrets``."""
+NEIGHBOR_IP = "192.0.2.1"
+
+
+def bgp_with_a_password(password: str, **more: Any) -> dict[str, Any]:
+    """The ``bgp`` of a segment: one neighbour, ``NEIGHBOR_IP``, with *password*.
+
+    The one ``test_secrets`` gives its device settings; the password is the
+    neighbour's last key. *more* are further keys of the neighbour as stored.
+    """
+    return {
+        "enabled": True,
+        "override": True,
+        "ASN": "65000",
+        "neighbors": [
+            {
+                "neighborIp": NEIGHBOR_IP,
+                "neighborAS": "65001",
+                "enableMd5": True,
+                "id": "00000000-0000-0000-0000-0000000000aa",
+                **more,
+                "md5Password": password,
+            }
+        ],
+    }
+
+
+async def state_with_a_bgp_password(password: str, **more: Any) -> ConfigState:
+    """``rule_uses_hub`` whose Global Segment has a BGP neighbour with *password*.
+
+    A profile state: the neighbour is ``NEIGHBOR_IP`` of the device settings'
+    ``segments["Global Segment"].bgp``, and its ``md5_password`` is a secret.
+    *more* are further keys of the neighbour as stored.
+    """
+    entry = {**ds_entry(GLOBAL), "bgp": bgp_with_a_password(password, **more)}
+    return await _hub_a_in_guest(entry)
+
+
+NEW_PASSWORD_PATCH: dict[str, Any] = {
+    "segments": {
+        "Global Segment": {
+            "bgp": {"neighbors": {NEIGHBOR_IP: {"md5_password": NEW_PASSWORD}}}
+        }
+    }
+}
+"""A device settings patch: the neighbour, by ``neighbor_ip``, gets ``NEW_PASSWORD``."""
+
+
+async def edge_over_a_hub_profile() -> ConfigState:
+    """An edge with a QoS rule and device settings of its own, over a hub profile."""
+    refs = profile_hub_rows(
+        segment_row(GLOBAL[0], GLOBAL[3], GLOBAL[2]),
+        segment_row(GUEST[0], GUEST[3], GUEST[2]),
+        hub_row(
+            HUB_A,
+            service_id=SERVICE_ID,
+            service_logical_id=SERVICE,
+            segment=GUEST,
+            roles=("hub", "backhaul"),
+        ),
+    )
+    return await hub_edge_state(
+        [ds_entry(GLOBAL), ds_entry(GUEST)],
+        [qos_entry(GLOBAL), qos_entry(GUEST, rules=[backhaul_rule("Web")])],
+        profile_ds=[
+            ds_entry(GLOBAL),
+            ds_with_vpn(GUEST, hubs=(HUB_A,), backhaul=(HUB_A,)),
+        ],
+        profile_qos=[qos_entry(GLOBAL), qos_entry(GUEST)],
+        profile_refs=refs,
     )
 
 

@@ -12,7 +12,7 @@ class ValidationWarning:
     ``code`` is machine-readable, ``message`` the text a plan shows.
     """
 
-    path: Path | str
+    path: Path
     """Where the thing is.
 
     A ``Path``, as pyvelo shows one, with no module before it: fields by
@@ -20,10 +20,8 @@ class ValidationWarning:
     ``module`` it is a place within that module's data; a ref row that
     nothing in the data names is at its ref name under ``refs``
     (``refs."deviceSettings:css:provider"``), and a warning about the whole
-    module has the empty path.
-
-    A validator's finding, at a load or at a save, is the one exception: its
-    path is the text the validator wrote, and it names no ``module``.
+    module has the empty path. A validator's finding, at a load or at a save,
+    has the ``module`` and the path the validator gave it.
     """
     message: str
     code: str

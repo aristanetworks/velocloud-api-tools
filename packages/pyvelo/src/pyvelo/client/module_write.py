@@ -142,7 +142,7 @@ from pyvelo.core.base import (
 from pyvelo.core.fixed_list import fixed_list_violations
 from pyvelo.core.layers import Edge, Layered, Profile
 from pyvelo.core.merge import nested_under
-from pyvelo.core.names import ChangeNames, named_path, named_value
+from pyvelo.core.names import ChangeNames, named_path, shown_value
 from pyvelo.core.owned import UnflaggedInUse, unflagged_in_use_at
 from pyvelo.core.rebase import (
     ItemMove,
@@ -476,8 +476,9 @@ class ModulePlan:
         of a move and the values of an order entry (the item names in the
         order read and in the new order) are items of the list as planned,
         each shown by the part ``named`` shows that item by
-        (``_shown_items``). A value is written by ``named_value``, with its
-        keys by attribute name. ``render`` writes each line from it but an
+        (``_shown_items``). A value is written by ``shown_value``, with its
+        keys by attribute name and every secret in it as ``"***"``; the change
+        given keeps the values. ``render`` writes each line from it but an
         order line, which names only the moves it prints, by the same
         ``_shown_items``; ``ConfigState.get_field_changes`` is made of them.
         """
@@ -496,8 +497,8 @@ class ModulePlan:
             place = self._named_place(place, self._shown_items(items))
         return RawChange(
             path,
-            named_value(change.before, self.model, change.path),
-            named_value(change.after, self.model, change.path),
+            shown_value(change.before, self.model, change.path),
+            shown_value(change.after, self.model, change.path),
             place=place,
         )
 
@@ -623,25 +624,86 @@ class ModulePlan:
     def ref_lines(self) -> list[str]:
         """The lines of ``render`` about the refs sent.
 
-        A line for each row added or removed. The row of a provider (a row
-        whose ``RefChange.owner`` is set) is named by the provider's field,
-        as ``named_owner`` shows it: ``+ refs
+        A line for each row added or removed, named by ``ref_row_name``. The
+        row of a provider (a row whose ``RefChange.owner`` is set) is named by
+        the provider's field, as ``named_owner`` shows it: ``+ refs
         segments[Guest].dns.primary_provider.service: <value>``. Any other
         row is named by its ref name, with its segment where it is of one:
-        ``- refs deviceSettings:backHaulEdge (Guest): <value>``.
+        ``- refs deviceSettings:backHaulEdge (Guest): <value>``. A write
+        error names the row the same way (``ref_entry``).
         """
         lines: list[str] = []
         for change in self.ref_changes:
             sign = "+" if change.added else "-"
-            if change.owner is not None:
-                row = str(self.named_owner(change.owner, added=change.added))
-            else:
-                place = f" ({change.segment})" if change.segment is not None else ""
-                row = f"{change.name}{place}"
-            lines.append(f"  {sign} refs {row}: {change.value}")
+            lines.append(f"  {sign} refs {self.ref_row_name(change)}: {change.value}")
         if self.refs is not None and not self.ref_changes:
             lines.append("  refs: sent as read")
         return lines
+
+    def ref_row_name(self, change: RefChange) -> str:
+        """The row of *change*, one of ``ref_changes``, as the plan's line names it.
+
+        A provider's row (``RefChange.owner`` set) is named by the provider's
+        field, as ``named_owner`` shows it:
+        ``segments[Guest].dns.primary_provider.service``. Any other row is
+        named by its ref name, with its segment's name where it is of one:
+        ``deviceSettings:backHaulEdge (Guest)``.
+        """
+        if change.owner is not None:
+            return str(self.named_owner(change.owner, added=change.added))
+        if change.segment is not None:
+            return f"{change.name} ({change.segment})"
+        return change.name
+
+    def ref_change_of(self, change: PlannedChange | ServerChange) -> RefChange | None:
+        """The row of ``ref_changes`` that *change*, a refs entry of a write, is.
+
+        The check of a write makes the entry of a row the plan adds with
+        nothing as read and the row as meant, and of a row it removes with the
+        row as read and nothing as meant, under the row's ref name; the entry
+        is that row of the plan, in that direction. None for any other entry:
+        a server change (a row the VCO added or dropped on its own), a row sent
+        as read (read and meant both the row), one no row of the plan is, and
+        a change of the data.
+        """
+        if (
+            not isinstance(change, PlannedChange)
+            or change.part != "refs"
+            or not change.path.parts
+        ):
+            return None
+        if change.as_read is MISSING and change.intended is not MISSING:
+            added, row = True, change.intended
+        elif change.intended is MISSING and change.as_read is not MISSING:
+            added, row = False, change.as_read
+        else:
+            return None
+        name = change.path.parts[0]
+        return next(
+            (
+                ref
+                for ref in self.ref_changes
+                if ref.added == added and ref.name == name and ref.row == row
+            ),
+            None,
+        )
+
+    def ref_entry(self, change: PlannedChange | ServerChange) -> str:
+        """*change*, a refs entry of a write, as a write error's line names it.
+
+        A row of the plan (``ref_change_of``) is named as the plan's line
+        names it, then its identity as that line has it (a logical ID, a
+        segment ID or an object ID, never the row's content):
+        ``refs deviceSettings:backHaulEdge (Guest) <logical ID>``. Any other
+        entry keeps its path as the check wrote it, the ref's name and the
+        row's identity as stored; a row the VCO added or dropped has its
+        segment by the segment's logical ID there:
+        ``refs "deviceSettings:backHaulEdge"[<logical ID>,<segment's logical ID>]``.
+        """
+        ref = self.ref_change_of(change)
+        if ref is None:
+            return f"refs {change.path}"
+        return f"refs {self.ref_row_name(ref)} {ref.value}"
 
 
 def with_hub_rows(

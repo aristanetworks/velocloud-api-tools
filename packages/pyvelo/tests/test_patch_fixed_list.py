@@ -101,7 +101,8 @@ def test_a_rename_is_refused() -> None:
 def test_an_alt_key_change_is_refused() -> None:
     error = refusal(segment(), {"defaults": {"Beta": {"rule_id": str(uuid.uuid4())}}})
     assert error.path == "defaults[Beta]"
-    assert "ruleId" in error.message
+    assert "changes rule_id of" in error.message
+    assert "ruleId" not in error.message
 
 
 @pytest.mark.parametrize(
@@ -192,7 +193,8 @@ def test_a_list_value_that_gives_another_alt_key_says_to_leave_it_out() -> None:
     value = [without_alt_key(given(i)) for i in range(3)]
     value[1]["ruleId"] = str(uuid.uuid4())
     error = refusal(segment(), {"defaults": value})
-    assert "changes ruleId of" in error.message
+    assert "changes rule_id of" in error.message
+    assert "ruleId" not in error.message
     assert "Leave `rule_id` out of the item and it keeps the current one" in (
         error.message
     )

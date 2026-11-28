@@ -15,7 +15,7 @@ from pydantic import (
 )
 from pyvelo.core import Alias, PatchError, VcoModel
 from pyvelo.core.fields import KeyField
-from pyvelo.core.merge import _check_merged, _python_place  # pyright: ignore[reportPrivateUsage]
+from pyvelo.core.merge import _check_merged, python_place  # pyright: ignore[reportPrivateUsage]
 from pyvelo.core.rebase import Path
 
 
@@ -64,19 +64,19 @@ class Ports(VcoModel):
 
 
 def test_a_map_key_that_is_a_field_alias_keeps_its_text() -> None:
-    place = _python_place(("by_name", "MaxRate", "peerAddress"), (Table,))
+    place = python_place(("by_name", "MaxRate", "peerAddress"), (Table,))
     assert place == Path(("by_name", "MaxRate", "peer_address"))
-    place = _python_place(("by_name", "max_rate", "MaxRate"), (Table,))
+    place = python_place(("by_name", "max_rate", "MaxRate"), (Table,))
     assert place == Path(("by_name", "max_rate", "max_rate"))
 
 
 def test_a_union_tag_that_is_a_field_name_keeps_its_text() -> None:
-    place = _python_place(("ports", 0, "SsidName", "SsidName"), (Ports,))
+    place = python_place(("ports", 0, "SsidName", "SsidName"), (Ports,))
     assert place == Path(("ports", 0, "SsidName", "ssid_name"))
-    place = _python_place(("either", "peer_address", "peer_address"), (Ports,))
+    place = python_place(("either", "peer_address", "peer_address"), (Ports,))
     assert place == Path(("either", "peer_address", "peer_address"))
     # A field that is not a union gives no tag: the next part is a field.
-    place = _python_place(("entry", "MaxRate"), (Table,))
+    place = python_place(("entry", "MaxRate"), (Table,))
     assert place == Path(("entry", "max_rate"))
 
 

@@ -92,7 +92,7 @@ class TestGetEdgeConfigurationModulesRequest:
         assert str(req.edge_logical_id) == _EDGE_UUID
 
     def test_rejects_missing_both_identifiers(self) -> None:
-        with pytest.raises(Exception, match="edgeId or edgeLogicalId"):
+        with pytest.raises(Exception, match="edge_id or edge_logical_id is required"):
             _ = GetEdgeConfigurationModules()
 
     def test_accepts_enterprise_logical_id(self) -> None:

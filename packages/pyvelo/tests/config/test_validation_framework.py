@@ -30,6 +30,7 @@ from pyvelo.config.validation import (
     validator,
 )
 from pyvelo.core.layers import Profile
+from pyvelo.core.rebase import Path
 from pyvelo.testing import MockVcoClient
 
 _TS = datetime(2024, 1, 1, tzinfo=UTC)
@@ -82,24 +83,30 @@ class TestValidationResult:
 
     def test_with_errors_is_invalid(self) -> None:
         r = ValidationResult(
-            errors=[ValidationError(path="x", message="bad", code="err")]
+            errors=[ValidationError(path=Path(("x",)), message="bad", code="err")]
         )
         assert r.is_valid is False
 
     def test_with_only_warnings_is_valid(self) -> None:
         r = ValidationResult(
             warnings=[
-                ValidationError(path="x", message="warn", code="w", severity="warning")
+                ValidationError(
+                    path=Path(("x",)), message="warn", code="w", severity="warning"
+                )
             ]
         )
         assert r.is_valid is True
 
     def test_merge(self) -> None:
-        r1 = ValidationResult(errors=[ValidationError(path="a", message="a", code="a")])
+        r1 = ValidationResult(
+            errors=[ValidationError(path=Path(("a",)), message="a", code="a")]
+        )
         r2 = ValidationResult(
-            errors=[ValidationError(path="b", message="b", code="b")],
+            errors=[ValidationError(path=Path(("b",)), message="b", code="b")],
             warnings=[
-                ValidationError(path="c", message="c", code="c", severity="warning")
+                ValidationError(
+                    path=Path(("c",)), message="c", code="c", severity="warning"
+                )
             ],
         )
         r1.merge(r2)
@@ -119,7 +126,9 @@ class TestValidatorRegistry:
         )
         def my_validator(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="test", message="fail", code="test")]
+                errors=[
+                    ValidationError(path=Path(("test",)), message="fail", code="test")
+                ]
             )
 
         assert my_validator.modules == [ConfigurationModuleName.FIREWALL]
@@ -135,7 +144,7 @@ class TestValidatorRegistry:
         )
         def write_only(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="w", message="w", code="w")]
+                errors=[ValidationError(path=Path(("w",)), message="w", code="w")]
             )
 
         @validator(
@@ -143,7 +152,7 @@ class TestValidatorRegistry:
         )
         def read_only(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="r", message="r", code="r")]
+                errors=[ValidationError(path=Path(("r",)), message="r", code="r")]
             )
 
         assert write_only.phases == ["write"]
@@ -168,7 +177,7 @@ class TestValidatorRegistry:
         )
         def fw_validator(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="fw", message="fw", code="fw")]
+                errors=[ValidationError(path=Path(("fw",)), message="fw", code="fw")]
             )
 
         @validator(
@@ -176,7 +185,7 @@ class TestValidatorRegistry:
         )
         def qos_validator(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="qos", message="qos", code="qos")]
+                errors=[ValidationError(path=Path(("qos",)), message="qos", code="qos")]
             )
 
         assert fw_validator.modules == [ConfigurationModuleName.FIREWALL]
@@ -207,7 +216,11 @@ class TestValidatorRegistry:
         )
         def cross_validator(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="cross", message="cross", code="cross")]
+                errors=[
+                    ValidationError(
+                        path=Path(("cross",)), message="cross", code="cross"
+                    )
+                ]
             )
 
         assert cross_validator.modules == [
@@ -241,7 +254,7 @@ class TestValidatorRegistry:
         )
         def v1(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="v1", message="v1", code="v1")]
+                errors=[ValidationError(path=Path(("v1",)), message="v1", code="v1")]
             )
 
         @validator(
@@ -249,7 +262,7 @@ class TestValidatorRegistry:
         )
         def v2(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="v2", message="v2", code="v2")]
+                errors=[ValidationError(path=Path(("v2",)), message="v2", code="v2")]
             )
 
         assert v1.modules == [ConfigurationModuleName.FIREWALL]
@@ -271,7 +284,9 @@ class TestPipelineValidation:
         )
         def always_fail(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="test", message="fail", code="test")]
+                errors=[
+                    ValidationError(path=Path(("test",)), message="fail", code="test")
+                ]
             )
 
         assert always_fail.phases == ["write"]
@@ -287,7 +302,9 @@ class TestPipelineValidation:
         @validator(modules=[], phases=["write"], registry=registry)
         def always_fail(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="test", message="fail", code="test")]
+                errors=[
+                    ValidationError(path=Path(("test",)), message="fail", code="test")
+                ]
             )
 
         assert always_fail.phases == ["write"]
@@ -304,7 +321,9 @@ class TestPipelineValidation:
         @validator(modules=[], phases=["write"], registry=pipeline.validators)
         def always_fail(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="test", message="fail", code="test")]
+                errors=[
+                    ValidationError(path=Path(("test",)), message="fail", code="test")
+                ]
             )
 
         assert always_fail.phases == ["write"]
@@ -317,7 +336,11 @@ class TestPipelineValidation:
         @validator(modules=[], phases=["write"], registry=pipeline.validators)
         def always_fail(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="test", message="blocked", code="test")]
+                errors=[
+                    ValidationError(
+                        path=Path(("test",)), message="blocked", code="test"
+                    )
+                ]
             )
 
         assert always_fail.phases == ["write"]
@@ -344,7 +367,11 @@ class TestPipelineValidation:
         @validator(modules=[], phases=["write"], registry=registry)
         def always_fail(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="test", message="blocked", code="test")]
+                errors=[
+                    ValidationError(
+                        path=Path(("test",)), message="blocked", code="test"
+                    )
+                ]
             )
 
         assert always_fail.phases == ["write"]
@@ -378,7 +405,11 @@ class TestPipelineValidation:
         @validator(modules=[], phases=["write"], registry=registry)
         def always_fail(_state: ConfigStateLike) -> ValidationResult:
             return ValidationResult(
-                errors=[ValidationError(path="test", message="blocked", code="test")]
+                errors=[
+                    ValidationError(
+                        path=Path(("test",)), message="blocked", code="test"
+                    )
+                ]
             )
 
         assert always_fail.phases == ["write"]
@@ -402,7 +433,9 @@ class TestPipelineValidation:
 
 
 def test_a_save_validation_error_says_what_to_do() -> None:
-    error = SaveValidationError([ValidationError("a.b", "too long", "too_long")])
+    error = SaveValidationError(
+        [ValidationError(Path(("a", "b")), "too long", "too_long")]
+    )
     message = str(error)
     assert message.startswith("save blocked by 1 validator error(s): a.b: too long")
     assert "Fix them and save again" in message

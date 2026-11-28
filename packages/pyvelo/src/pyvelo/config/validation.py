@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from pyvelo.client.enums.configuration import ConfigurationModuleName
+from pyvelo.core.rebase import Path
 
 
 @runtime_checkable
@@ -34,12 +35,20 @@ class ConfigStateLike(Protocol):
 
 @dataclass
 class ValidationError:
-    """A validation error with location, message, and machine-readable code."""
+    """A validator's finding: where it is, its message, and a machine-readable code."""
 
-    path: str
+    path: Path
+    """Where the finding is, in the data of ``module``.
+
+    A ``Path`` as pyvelo shows one, with no module before it: fields by
+    attribute name, items by what names them (``segments[Guest].rules[Web]``).
+    The empty path is the whole module.
+    """
     message: str
     code: str
     severity: str = "error"
+    module: str | None = None
+    """The module the finding is in, by its python name; None for one in no module."""
 
 
 @dataclass

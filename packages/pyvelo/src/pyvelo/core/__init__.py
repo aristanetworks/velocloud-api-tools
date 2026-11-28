@@ -8,6 +8,7 @@ This package is split into these submodules:
 - merge: applying a patch to a model, and selecting items of a list
 - names: a path and a value as pyvelo shows them: fields by attribute name, each item
   by the text that names it alone
+- documents: NamedDocumentError, the refusal of a document in attribute names
 - rebase: the path and key types that locate a change
 - owned: Owned, the value an inheritable field holds on the edge layer, its encodings,
   the ownership intents, coupled groups and the binding of an edge layer to its profile
@@ -19,7 +20,8 @@ This package is split into these submodules:
   models_below, can_hold and can_hold_field, what a model class can hold
 - references: the values that name a member of a set the configuration provides, the
   check of them, and the patch that takes one out of its list
-- secrets: hide_secrets, which shows a value without its secrets
+- secrets: hide_secrets, which shows a value without its secrets, and restore_secrets,
+  which puts them back where a document holds the mask
 - mending: the patches that mend an error, as data, and the one that makes a hub a
   backhaul hub
 
@@ -57,6 +59,7 @@ from .base import (
     value_or,
     wire_name,
 )
+from .documents import NamedDocumentError, NamedDocumentKind
 from .effective import Origin, Resolved, effective_dump, effective_view
 from .fields import (
     Alias,
@@ -175,7 +178,7 @@ from .layers import (
 )
 from .mending import MendingKind, MendingPatch, backhaul_hub_mending
 from .merge import address_path, item_selector, nest_patch, select_items
-from .names import item_part, named_path, named_value
+from .names import item_part, named_path, named_value, shown_value, vco_keys
 from .owned import (
     ByFlag,
     ByPresence,
@@ -210,10 +213,11 @@ from .references import (
     removal_patch,
     union,
 )
-from .secrets import hide_secrets
+from .secrets import HIDDEN, hide_secrets, restore_secrets
 from .walk import FieldSite, can_hold, can_hold_field, models_below, walk_fields
 
 __all__ = [
+    "HIDDEN",
     "Additive",
     "AddressGroupId",
     "AddressGroupIdentity",
@@ -294,6 +298,8 @@ __all__ = [
     "MendingKind",
     "MendingPatch",
     "NameOf",
+    "NamedDocumentError",
+    "NamedDocumentKind",
     "NetworkServiceIdentity",
     "NetworkServiceLogicalId",
     "NetworkServiceName",
@@ -396,11 +402,14 @@ __all__ = [
     "reference_text",
     "references",
     "removal_patch",
+    "restore_secrets",
     "select_items",
     "selector_of",
+    "shown_value",
     "union",
     "unwrap",
     "value_or",
+    "vco_keys",
     "walk_fields",
     "wire_name",
 ]

@@ -33,6 +33,7 @@ import functools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from types import UnionType
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -43,6 +44,7 @@ from typing import (
     NamedTuple,
     Self,
     TypeVar,
+    Union,  # pyright: ignore[reportDeprecated]  # the origin of ``T | MISSING``, below
     final,
     get_args,
     get_origin,
@@ -608,6 +610,79 @@ def field_kind(field_info: FieldInfo) -> FieldKind:
     found = FieldKind(kind, inner_type, encoding, metadata)
     _FIELD_KINDS[id(field_info)] = (field_info, annotation, size, found)
     return found
+
+
+@dataclass(frozen=True, slots=True)
+class FieldShape:
+    """What a field is declared to hold, one level deep."""
+
+    models: tuple[type[VcoModel], ...]
+    """The classes of a model it holds as it is."""
+    items: tuple[type[VcoModel], ...]
+    """The classes of the items of a list it holds."""
+    entries: tuple[type[VcoModel], ...]
+    """The classes of the values of a map it holds."""
+    is_list: bool
+    """Whether it can hold a list, of models or of anything else."""
+
+
+_UNION_ORIGINS: Final = (Union, UnionType)  # pyright: ignore[reportDeprecated]  # still an origin
+"""The origins of a union.
+
+Before Python 3.14 ``X | Y`` and ``typing.Union`` are two, and ``T | MISSING``
+is the second, since ``MISSING`` is a value and not a class.
+"""
+
+
+def _alternatives(annotation: object) -> list[object]:
+    """The types *annotation* allows: the members of a union, else itself.
+
+    Each is without its ``Annotated`` wrapper.
+    """
+    while get_origin(annotation) is Annotated:
+        annotation = get_args(annotation)[0]
+    if get_origin(annotation) in _UNION_ORIGINS:
+        return [
+            inner for member in get_args(annotation) for inner in _alternatives(member)
+        ]
+    return [annotation]
+
+
+def _model_classes(annotation: object) -> list[type[VcoModel]]:
+    """The model classes among the types *annotation* allows."""
+    return [
+        member
+        for member in _alternatives(annotation)
+        if isinstance(member, type) and issubclass(member, VcoModel)
+    ]
+
+
+@functools.cache
+def field_shape(field_info: FieldInfo) -> FieldShape:
+    """What *field_info* is declared to hold.
+
+    The one reading of it for the walks that go by the declared type (the
+    names a value is shown by, and its secrets). A model is looked for in the
+    field itself, in the items of a list and in the values of a map, and no
+    deeper: the keys of a map of lists are data, and nothing below them is
+    known. A tuple of any length (``tuple[X, ...]``) is a list here: its JSON
+    is one. A tuple of fixed length is not read.
+    """
+    models: list[type[VcoModel]] = []
+    items: list[type[VcoModel]] = []
+    entries: list[type[VcoModel]] = []
+    holds_list = False
+    for member in _alternatives(field_kind(field_info).inner_type):
+        origin, args = get_origin(member), get_args(member)
+        any_length = origin is tuple and args[1:] == (Ellipsis,)
+        if member is list or origin is list or any_length:
+            holds_list = True
+            items += _model_classes(args[0]) if args else []
+        elif origin is dict and len(args) == 2:  # noqa: PLR2004 (dict[K, V] has two type arguments)
+            entries += _model_classes(args[1])
+        else:
+            models += _model_classes(member)
+    return FieldShape(tuple(models), tuple(items), tuple(entries), holds_list)
 
 
 def _default_of(field_info: FieldInfo) -> Default | None:
