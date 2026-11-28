@@ -57,6 +57,7 @@ from .documents import NamedDocumentError
 from .fields import is_secret
 from .layers import field_kind
 from .rebase import KeyedList, Path, PathPart, node_child, pair_items
+from .walk import can_hold_field
 
 HIDDEN: Final = "***"
 """The mask: what stands in place of a secret in everything pyvelo shows."""
@@ -264,20 +265,10 @@ def declares_secret(model: type[VcoModel]) -> bool:
     """Whether *model*, or a class a field of it can hold at any depth, has a secret.
 
     The classes are those ``hide_secrets`` walks (``field_models`` of each
-    field), each looked at once, so a class that holds itself ends the search.
+    field, which ``models_below`` follows), each looked at once. The answer
+    is kept per class.
     """
-    seen: set[type[VcoModel]] = set()
-    left = [model]
-    while left:
-        cls = left.pop()
-        if cls in seen:
-            continue
-        seen.add(cls)
-        for field_info in cls.model_fields.values():
-            if is_secret(field_info):
-                return True
-            left.extend(field_models(field_info))
-    return False
+    return can_hold_field(model, is_secret)
 
 
 MASK: Final = (
