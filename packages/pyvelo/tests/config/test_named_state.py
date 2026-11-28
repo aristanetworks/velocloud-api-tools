@@ -932,20 +932,21 @@ async def test_a_profiles_model_is_read_back_at_its_level_with_the_context() -> 
     }
 
 
-async def test_a_field_stored_under_two_keys_is_dumped_under_both_and_refused() -> None:
+async def test_a_field_stored_under_two_keys_is_dumped_and_read_under_both() -> None:
     config, _ = await with_a_password()
     wire = wire_of(config)
     wire["modules"][0]["data"]["segments"][0]["routes"] = {
         "icmpProbes": [],
-        "icmp_probes": [],
+        "icmp_probes": [{"name": "kept as stored"}],
     }
     stored = type(config).model_validate(wire)
     named = named_of(stored)
     routes = named["modules"][0]["data"]["segments"][0]["routes"]
     assert {"icmpProbes", "icmp_probes"} <= set(routes)
-    error = refusal_of(type(config), named, stored)
-    assert error.kind == "vco_key"
-    assert error.path == "modules[#0].data.segments[#0].routes.icmp_probes"
+    again = type(config).named_validate(named, stored=stored)
+    assert again.model_dump(mode="json", by_alias=True) == stored.model_dump(
+        mode="json", by_alias=True
+    )
 
 
 async def test_a_shown_segment_ref_row_does_not_show_its_segment_id() -> None:

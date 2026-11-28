@@ -119,11 +119,21 @@ def test_a_document_in_the_vcos_keys_is_refused() -> None:
     assert str(caught.value) == f"route_name: {caught.value.message}"
 
 
-def test_a_vco_key_beside_its_attribute_is_refused_too() -> None:
-    doc = {"hops": [{"next_hop": "a"}, {"next_hop": "b", "nextHop": "c"}]}
-    with pytest.raises(NamedDocumentError) as caught:
-        _ = vco_keys(doc, Route)
-    assert str(caught.value).startswith("hops[#1].next_hop: `nextHop` is the VCO's key")
+def test_a_vco_key_beside_its_attribute_is_kept_as_named_value_keeps_both() -> None:
+    stored = {"hops": [{"nextHop": "a"}, {"next_hop": "b", "nextHop": "c"}]}
+    named = named_value(stored, Route)
+    assert named == {"hops": [{"next_hop": "a"}, {"next_hop": "b", "nextHop": "c"}]}
+    assert vco_keys(named, Route) == stored
+
+
+def test_below_each_key_of_a_pair_the_attribute_names_are_converted() -> None:
+    stored = {"byPort": {"ge1": {"nextHop": "a"}}, "by_port": {"ge2": {"nextHop": "b"}}}
+    named = named_value(stored, Route)
+    assert named == {
+        "byPort": {"ge1": {"next_hop": "a"}},
+        "by_port": {"ge2": {"next_hop": "b"}},
+    }
+    assert vco_keys(named, Route) == stored
 
 
 def test_a_refusal_below_a_path_is_at_the_whole_path_in_attribute_names() -> None:

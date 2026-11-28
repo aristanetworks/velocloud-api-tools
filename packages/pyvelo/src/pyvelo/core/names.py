@@ -1102,13 +1102,15 @@ def vco_keys(
     are, and with *model* of None the value is returned as a copy.
 
     Any other key a class there reads a field from (the VCO's key, the
-    camelCase form) raises ``NamedDocumentError`` of kind ``vco_key``, also
-    beside the attribute name of the same field: the document mixes the two
-    forms. In a document that is in the VCO's keys, a stored key spelled like
-    an attribute name would be renamed, and what is saved would differ from
-    what was read. The error's path is the field's, by attribute names: *path*
-    (which may name fields by any key the model reads them from), then the
-    way down the value, an item by its position.
+    camelCase form) raises ``NamedDocumentError`` of kind ``vco_key``: in a
+    document that is in the VCO's keys, a stored key spelled like an attribute
+    name would be renamed, and what is saved would differ from what was read.
+    The error's path is the field's, by attribute names: *path* (which may name
+    fields by any key the model reads them from), then the way down the value,
+    an item by its position. Two keys of an object that name one field are
+    both kept as given, as ``named_value`` keeps them: stored data can hold a
+    field under its VCO's key and again under a key spelled like its attribute
+    name, and its dump then reads back as it was.
 
     The result shares no ``dict`` or ``list`` with *value*.
     """
@@ -1149,8 +1151,26 @@ def _with_vco_keys(value: object, place: _Place, path: Path) -> object:
         place = entry
     elif isinstance(place, _Either):
         place = _Model(None, place.models)
+    return _object_with_vco_keys(value, place, path)
+
+
+def _object_with_vco_keys(
+    value: Mapping[object, object], place: _Place, path: Path
+) -> dict[object, object]:
+    """A copy of the object *value*, at *place*, with the VCO's keys.
+
+    Two keys that name one field are kept as given, with the walk going on
+    below each, as ``_named`` keeps them; any other key of the VCO's form is
+    refused (``_refuse_a_vco_key``).
+    """
+    fields = {key: _field(place, key) for key in value}
+    claims = Counter(found[0] for found in fields.values() if found is not None)
     written: dict[object, object] = {}
     for key, item in value.items():
+        found = fields[key]
+        if found is not None and claims[found[0]] > 1:
+            written[key] = _with_vco_keys(item, found[1], path.child(str(key)))
+            continue
         attribute = _attribute(place, key)
         if attribute is None:
             _refuse_a_vco_key(place, key, path)

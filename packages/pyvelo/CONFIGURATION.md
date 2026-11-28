@@ -793,7 +793,9 @@ VCO's key, in a document of the VCO's form or among attribute names
 (`NamedDocumentError`, kind `vco_key`, at the field): it renames every
 attribute name it finds, and in a document of the VCO's that would rename a
 stored key that happens to be spelled like one. Give a document in the VCO's
-keys to `model_validate`.
+keys to `model_validate`. The one exception is an object that names a field
+twice, by the VCO's key and by its attribute name: the named dump of stored
+data that holds both keys has both, so `named_validate` keeps both as given.
 
 ### The mask
 
@@ -893,8 +895,11 @@ no stored item, or several whose secrets differ. So:
   their time series, an edge's `ha`), and none of them holds a secret.
   `named_validate` leaves the same keys as they are, so the two still agree.
 - A class that keeps the keys it does not know can store one field under two
-  keys (a segment's `routes` stored with both `icmpProbes` and `icmp_probes`);
-  its named dump then holds both, and `named_validate` refuses it (`vco_key`).
+  keys (a segment's `routes` stored with both `icmpProbes` and `icmp_probes`).
+  Its named dump then holds both keys as stored, and `named_validate` reads
+  them back as they are. The field is the value under the VCO's key
+  (`icmpProbes`); the other is a stored key the models do not know, and an
+  edit of it changes nothing the models read.
 - A shown `deviceSettings:segment` ref row (under `refs.segment` of a device
   settings row) does not show its `segmentId`, which is inside its `data`.
 - A whole configuration (`EdgeConfiguration`, `EnterpriseConfigurationProfile`)
